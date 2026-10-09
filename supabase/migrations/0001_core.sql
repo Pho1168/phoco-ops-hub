@@ -221,7 +221,7 @@ create table audit_log (
 );
 
 -- ---------- append-only guards ----------
-create or replace function refuse_change() returns trigger language plpgsql as $$
+create or replace function refuse_change() returns trigger language plpgsql set search_path = '' as $$
 begin
   raise exception '% is append-only: add a new record instead of changing or deleting', tg_table_name;
 end $$;
