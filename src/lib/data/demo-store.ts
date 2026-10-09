@@ -140,7 +140,7 @@ export const demoStore: Store = {
   },
 
   async handover(siteId) { return S().handover.filter((h) => h.siteId === siteId); },
-  async addHandover(h) { S().handover.unshift({ ...h, id: randomUUID(), createdAt: Date.now() }); },
+  async addHandover(h) { S().handover.unshift({ ...h, createdByName: S().people.find((p) => p.id === h.createdBy)?.name ?? "", id: randomUUID(), createdAt: Date.now() }); },
   async closeHandover(id, personId) { const h = S().handover.find((x) => x.id === id); if (h && !h.closedAt) { h.closedAt = Date.now(); h.closedBy = personId; } },
 
   async audit(entry) { S().audit.unshift({ ...entry, at: Date.now() }); },

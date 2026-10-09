@@ -22,7 +22,7 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
   - **close a site with one button**, which logs everyone out there and freezes staff who only work at that site; reopening unfreezes them
   - audit trail of every action
 
-Not built yet: the Supabase connection, rota reminders from Google Sheets, Wembley batch codes, labels, dispatch and receiving, and the remaining MVP features. See the PRD.
+Not built yet: rota reminders from Google Sheets, Wembley batch codes, labels, dispatch and receiving, and the remaining MVP features. See the PRD.
 
 ## Try it (demo mode)
 
@@ -35,6 +35,20 @@ npm run dev          # http://localhost:3000
 
 Demo PINs: owner **2580**, everyone else **1357**. The demo people are clearly labelled "(demo)". No real staff data is in this repo.
 
+## Run it on the real database
+
+The app uses the database when the server has a `DATABASE_URL` (Supabase project **phoco-ops-hub**, London).
+
+1. In Supabase: **Project Settings → Database → Connection string → Transaction pooler** (port 6543). Copy it and put in the database password.
+2. Put it in the hosting provider's environment settings as `DATABASE_URL`. For local use, put it in `.env.local`, which git ignores.
+3. Create the first owner, typing the PIN when asked (it is never shown or stored in plain text):
+
+```bash
+DATABASE_URL=... npm run person:add -- --code PC-0001 --name "First name" --access "EAS:owner:FOH,BOH;WEM:owner:PROD;SYD:owner"
+```
+
+Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, manager and staff. Sections are FOH, BOH and PROD.
+
 ## Scripts
 
 | Command | What it does |
@@ -44,14 +58,15 @@ Demo PINs: owner **2580**, everyone else **1357**. The demo people are clearly l
 | `npm test` | Unit tests for the rules (temperatures, sign-off, access, rota, PINs) |
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
+| `npm run person:add` | Create or update a person, their site access and PIN (see above) |
 | `node scripts/build-seed.mjs` | Regenerates `supabase/seed.sql` from `data/checklist-library.json` |
 
 ## How it's put together
 
 - **Next.js 14 (App Router) + TypeScript.** Pages render on the server, and buttons call *server actions* (functions that run on the server, never in the browser).
 - **`src/lib/domain/`** holds the business rules as plain functions with no database. This is the part the tests cover.
-- **`src/lib/data/`** has a `Store` interface with two planned implementations: `DemoStore` (in memory, used now) and `SupabaseStore` (to come). The app switches to Supabase when `SUPABASE_URL` is set.
-- **`supabase/migrations/0001_core.sql`** is the database schema. Row Level Security is on for every table with no policies, so only the server (service role) can read or write. Checklist answers, corrective actions and the audit log are **append-only**: a database trigger refuses edits and deletes.
+- **`src/lib/data/`** has a `Store` interface with two implementations: `DemoStore` (in memory) and `SqlStore` (Postgres/Supabase). The app uses `SqlStore` whenever `DATABASE_URL` is set.
+- **`supabase/migrations/0001_core.sql`** is the database schema. Row Level Security is on for every table with no policies, so the public Supabase API can read nothing; only the app server, connecting with the database connection string, can read or write. Checklist answers, corrective actions and the audit log are **append-only**: a database trigger refuses edits and deletes.
 - **Sessions** are an httpOnly cookie checked on every request, so freezing someone or closing a site takes effect immediately.
 
 ## Security notes

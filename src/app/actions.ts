@@ -106,14 +106,14 @@ export async function addHandover(form: FormData): Promise<void> {
   const ctx = await requireCtx();
   const body = String(form.get("body") || "").trim().slice(0, 1000);
   if (!body) return;
-  await store().addHandover({ siteId: ctx.site.id, category: String(form.get("category") || "Note"), body, needsAction: form.get("needsAction") === "on", createdBy: ctx.person.name });
+  await store().addHandover({ siteId: ctx.site.id, category: String(form.get("category") || "Note"), body, needsAction: form.get("needsAction") === "on", createdBy: ctx.person.id });
   await store().audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "handover.add", detail: body });
   revalidatePath("/handover");
 }
 
 export async function closeHandover(id: string): Promise<void> {
   const ctx = await requireCtx();
-  await store().closeHandover(id, ctx.person.name);
+  await store().closeHandover(z.string().max(64).parse(id), ctx.person.id);
   revalidatePath("/handover");
 }
 

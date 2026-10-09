@@ -37,7 +37,7 @@ export default async function Handover() {
           {items.map((h) => (
             <div key={h.id} className="card row">
               <span className={`chip ${h.needsAction ? "late" : ""}`}>{h.category}</span>
-              <div className="grow"><div>{h.body}</div><div className="muted">{h.createdBy} · {time(h.createdAt)}{h.needsAction ? " · carries over until closed" : ""}</div></div>
+              <div className="grow"><div>{h.body}</div><div className="muted">{h.createdByName} · {time(h.createdAt)}{h.needsAction ? " · carries over until closed" : ""}</div></div>
               <form action={closeHandover.bind(null, h.id)}><button className="btn ghost small" type="submit">Done</button></form>
             </div>
           ))}

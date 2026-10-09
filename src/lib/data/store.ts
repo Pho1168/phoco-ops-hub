@@ -3,13 +3,14 @@ import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/do
 export interface Session { id: string; personId: string; siteId: SiteId; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 export interface Run { listId: string; date: string; answers: Answer[]; signedBy?: string; signedAt?: number }
 export interface Alert { id: string; siteId: SiteId; level: "warning" | "critical"; title: string; detail: string; dedupeKey: string; createdAt: number; resolvedAt?: number; resolvedBy?: string; resolutionNote?: string }
-export interface HandoverItem { id: string; siteId: SiteId; category: string; body: string; needsAction: boolean; createdBy: string; createdAt: number; closedAt?: number; closedBy?: string }
+/** createdBy/closedBy are person ids; createdByName is filled in by the store for display. */
+export interface HandoverItem { id: string; siteId: SiteId; category: string; body: string; needsAction: boolean; createdBy: string; createdByName: string; createdAt: number; closedAt?: number; closedBy?: string }
 export interface AuditEntry { at: number; actorId?: string; siteId?: SiteId; action: string; detail: string }
 
 /**
  * Everything the app reads and writes goes through this interface.
- * DemoStore keeps data in server memory for development; a Supabase store implements the same methods
- * against the schema in supabase/migrations.
+ * DemoStore keeps data in server memory for development; SqlStore implements the same methods
+ * against the Postgres schema in supabase/migrations (Supabase in production).
  */
 export interface Store {
   sites(): Promise<Site[]>;
@@ -36,7 +37,7 @@ export interface Store {
   resolveAlert(id: string, personId: string, note: string): Promise<void>;
 
   handover(siteId: SiteId): Promise<HandoverItem[]>;
-  addHandover(h: Omit<HandoverItem, "id" | "createdAt">): Promise<void>;
+  addHandover(h: Omit<HandoverItem, "id" | "createdAt" | "createdByName">): Promise<void>;
   closeHandover(id: string, personId: string): Promise<void>;
 
   audit(entry: Omit<AuditEntry, "at">): Promise<void>;
