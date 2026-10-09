@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyReading, parseReading } from "./temperature";
 import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
-import { canFreeze, canSignIn, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS } from "./access";
+import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
 import { diffShifts, parseExport, reminderTimes } from "./rota";
 import { hashPin, isValidPin, verifyPin } from "./pin";
 import type { Answer, Checklist, Person, Site, TempRule } from "./types";
@@ -160,5 +160,16 @@ describe("rota import", () => {
     const d = diffShifts([a, b], [{ ...a, start: "12:00" }]);
     expect(d.changed).toHaveLength(1);
     expect(d.cancelled.map((s) => s.sourceKey)).toEqual(["2"]);
+  });
+});
+
+describe("PIN lockout shared by sign-in and sign-off", () => {
+  it("locks after the maximum attempts and unlocks after the lock period", () => {
+    let p = { pinFailed: 0, pinLockedUntil: undefined as number | undefined };
+    for (let i = 0; i < MAX_PIN_ATTEMPTS - 1; i++) p = { ...p, ...registerPinFailure(p as never, 1000) };
+    expect(isPinLocked(p, 1000)).toBe(false);
+    p = { ...p, ...registerPinFailure(p as never, 1000) };
+    expect(isPinLocked(p, 1001)).toBe(true);
+    expect(isPinLocked(p, 1000 + PIN_LOCK_MINUTES * 60_000 + 1)).toBe(false);
   });
 });

@@ -11,11 +11,16 @@ export function canSignIn(person: Person, site: Site, now: number): SignInCheck 
   if (!access) return { allowed: false, reason: `You don't have access to ${site.name}` };
   if (person.status === "frozen") return { allowed: false, reason: "Your account is frozen. Speak to your manager" };
   if (person.status === "left") return { allowed: false, reason: "This account is no longer active" };
-  if (person.pinLockedUntil && person.pinLockedUntil > now)
+  if (isPinLocked(person, now))
     return { allowed: false, reason: "Too many wrong PINs. Try again in a few minutes or ask a manager" };
   if (site.status === "closed" && access.role !== "owner")
     return { allowed: false, reason: `${site.name} is closed. Sign-in is frozen until the owner reopens it` };
   return { allowed: true };
+}
+
+/** True while an account is locked out after too many wrong PINs (sign-in and sign-off share the count). */
+export function isPinLocked(person: Pick<Person, "pinLockedUntil">, now: number): boolean {
+  return !!person.pinLockedUntil && person.pinLockedUntil > now;
 }
 
 /** Result of a wrong PIN: counts the failure and locks after MAX_PIN_ATTEMPTS. */

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { store } from "@/lib/data";
-import { canFreeze, canSignIn, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
+import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { verifyPin } from "@/lib/domain/pin";
 import type { SiteId } from "@/lib/domain/types";
@@ -88,7 +88,21 @@ export async function recordAction(listId: string, itemId: string, action: strin
 export async function signOffRun(listId: string, pin: string): Promise<ActionResult> {
   const ctx = await requireCtx();
   const db = store();
-  if (!verifyPin(pin, ctx.person.pinHash)) return { ok: false, error: "PIN doesn't match" };
+  const now = Date.now();
+  if (isPinLocked(ctx.person, now)) return { ok: false, error: "Too many wrong PINs. Try again in a few minutes or ask a manager" };
+  if (!verifyPin(pin, ctx.person.pinHash)) {
+    // Wrong PINs at sign-off count towards the same lockout as the sign-in screen.
+    const patch = registerPinFailure(ctx.person, now);
+    await db.updatePerson(ctx.person.id, patch);
+    await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "signoff.failed", detail: "Wrong PIN at sign-off" });
+    if (isPinLocked(patch, now)) {
+      await db.revokeSessions({ personId: ctx.person.id }, "too many wrong PINs at sign-off");
+      cookies().delete(SESSION_COOKIE);
+      return { ok: false, error: "Too many wrong PINs. You've been signed out for 15 minutes" };
+    }
+    return { ok: false, error: "PIN doesn't match" };
+  }
+  if (ctx.person.pinFailed > 0) await db.updatePerson(ctx.person.id, { pinFailed: 0 });
   const list = await db.checklist(listId);
   if (!list) return { ok: false, error: "Checklist not found" };
   const { date } = londonNow();
