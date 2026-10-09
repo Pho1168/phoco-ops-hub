@@ -1,0 +1,1298 @@
+{
+ "EAS": {
+  "name": "Eastcote",
+  "type": "Restaurant",
+  "checklists": [
+   {
+    "id": "EAS-FOH-OPEN",
+    "name": "FOH Opening",
+    "area": "FOH",
+    "when": "Before doors open",
+    "due": "11:30",
+    "source": "EAS- FOH Opening Closing + SYD FOH (counter desk items)",
+    "sections": [
+     [
+      "Dining area",
+      [
+       {
+        "text": "Set and adjust menus on tables",
+        "type": "tick"
+       },
+       {
+        "text": "Straighten polaroids on the wall",
+        "type": "tick"
+       },
+       {
+        "text": "Straighten chairs",
+        "type": "tick"
+       },
+       {
+        "text": "Dim lights on, brightness set",
+        "type": "tick"
+       },
+       {
+        "text": "Coat hanging area tidy",
+        "type": "tick"
+       },
+       {
+        "text": "Air con settings checked",
+        "type": "tick"
+       },
+       {
+        "text": "Air freshener sprayed along the dining area",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Counter desk",
+      [
+       {
+        "text": "PC, POS and delivery apps switched on",
+        "type": "tick"
+       },
+       {
+        "text": "Stock items updated in POS",
+        "type": "tick",
+        "tag": "from SYD"
+       },
+       {
+        "text": "Old receipts cleared",
+        "type": "tick",
+        "tag": "from SYD"
+       },
+       {
+        "text": "No unprocessed sales left in POS",
+        "type": "tick",
+        "tag": "from SYD",
+        "hint": "If there are, tell the manager"
+       },
+       {
+        "text": "Music playlist on",
+        "type": "tick",
+        "tag": "from SYD"
+       }
+      ]
+     ],
+     [
+      "Bar and service",
+      [
+       {
+        "text": "Beer tap on and set to level 7",
+        "type": "tick",
+        "limit": "Level 7"
+       },
+       {
+        "text": "Pho condiments restocked",
+        "type": "tick",
+        "hint": "Sweet chilli onion, hoisin, lime"
+       },
+       {
+        "text": "Drink mix jugs checked and restocked",
+        "type": "tick",
+        "hint": "Coffee, lemonade, tea"
+       },
+       {
+        "text": "Che items restocked in fridge",
+        "type": "tick"
+       },
+       {
+        "text": "Glasses polished and restocked",
+        "type": "tick"
+       },
+       {
+        "text": "Dine-in cutlery and plates polished and restocked",
+        "type": "tick"
+       },
+       {
+        "text": "Takeaway packaging, cutlery and utensils restocked",
+        "type": "tick"
+       },
+       {
+        "text": "Dip saucers counted",
+        "type": "tick",
+        "tag": "from SYD"
+       }
+      ]
+     ],
+     [
+      "Customer toilet",
+      [
+       {
+        "text": "Toilet roll restocked, 1 spare on the shelf",
+        "type": "tick"
+       },
+       {
+        "text": "Hand soap restocked",
+        "type": "tick"
+       },
+       {
+        "text": "Hot water working",
+        "type": "tick"
+       },
+       {
+        "text": "Air freshener sprayed",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-FOH-CLOSE",
+    "name": "FOH Closing",
+    "area": "FOH",
+    "when": "After last customer",
+    "due": "22:30",
+    "source": "EAS- FOH Opening Closing + SYD FOH (counter desk, labelling)",
+    "sections": [
+     [
+      "Dining area",
+      [
+       {
+        "text": "Tables cleaned",
+        "type": "tick"
+       },
+       {
+        "text": "Floors hoovered and mopped",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Counter desk",
+      [
+       {
+        "text": "All unprocessed sales closed",
+        "type": "tick",
+        "tag": "from SYD"
+       },
+       {
+        "text": "End-of-day sales entered",
+        "type": "number",
+        "tag": "from SYD",
+        "hint": "Enter the total from the POS Z-report"
+       },
+       {
+        "text": "Mobile, card reader and delivery tablets on charge",
+        "type": "tick",
+        "tag": "from SYD"
+       },
+       {
+        "text": "Counter desk tidied",
+        "type": "tick",
+        "tag": "from SYD"
+       }
+      ]
+     ],
+     [
+      "Bar and service",
+      [
+       {
+        "text": "Sauce bottles cleaned, wiped and covered",
+        "type": "tick"
+       },
+       {
+        "text": "Countertop fridge contents moved to undercounter fridge",
+        "type": "tick"
+       },
+       {
+        "text": "Countertop fridge switched off",
+        "type": "tick"
+       },
+       {
+        "text": "Undercounter fridge lights off",
+        "type": "tick",
+        "tag": "from SYD"
+       },
+       {
+        "text": "All fridge contents stored correctly and labelled",
+        "type": "tick",
+        "tag": "from SYD"
+       }
+      ]
+     ],
+     [
+      "Customer toilet",
+      [
+       {
+        "text": "Toilet and mirror clean",
+        "type": "tick",
+        "tag": "from SYD"
+       },
+       {
+        "text": "Toilet bin emptied into main bin",
+        "type": "tick"
+       },
+       {
+        "text": "Tissue rolls replenished",
+        "type": "tick",
+        "tag": "from SYD"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-FOH-CLEAN",
+    "name": "FOH Daily Clean",
+    "area": "FOH",
+    "when": "End of each shift",
+    "due": "End of shift",
+    "source": "EAS- FOH Cleaning Schedule",
+    "sections": [
+     [
+      "Dining area",
+      [
+       {
+        "text": "Menus wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Tables and chairs cleaned and sanitised",
+        "type": "tick"
+       },
+       {
+        "text": "Bench ledges and divider frames wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Side ledges wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Standing cabinet wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Polaroids and wire straightened",
+        "type": "tick"
+       },
+       {
+        "text": "Floor vacuumed and mopped with floor cleaner",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Front area",
+      [
+       {
+        "text": "Door handle wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Counter wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Counter devices wiped",
+        "type": "tick",
+        "hint": "PC, printers, phones, keyboard"
+       }
+      ]
+     ],
+     [
+      "Bar area",
+      [
+       {
+        "text": "Beer tap machine cleaned and sanitised",
+        "type": "tick"
+       },
+       {
+        "text": "Beer tap cupboard wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Prep table cleaned and sanitised",
+        "type": "tick"
+       },
+       {
+        "text": "Drainer mats washed",
+        "type": "tick"
+       },
+       {
+        "text": "Bar fridge doors, handles and glass wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Inside bar fridges sanitised",
+        "type": "tick"
+       },
+       {
+        "text": "Mini freezer wiped",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Customer toilet",
+      [
+       {
+        "text": "Mirror, basin, toilet and tank cleaned",
+        "type": "tick"
+       },
+       {
+        "text": "Light switch and door handles wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Tissue and soap dispensers wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Under-sink cupboard and handle wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Overhead cupboard and shelf wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Bin emptied",
+        "type": "tick"
+       },
+       {
+        "text": "Floor swept and mopped",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-FOH-WEEKLY",
+    "name": "FOH Weekly & Monthly Clean",
+    "area": "FOH",
+    "when": "Weekly / monthly",
+    "due": "Mon",
+    "source": "EAS- FOH Cleaning Schedule (duplicate row removed)",
+    "sections": [
+     [
+      "Every week",
+      [
+       {
+        "text": "Light pendants wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Wall tiles wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Door and window panels cleaned",
+        "type": "tick"
+       },
+       {
+        "text": "Top storage doors wiped",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Every month",
+      [
+       {
+        "text": "Tracking lights wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Air con cleaned",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-FOH-TOILET",
+    "name": "Toilet Check",
+    "area": "FOH",
+    "when": "Every 2 hours in service",
+    "due": "Repeating",
+    "source": "Toilet Check (PDF)",
+    "sections": [
+     [
+      "Quick check",
+      [
+       {
+        "text": "Toilet clean and flushed",
+        "type": "tick"
+       },
+       {
+        "text": "Toilet roll, soap and paper towels stocked",
+        "type": "tick"
+       },
+       {
+        "text": "Floor dry and bin not overflowing",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-BAR-PREP",
+    "name": "Bar & Counter Prep",
+    "area": "FOH",
+    "when": "Before service",
+    "due": "11:30",
+    "source": "Bar Area Prep Work",
+    "sections": [
+     [
+      "General",
+      [
+       {
+        "text": "Limes cut into wedges",
+        "type": "tick"
+       },
+       {
+        "text": "Sweet chilli onions checked",
+        "type": "tick"
+       },
+       {
+        "text": "Packaging restocked",
+        "type": "tick"
+       },
+       {
+        "text": "Drinks restocked",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Banh mi",
+      [
+       {
+        "text": "Banh mi stock checked",
+        "type": "tick"
+       },
+       {
+        "text": "Coriander stalks cut to length",
+        "type": "tick"
+       },
+       {
+        "text": "Cucumber sliced",
+        "type": "tick"
+       },
+       {
+        "text": "Chillies sliced",
+        "type": "tick"
+       },
+       {
+        "text": "Spring onions finely shredded",
+        "type": "tick"
+       },
+       {
+        "text": "House mayo checked",
+        "type": "tick"
+       },
+       {
+        "text": "Pickle restocked",
+        "type": "tick"
+       },
+       {
+        "text": "Pate restocked",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Summer rolls",
+      [
+       {
+        "text": "Coriander leaves picked",
+        "type": "tick"
+       },
+       {
+        "text": "Mint leaves picked",
+        "type": "tick"
+       },
+       {
+        "text": "Romaine cut to size",
+        "type": "tick"
+       },
+       {
+        "text": "Bun portioned",
+        "type": "tick"
+       },
+       {
+        "text": "Sauces restocked",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Drinks",
+      [
+       {
+        "text": "Ice broken",
+        "type": "tick"
+       },
+       {
+        "text": "Water containers refilled and frozen",
+        "type": "tick"
+       },
+       {
+        "text": "Lemons sliced",
+        "type": "tick"
+       },
+       {
+        "text": "Mix jugs checked",
+        "type": "tick"
+       },
+       {
+        "text": "Che restocked",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-BOH-OPEN",
+    "name": "BOH Opening",
+    "area": "BOH",
+    "when": "Before service",
+    "due": "11:00",
+    "source": "No EAS BOH file found: based on SYD BOH Opening & Closing",
+    "sections": [
+     [
+      "Start of shift",
+      [
+       {
+        "text": "Uniform on, hands washed, hairnet on",
+        "type": "tick"
+       },
+       {
+        "text": "Appliances on, water boiling for noodles and bun",
+        "type": "tick"
+       },
+       {
+        "text": "Fridge and freezer temperatures recorded",
+        "type": "tick",
+        "hint": "Opens the Temperature Check"
+       },
+       {
+        "text": "Stock levels and use-by dates checked",
+        "type": "tick"
+       },
+       {
+        "text": "Delivery tablets charged and working",
+        "type": "tick"
+       },
+       {
+        "text": "Prep list started",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-BOH-CLOSE",
+    "name": "BOH Closing",
+    "area": "BOH",
+    "when": "After service",
+    "due": "22:30",
+    "source": "Based on SYD BOH Opening & Closing",
+    "sections": [
+     [
+      "Food and stock",
+      [
+       {
+        "text": "All food containers lidded and in fridges or freezers",
+        "type": "tick"
+       },
+       {
+        "text": "Stock checked for tomorrow",
+        "type": "tick",
+        "hint": "Beef brisket, rare beef, chicken, hen chicken, prawns"
+       },
+       {
+        "text": "Meat and prawns moved from freezer to defrost if needed",
+        "type": "tick"
+       },
+       {
+        "text": "Fridge and freezer temperatures recorded",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Shut down",
+      [
+       {
+        "text": "All cooking appliances off",
+        "type": "tick",
+        "hint": "Temperature switches, gas burners, power"
+       },
+       {
+        "text": "Fridge and freezer doors closed, seals checked",
+        "type": "tick"
+       },
+       {
+        "text": "Devices on charge for tomorrow",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Clean down",
+      [
+       {
+        "text": "Pots and utensils washed",
+        "type": "tick"
+       },
+       {
+        "text": "All prep surfaces, appliances and fridge fronts sprayed and wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Floor swept and mopped with detergent",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-BOH-CLEAN",
+    "name": "BOH Cleaning",
+    "area": "BOH",
+    "when": "Daily / weekly / monthly",
+    "due": "End of shift",
+    "source": "Based on SYD BOH Cleaning Schedule",
+    "sections": [
+     [
+      "Every day",
+      [
+       {
+        "text": "Under induction and grill, grill tray emptied",
+        "type": "tick"
+       },
+       {
+        "text": "Shelves above cooking station",
+        "type": "tick"
+       },
+       {
+        "text": "Noodle and blanching machine cleaned and refilled",
+        "type": "tick"
+       },
+       {
+        "text": "Microwaves, baguette warmer, timers, rice cookers",
+        "type": "tick"
+       },
+       {
+        "text": "Cloths, brushes and scourers washed",
+        "type": "tick"
+       },
+       {
+        "text": "Food probe cleaned and sanitised",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Twice a week",
+      [
+       {
+        "text": "Grease traps",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Every week",
+      [
+       {
+        "text": "Behind cooking station",
+        "type": "tick"
+       },
+       {
+        "text": "Cutlery and cup drainers, scourer storage",
+        "type": "tick"
+       },
+       {
+        "text": "Inside fridges and freezers",
+        "type": "tick"
+       },
+       {
+        "text": "Extraction grills and hood",
+        "type": "tick"
+       },
+       {
+        "text": "Dishwasher, spray arms, sink tap and hand spray",
+        "type": "tick"
+       },
+       {
+        "text": "Grills",
+        "type": "tick"
+       },
+       {
+        "text": "Electronic fly killer cleaned",
+        "type": "photo",
+        "hint": "Monday morning. Power off at the wall first"
+       },
+       {
+        "text": "Bin areas including sides and wall",
+        "type": "tick"
+       },
+       {
+        "text": "Drain treatment",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Every month",
+      [
+       {
+        "text": "Upper walls",
+        "type": "tick"
+       },
+       {
+        "text": "Evaporators (cold room motors)",
+        "type": "tick"
+       },
+       {
+        "text": "Air con",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-TEMP-COLD",
+    "name": "Fridge & Freezer Temps",
+    "area": "BOH",
+    "when": "Opening and closing",
+    "due": "11:00 · 22:00",
+    "source": "WEM Cold Storage Temp Log format. EAS fridge list to confirm",
+    "sections": [
+     [
+      "Cold storage",
+      [
+       {
+        "text": "Undercounter fridge (bar)",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal"
+       },
+       {
+        "text": "Countertop fridge",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal"
+       },
+       {
+        "text": "Kitchen fridge 1",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal",
+        "tag": "name to confirm"
+       },
+       {
+        "text": "Kitchen fridge 2",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal",
+        "tag": "name to confirm"
+       },
+       {
+        "text": "Mini freezer (bar)",
+        "type": "temp",
+        "limit": "≤ -18°C"
+       },
+       {
+        "text": "Kitchen freezer",
+        "type": "temp",
+        "limit": "≤ -18°C",
+        "tag": "name to confirm"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-TEMP-COOK",
+    "name": "Cooking Temps",
+    "area": "BOH",
+    "when": "AM and PM",
+    "due": "12:00 · 18:00",
+    "source": "WEM Cooking Temp Log",
+    "sections": [
+     [
+      "Core temperature",
+      [
+       {
+        "text": "Chicken",
+        "type": "temp",
+        "limit": "≥ 75°C for 30 s"
+       },
+       {
+        "text": "Pork",
+        "type": "temp",
+        "limit": "≥ 75°C for 30 s"
+       },
+       {
+        "text": "Lamb",
+        "type": "temp",
+        "limit": "≥ 75°C for 30 s"
+       },
+       {
+        "text": "Pho broth reheated",
+        "type": "temp",
+        "limit": "≥ 75°C",
+        "tag": "new"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "EAS-RECEIVE",
+    "name": "Wembley Delivery",
+    "area": "BOH",
+    "when": "On arrival",
+    "due": "On arrival",
+    "source": "New, from the MVP spec (US-13)",
+    "tag": "new",
+    "sections": [
+     [
+      "Receive",
+      [
+       {
+        "text": "Scan dispatch QR",
+        "type": "tick"
+       },
+       {
+        "text": "Quantities match the dispatch note",
+        "type": "tick"
+       },
+       {
+        "text": "Arrival temperature of chilled items",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal"
+       },
+       {
+        "text": "Labels present with use-by dates",
+        "type": "tick"
+       },
+       {
+        "text": "Stored in fridge straight away",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   }
+  ]
+ },
+ "WEM": {
+  "name": "Wembley",
+  "type": "Central production kitchen",
+  "checklists": [
+   {
+    "id": "WEM-OPEN",
+    "name": "Production Opening",
+    "area": "PROD",
+    "when": "Start of day",
+    "due": "08:00",
+    "source": "WEM - BOH Opening Closing (restaurant-only items removed)",
+    "sections": [
+     [
+      "Start of day",
+      [
+       {
+        "text": "Uniform on, hands washed, hairnet on",
+        "type": "tick"
+       },
+       {
+        "text": "Fridge and freezer temperatures recorded",
+        "type": "tick",
+        "hint": "Opens the Temperature Check"
+       },
+       {
+        "text": "Sink cleaned and cleared",
+        "type": "tick"
+       },
+       {
+        "text": "Fryer oil checked, fryers on",
+        "type": "tick",
+        "hint": "Skewer fryer 150°C · Twin fryer 180°C"
+       },
+       {
+        "text": "Fridge and freezer door seals checked",
+        "type": "tick"
+       },
+       {
+        "text": "Meat and vegetable stock checked against today's production",
+        "type": "tick"
+       },
+       {
+        "text": "All stations ready",
+        "type": "tick"
+       },
+       {
+        "text": "Safety and hygiene signs displayed in all areas",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "First day of the month",
+      [
+       {
+        "text": "Last month's logs reviewed, issues shared with the team",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "WEM-CLOSE",
+    "name": "Production Closing",
+    "area": "PROD",
+    "when": "End of day",
+    "due": "17:00",
+    "source": "WEM - BOH Opening Closing",
+    "sections": [
+     [
+      "Food and stock",
+      [
+       {
+        "text": "All containers lidded, labelled and stored",
+        "type": "tick"
+       },
+       {
+        "text": "Stock checked against the stock level list",
+        "type": "tick"
+       },
+       {
+        "text": "Tomorrow's meat and prawns moved to defrost",
+        "type": "tick",
+        "hint": "Beef brisket, rare beef, chicken, hen chicken, prawns"
+       },
+       {
+        "text": "Fridge and freezer temperatures recorded",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Shut down",
+      [
+       {
+        "text": "All cooking appliances, gas and power off",
+        "type": "tick"
+       },
+       {
+        "text": "Taps, gas burners and fryers double-checked off",
+        "type": "tick"
+       },
+       {
+        "text": "Fridge and freezer doors closed, seals checked",
+        "type": "tick"
+       },
+       {
+        "text": "Devices on charge",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Clean down",
+      [
+       {
+        "text": "Pots and utensils washed",
+        "type": "tick"
+       },
+       {
+        "text": "Prep surfaces, appliances and fridge fronts sprayed and wiped",
+        "type": "tick"
+       },
+       {
+        "text": "Floor swept and mopped with detergent",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "WEM-CLEAN",
+    "name": "Production Cleaning",
+    "area": "PROD",
+    "when": "Daily / weekly / monthly",
+    "due": "End of day",
+    "source": "WEM - BOH Cleaning Schedule (+ fly killer and drain treatment from SYD)",
+    "sections": [
+     [
+      "Every day",
+      [
+       {
+        "text": "Under induction and grill, grill tray emptied",
+        "type": "tick"
+       },
+       {
+        "text": "Shelves above cooking station",
+        "type": "tick"
+       },
+       {
+        "text": "Noodle and blanching machine cleaned and refilled",
+        "type": "tick"
+       },
+       {
+        "text": "Microwaves, timers, rice cookers",
+        "type": "tick"
+       },
+       {
+        "text": "Cloths, brushes and scourers washed",
+        "type": "tick"
+       },
+       {
+        "text": "Food probe cleaned and sanitised",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Twice a week",
+      [
+       {
+        "text": "Grease traps",
+        "type": "tick"
+       }
+      ]
+     ],
+     [
+      "Every week",
+      [
+       {
+        "text": "Behind cooking station",
+        "type": "tick"
+       },
+       {
+        "text": "Inside fridges and freezers",
+        "type": "tick"
+       },
+       {
+        "text": "Extraction grills and hood",
+        "type": "tick"
+       },
+       {
+        "text": "Dishwasher, spray arms, sink tap and hand spray",
+        "type": "tick"
+       },
+       {
+        "text": "Grills",
+        "type": "tick"
+       },
+       {
+        "text": "Electronic fly killer cleaned",
+        "type": "photo",
+        "tag": "from SYD"
+       },
+       {
+        "text": "Bin areas including sides and wall",
+        "type": "tick"
+       },
+       {
+        "text": "Drain treatment",
+        "type": "tick",
+        "tag": "from SYD"
+       }
+      ]
+     ],
+     [
+      "Every month",
+      [
+       {
+        "text": "Upper walls",
+        "type": "tick"
+       },
+       {
+        "text": "Cold room evaporators",
+        "type": "tick"
+       },
+       {
+        "text": "Air con",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "WEM-TEMP-COLD",
+    "name": "Fridge & Freezer Temps",
+    "area": "PROD",
+    "when": "Opening and closing",
+    "due": "08:00 · 16:30",
+    "source": "WEM - Cold Storage Temp Log",
+    "sections": [
+     [
+      "Fridges",
+      [
+       {
+        "text": "Fridge 1",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal"
+       },
+       {
+        "text": "Fridge 2",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal"
+       },
+       {
+        "text": "Fridge 3",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal"
+       },
+       {
+        "text": "Fridge 4",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal"
+       },
+       {
+        "text": "Fridge 5",
+        "type": "temp",
+        "limit": "≤ 5°C target · 8°C legal"
+       }
+      ]
+     ],
+     [
+      "Freezers",
+      [
+       {
+        "text": "Freezer 1",
+        "type": "temp",
+        "limit": "≤ -18°C"
+       },
+       {
+        "text": "Freezer 2",
+        "type": "temp",
+        "limit": "≤ -18°C"
+       },
+       {
+        "text": "Freezer 3",
+        "type": "temp",
+        "limit": "≤ -18°C"
+       },
+       {
+        "text": "Freezer 4",
+        "type": "temp",
+        "limit": "≤ -18°C"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "WEM-TEMP-COOK",
+    "name": "Cooking Temps",
+    "area": "PROD",
+    "when": "AM and PM",
+    "due": "10:00 · 14:00",
+    "source": "WEM Cooking Temp Log",
+    "sections": [
+     [
+      "Core temperature",
+      [
+       {
+        "text": "Chicken",
+        "type": "temp",
+        "limit": "≥ 75°C for 30 s"
+       },
+       {
+        "text": "Pork",
+        "type": "temp",
+        "limit": "≥ 75°C for 30 s"
+       },
+       {
+        "text": "Lamb",
+        "type": "temp",
+        "limit": "≥ 75°C for 30 s"
+       },
+       {
+        "text": "Tofu",
+        "type": "temp",
+        "limit": "≥ 75°C for 30 s"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "WEM-BATCH",
+    "name": "Batch, Cool & Label",
+    "area": "PROD",
+    "when": "Per batch",
+    "due": "Per batch",
+    "source": "New, from the MVP spec (US-12)",
+    "tag": "new",
+    "sections": [
+     [
+      "Batch",
+      [
+       {
+        "text": "Recipe and batch size selected",
+        "type": "tick"
+       },
+       {
+        "text": "End-of-cook core temperature",
+        "type": "temp",
+        "limit": "≥ 75°C"
+       },
+       {
+        "text": "Cooling start time and temperature",
+        "type": "temp"
+       },
+       {
+        "text": "Cooled to fridge temperature within 90 minutes",
+        "type": "temp",
+        "limit": "≤ 5°C"
+       },
+       {
+        "text": "Label printed and applied",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   },
+   {
+    "id": "WEM-DISPATCH",
+    "name": "Dispatch to Eastcote",
+    "area": "PROD",
+    "when": "Before van leaves",
+    "due": "Daily",
+    "source": "New, from the MVP spec (US-13)",
+    "tag": "new",
+    "sections": [
+     [
+      "Load",
+      [
+       {
+        "text": "Each batch label scanned onto the dispatch",
+        "type": "tick"
+       },
+       {
+        "text": "Load temperature of chilled items",
+        "type": "temp",
+        "limit": "≤ 5°C"
+       },
+       {
+        "text": "Driver name recorded",
+        "type": "text"
+       },
+       {
+        "text": "Van chilled and clean",
+        "type": "tick"
+       }
+      ]
+     ]
+    ]
+   }
+  ]
+ }
+}
