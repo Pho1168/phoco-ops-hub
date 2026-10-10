@@ -7,9 +7,10 @@ import { z } from "zod";
 import { store } from "@/lib/data";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
-import { verifyPin } from "@/lib/domain/pin";
+import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
+import { canChangeAccess, canMarkLeft, validatePersonInput } from "@/lib/domain/staff";
 import type { SiteId } from "@/lib/domain/types";
-import { londonNow, requireCtx, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
+import { current, londonNow, requireCtx, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
 
 const SiteIdZ = z.enum(["EAS", "WEM", "SYD"]);
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -204,7 +205,7 @@ export async function resolveAlert(id: string, note: string): Promise<ActionResu
   const ctx = await requireCtx();
   if (!ctx.isManager) return { ok: false, error: "Only managers can resolve alerts" };
   if (!note.trim()) return { ok: false, error: "Say what was done" };
-  await store().resolveAlert(id, ctx.person.name, note.trim().slice(0, 500));
+  await store().resolveAlert(z.string().max(64).parse(id), ctx.person.id, note.trim().slice(0, 500));
   await store().audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "alert.resolve", detail: note.trim() });
   revalidatePath("/owner");
   revalidatePath("/today");
@@ -219,4 +220,115 @@ export async function switchSite(siteId: string): Promise<void> {
   const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS);
   cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
   redirect("/today");
+}
+
+// ---------- staff management (owners) ----------
+
+const AccessZ = z.array(z.object({
+  siteId: SiteIdZ,
+  role: z.enum(["owner", "manager", "staff"]),
+  sections: z.array(z.enum(["FOH", "BOH", "PROD"])).max(3),
+})).max(3);
+const PersonZ = z.object({ staffCode: z.string().max(20), name: z.string().max(80), access: AccessZ });
+const describeAccess = (a: z.infer<typeof AccessZ>) => a.map((x) => `${x.siteId} ${x.role}${x.sections.length ? ` (${x.sections.join("+")})` : ""}`).join(", ");
+
+export async function createPerson(input: unknown, tempPin: string): Promise<ActionResult & { id?: string }> {
+  const ctx = await requireOwner();
+  const db = store();
+  const parsed = PersonZ.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Some details are missing" };
+  const checked = validatePersonInput(parsed.data, await db.sites(), await db.people());
+  if (!checked.ok) return checked;
+  if (!isValidPin(tempPin)) return { ok: false, error: `Temporary PIN: ${PIN_RULE}` };
+  const id = await db.createPerson({ ...checked.value, pinHash: hashPin(tempPin), pinMustChange: true });
+  await db.audit({ actorId: ctx.person.id, action: "person.create", detail: `Added ${checked.value.name} (${checked.value.staffCode}): ${describeAccess(checked.value.access)}` });
+  revalidatePath("/owner");
+  return { ok: true, id };
+}
+
+export async function updatePerson(personId: string, input: unknown): Promise<ActionResult> {
+  const ctx = await requireOwner();
+  const db = store();
+  const target = await db.person(z.string().max(64).parse(personId));
+  if (!target) return { ok: false, error: "Person not found" };
+  const parsed = PersonZ.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Some details are missing" };
+  const people = await db.people();
+  const checked = validatePersonInput(parsed.data, await db.sites(), people, target.id);
+  if (!checked.ok) return checked;
+  const allowed = canChangeAccess(ctx.person, target, checked.value.access, people);
+  if (!allowed.ok) return allowed;
+  const accessChanged = describeAccess(target.access) !== describeAccess(checked.value.access);
+  await db.updatePerson(target.id, { name: checked.value.name, staffCode: checked.value.staffCode });
+  if (accessChanged) {
+    await db.setAccess(target.id, checked.value.access);
+    // New access takes effect on next sign-in (never for the owner making the change, so they aren't thrown out).
+    if (target.id !== ctx.person.id) await db.revokeSessions({ personId: target.id }, "access changed");
+  }
+  await db.audit({ actorId: ctx.person.id, action: "person.update", detail: `${checked.value.name} (${checked.value.staffCode})${accessChanged ? `: ${describeAccess(checked.value.access)}` : ": details updated"}` });
+  revalidatePath("/owner");
+  revalidatePath(`/staff/${target.id}`);
+  return { ok: true };
+}
+
+export async function resetPin(personId: string, tempPin: string): Promise<ActionResult> {
+  const ctx = await requireOwner();
+  const db = store();
+  const target = await db.person(z.string().max(64).parse(personId));
+  if (!target) return { ok: false, error: "Person not found" };
+  if (target.id === ctx.person.id) return { ok: false, error: "Change your own PIN from \"My PIN\" instead" };
+  if (!isValidPin(tempPin)) return { ok: false, error: `Temporary PIN: ${PIN_RULE}` };
+  await db.updatePerson(target.id, { pinHash: hashPin(tempPin), pinMustChange: true, pinFailed: 0, pinLockedUntil: undefined });
+  await db.revokeSessions({ personId: target.id }, "PIN reset by owner");
+  await db.audit({ actorId: ctx.person.id, action: "person.pin_reset", detail: `Temporary PIN set for ${target.name}` });
+  revalidatePath(`/staff/${target.id}`);
+  return { ok: true };
+}
+
+export async function setLeft(personId: string, left: boolean): Promise<ActionResult> {
+  const ctx = await requireOwner();
+  const db = store();
+  const target = await db.person(z.string().max(64).parse(personId));
+  if (!target) return { ok: false, error: "Person not found" };
+  if (left) {
+    const allowed = canMarkLeft(ctx.person, target, await db.people());
+    if (!allowed.ok) return allowed;
+    await db.updatePerson(target.id, { status: "left", frozenReason: undefined });
+    await db.revokeSessions({ personId: target.id }, "marked as left");
+  } else {
+    await db.updatePerson(target.id, { status: "active", frozenReason: undefined });
+  }
+  await db.audit({ actorId: ctx.person.id, action: left ? "person.left" : "person.rejoined", detail: target.name });
+  revalidatePath("/owner");
+  revalidatePath(`/staff/${target.id}`);
+  return { ok: true };
+}
+
+// ---------- my PIN (everyone) ----------
+
+export async function changeMyPin(currentPin: string, nextPin: string, confirmPin: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) redirect("/login");
+  const db = store();
+  const now = Date.now();
+  if (isPinLocked(ctx.person, now)) return { ok: false, error: "Too many wrong PINs. Try again in a few minutes or ask a manager" };
+  if (!verifyPin(currentPin, ctx.person.pinHash)) {
+    const patch = registerPinFailure(ctx.person, now);
+    await db.updatePerson(ctx.person.id, patch);
+    await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "pin_change.failed", detail: "Wrong current PIN" });
+    if (isPinLocked(patch, now)) {
+      await db.revokeSessions({ personId: ctx.person.id }, "too many wrong PINs");
+      cookies().delete(SESSION_COOKIE);
+      return { ok: false, error: "Too many wrong PINs. You've been signed out for 15 minutes" };
+    }
+    return { ok: false, error: ctx.person.pinMustChange ? "That isn't the temporary PIN you were given" : "Your current PIN doesn't match" };
+  }
+  if (!isValidPin(nextPin)) return { ok: false, error: PIN_RULE };
+  if (nextPin === currentPin) return { ok: false, error: "Choose a PIN that's different from the current one" };
+  if (nextPin !== confirmPin) return { ok: false, error: "The two new PINs don't match" };
+  await db.updatePerson(ctx.person.id, { pinHash: hashPin(nextPin), pinMustChange: false, pinFailed: 0, pinLockedUntil: undefined });
+  // Sign out other devices that might know the old PIN's session; keep this one.
+  await db.revokeSessions({ personId: ctx.person.id, exceptSessionId: ctx.sessionId }, "PIN changed");
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "pin_change", detail: "Changed their PIN" });
+  return { ok: true };
 }

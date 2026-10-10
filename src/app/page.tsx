@@ -3,5 +3,5 @@ import { current } from "@/lib/session";
 
 export default async function Home() {
   const ctx = await current();
-  redirect(ctx ? (ctx.isOwner ? "/owner" : "/today") : "/login");
+  redirect(!ctx ? "/login" : ctx.person.pinMustChange ? "/pin" : ctx.isOwner ? "/owner" : "/today");
 }

@@ -20,10 +20,14 @@ export interface Store {
   people(): Promise<Person[]>;
   person(id: string): Promise<Person | undefined>;
   updatePerson(id: string, patch: Partial<Person>): Promise<void>;
+  /** Creates a person with their site access; returns the new id. */
+  createPerson(p: { staffCode: string; name: string; pinHash: string; pinMustChange: boolean; access: Person["access"] }): Promise<string>;
+  /** Replaces a person's site access. */
+  setAccess(personId: string, access: Person["access"]): Promise<void>;
 
   createSession(personId: string, siteId: SiteId, ttlMs: number): Promise<Session>;
   session(id: string): Promise<Session | undefined>;
-  revokeSessions(match: { personId?: string; siteId?: SiteId; exceptPersonIds?: string[] }, reason: string): Promise<number>;
+  revokeSessions(match: { personId?: string; siteId?: SiteId; exceptPersonIds?: string[]; exceptSessionId?: string }, reason: string): Promise<number>;
 
   rules(): Promise<Record<string, TempRule>>;
   checklists(siteId: SiteId): Promise<Checklist[]>;

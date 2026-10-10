@@ -6,7 +6,7 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
 
 ## What works today
 
-- **Sign in** with name + 4–6 digit PIN, per site. 5 wrong PINs locks the account for 15 minutes.
+- **Sign in** with name + 4-digit PIN, per site. 5 wrong PINs locks the account for 15 minutes.
 - **Today screen**: the site's checklists for each section (FOH, BOH, Production) with due times, overdue flags, open alerts and handover items.
 - **Checklists**: tick items, temperature readings, numbers, text, photo placeholders. Readings are checked against the approved limits:
   - Fridge: target ≤ 5 °C, legal limit 8 °C
@@ -33,7 +33,7 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-Demo PINs: owner **2580**, everyone else **1357**. The demo people are clearly labelled "(demo)". No real staff data is in this repo.
+Demo PINs: owner **4826**, everyone else **1357**. The demo people are clearly labelled "(demo)". No real staff data is in this repo.
 
 ## Run it on the real database
 

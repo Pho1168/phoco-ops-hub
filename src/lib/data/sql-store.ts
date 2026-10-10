@@ -32,14 +32,14 @@ const fromDbOutcome = (o: string): Outcome => (o === "cleared" ? "todo" : (o as 
 
 interface PersonRow {
   id: string; staff_code: string; display_name: string; status: Person["status"]; frozen_reason: string | null;
-  pin_hash: string | null; pin_failed: number; pin_locked_until: Date | null;
+  pin_hash: string | null; pin_failed: number; pin_locked_until: Date | null; pin_must_change: boolean;
   access: { site_id: SiteId; role: Role; sections: Area[] }[] | null;
 }
 
 function toPerson(r: PersonRow): Person {
   return {
     id: r.id, staffCode: r.staff_code, name: r.display_name, status: r.status, frozenReason: opt(r.frozen_reason),
-    pinHash: opt(r.pin_hash), pinFailed: r.pin_failed, pinLockedUntil: ms(r.pin_locked_until),
+    pinHash: opt(r.pin_hash), pinFailed: r.pin_failed, pinLockedUntil: ms(r.pin_locked_until), pinMustChange: r.pin_must_change,
     access: (r.access ?? []).map((a) => ({ siteId: a.site_id, role: a.role, sections: a.sections })),
   };
 }
@@ -51,7 +51,7 @@ function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site[
 async function selectPeople(where: postgres.PendingQuery<postgres.Row[]> | null): Promise<Person[]> {
   const q = sql();
   const rows = await q<PersonRow[]>`
-    select p.id, p.staff_code, p.display_name, p.status, p.frozen_reason, p.pin_hash, p.pin_failed, p.pin_locked_until,
+    select p.id, p.staff_code, p.display_name, p.status, p.frozen_reason, p.pin_hash, p.pin_failed, p.pin_locked_until, p.pin_must_change,
       (select coalesce(json_agg(json_build_object('site_id', ps.site_id, 'role', ps.role, 'sections', ps.sections) order by ps.site_id), '[]')
          from person_sites ps where ps.person_id = p.id) as access
     from people p
@@ -112,6 +112,8 @@ export const sqlStore: Store = {
     if (!isUuid(id)) return;
     const cols: Record<string, unknown> = {};
     if ("name" in patch) cols.display_name = patch.name;
+    if ("staffCode" in patch) cols.staff_code = patch.staffCode;
+    if ("pinMustChange" in patch) cols.pin_must_change = !!patch.pinMustChange;
     if ("status" in patch) cols.status = patch.status;
     if ("frozenReason" in patch) cols.frozen_reason = patch.frozenReason ?? null;
     if ("pinHash" in patch) cols.pin_hash = patch.pinHash ?? null;
@@ -121,6 +123,27 @@ export const sqlStore: Store = {
     if (!keys.length) return;
     const q = sql();
     await q`update people set ${q(cols as Record<string, postgres.ParameterOrJSON<never>>, ...keys)} where id = ${id}`;
+  },
+
+  async createPerson({ staffCode, name, pinHash, pinMustChange, access }) {
+    return sql().begin(async (tx) => {
+      const [p] = await tx<{ id: string }[]>`
+        insert into people (staff_code, display_name, pin_hash, pin_must_change)
+        values (${staffCode}, ${name}, ${pinHash}, ${pinMustChange}) returning id`;
+      for (const a of access) {
+        await tx`insert into person_sites (person_id, site_id, role, sections) values (${p.id}, ${a.siteId}, ${a.role}, ${a.sections})`;
+      }
+      return p.id;
+    });
+  },
+  async setAccess(personId, access) {
+    if (!isUuid(personId)) return;
+    await sql().begin(async (tx) => {
+      await tx`delete from person_sites where person_id = ${personId}`;
+      for (const a of access) {
+        await tx`insert into person_sites (person_id, site_id, role, sections) values (${personId}, ${a.siteId}, ${a.role}, ${a.sections})`;
+      }
+    });
   },
 
   async createSession(personId, siteId, ttlMs) {
@@ -149,7 +172,8 @@ export const sqlStore: Store = {
       where revoked_at is null
         ${match.personId ? q`and person_id = ${match.personId}` : q``}
         ${match.siteId ? q`and site_id = ${match.siteId}` : q``}
-        ${except.length ? q`and not (person_id = any(${except}::uuid[]))` : q``}`;
+        ${except.length ? q`and not (person_id = any(${except}::uuid[]))` : q``}
+        ${match.exceptSessionId && isUuid(match.exceptSessionId) ? q`and id <> ${match.exceptSessionId}` : q``}`;
     return res.count;
   },
 

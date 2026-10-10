@@ -138,7 +138,7 @@ export function RunClient(p: Props) {
             <h2 className="h-sec">Sign off {p.name}</h2>
             <label className="stack" style={{ gap: 6 }}>
               <span className="muted">Enter your PIN to sign</span>
-              <input id="sign-pin" className="num" style={{ width: "100%" }} type="password" inputMode="numeric" maxLength={6} autoComplete="off" autoFocus required value={pin} onChange={(e) => setPin(e.target.value)} />
+              <input id="sign-pin" className="num" style={{ width: "100%" }} type="password" inputMode="numeric" maxLength={4} autoComplete="off" autoFocus required value={pin} onChange={(e) => setPin(e.target.value)} />
             </label>
             {signErr && <div className="err" role="alert">{signErr}</div>}
             <div className="row">

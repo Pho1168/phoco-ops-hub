@@ -5,7 +5,7 @@ import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } f
 import type { Alert, AuditEntry, HandoverItem, Run, Session, Store } from "./store";
 
 /** Demo-only people. Real staff come from the database, never from the code. */
-export const DEMO_PINS = { owner: "2580", staff: "1357" } as const;
+export const DEMO_PINS = { owner: "4826", staff: "1357" } as const;
 
 const DUE: Record<string, string> = {
   "EAS-FOH-OPEN": "11:30", "EAS-FOH-CLOSE": "22:30", "EAS-FOH-CLEAN": "22:30", "EAS-BAR-PREP": "11:30",
@@ -98,6 +98,12 @@ export const demoStore: Store = {
   async people() { return S().people; },
   async person(id) { return S().people.find((p) => p.id === id); },
   async updatePerson(id, patch) { const p = S().people.find((x) => x.id === id); if (p) Object.assign(p, patch); },
+  async createPerson({ staffCode, name, pinHash, pinMustChange, access }) {
+    const id = randomUUID();
+    S().people.push({ id, staffCode, name, status: "active", pinHash, pinMustChange, pinFailed: 0, access });
+    return id;
+  },
+  async setAccess(personId, access) { const p = S().people.find((x) => x.id === personId); if (p) p.access = access; },
 
   async createSession(personId, siteId, ttlMs) {
     const s: Session = { id: randomUUID(), personId, siteId, startedAt: Date.now(), expiresAt: Date.now() + ttlMs };
@@ -112,6 +118,7 @@ export const demoStore: Store = {
       if (match.personId && s.personId !== match.personId) continue;
       if (match.siteId && s.siteId !== match.siteId) continue;
       if (match.exceptPersonIds?.includes(s.personId)) continue;
+      if (match.exceptSessionId === s.id) continue;
       s.revokedAt = Date.now(); s.revokedReason = reason; n++;
     }
     return n;

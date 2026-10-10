@@ -28,6 +28,8 @@ export interface Person {
   pinHash?: string;
   pinFailed: number;
   pinLockedUntil?: number; // epoch ms
+  /** Set when an owner gives a temporary PIN; the person must choose their own before doing anything else. */
+  pinMustChange?: boolean;
   access: SiteAccess[];
 }
 

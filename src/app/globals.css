@@ -133,3 +133,8 @@ table.people-table td, table.people-table th { padding: 10px 6px; border-bottom:
 @media (max-width: 520px) { .acct-actions { flex-basis: 100%; } .acct-actions .btn { flex: 1; } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.txt.wide { width: 100%; max-width: 360px; }
+.site-box { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.check { width: 24px; height: 24px; accent-color: var(--brand); flex-shrink: 0; }
+.foot-links { display: flex; justify-content: center; gap: 18px; padding: 8px 0 4px; }
+.foot-links a { color: var(--ink-2); font-size: 14px; font-weight: 600; }
