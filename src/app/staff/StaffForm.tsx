@@ -47,8 +47,8 @@ export function StaffForm({ sites, person, suggestedCode }: { sites: SiteOpt[]; 
         <label className="stack" style={{ gap: 6 }}><span className="strong" style={{ fontSize: 15 }}>Name shown on the sign-in screen</span>
           <input id="staff-name" className="txt wide" required maxLength={40} autoComplete="off" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Mai T." /></label>
         <label className="stack" style={{ gap: 6 }}><span className="strong" style={{ fontSize: 15 }}>Staff ID</span>
-          <input id="staff-code" className="txt wide" required maxLength={7} autoComplete="off" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} />
-          <span className="muted">Matches the Staff ID column in the rota sheet, e.g. PC-0001.</span></label>
+          <input id="staff-code" className="txt wide" required maxLength={3} inputMode="numeric" autoComplete="off" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
+          <span className="muted">Three digits, e.g. 009. Must match the Staff ID column in the rota sheet.</span></label>
 
         <h2 className="h-sec" style={{ marginTop: 6 }}>Sites and roles</h2>
         {sites.map((s) => {

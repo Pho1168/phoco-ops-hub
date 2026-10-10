@@ -2,7 +2,7 @@
 // Create or update a person and their site access, then set their PIN.
 // Used to create the first owner account; after that, people are managed in the app.
 //
-//   DATABASE_URL=... node scripts/add-person.mjs --code PC-0001 --name "First name" \
+//   DATABASE_URL=... node scripts/add-person.mjs --code 001 --name "First name" \
 //     --access "EAS:owner:FOH,BOH;WEM:owner:PROD;SYD:owner"
 //
 // The PIN is asked for privately (or read from the PIN environment variable) and only a hash is stored.
@@ -13,7 +13,7 @@ import postgres from "postgres";
 const { values } = parseArgs({ options: { code: { type: "string" }, name: { type: "string" }, access: { type: "string" } } });
 const fail = (m) => { console.error(m); process.exit(1); };
 if (!process.env.DATABASE_URL) fail("Set DATABASE_URL first.");
-if (!/^PC-\d{4}$/.test(values.code ?? "")) fail("--code must look like PC-0001");
+if (!/^\d{3}$/.test(values.code ?? "")) fail("--code must be three digits, like 001");
 if (!values.name?.trim()) fail("--name is required");
 
 const SITES = ["EAS", "WEM", "SYD"], ROLES = ["owner", "manager", "staff"], AREAS = ["FOH", "BOH", "PROD"];

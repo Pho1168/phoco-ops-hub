@@ -51,8 +51,8 @@ export function SetupScreen({ removed }: { removed: boolean }) {
         <div className="row wrap">
           <label className="stack" style={{ gap: 6, flex: "1 1 140px" }}>
             <span className="strong" style={{ fontSize: 15 }}>Staff ID</span>
-            <input id="owner-staff" className="txt" style={{ width: "100%", maxWidth: "none" }} autoComplete="username" autoCapitalize="characters" placeholder="PC-0000"
-              maxLength={7} value={staff} onChange={(e) => { setOwnerErr(""); setStaff(e.target.value.toUpperCase()); }} />
+            <input id="owner-staff" className="txt" style={{ width: "100%", maxWidth: "none" }} autoComplete="username" inputMode="numeric" placeholder="e.g. 004"
+              maxLength={3} value={staff} onChange={(e) => { setOwnerErr(""); setStaff(e.target.value.replace(/\D/g, "")); }} />
           </label>
           <label className="stack" style={{ gap: 6, flex: "1 1 120px" }}>
             <span className="strong" style={{ fontSize: 15 }}>PIN</span>
@@ -61,7 +61,7 @@ export function SetupScreen({ removed }: { removed: boolean }) {
           </label>
         </div>
         {ownerErr && <div className="err" role="alert">{ownerErr}</div>}
-        <button className="btn" type="submit" disabled={pending || staff.length < 7 || pin.length < 4}>Sign in</button>
+        <button className="btn" type="submit" disabled={pending || staff.length < 1 || pin.length < 4}>Sign in</button>
       </form>
     </div>
   );

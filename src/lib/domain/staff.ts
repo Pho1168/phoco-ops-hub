@@ -1,7 +1,17 @@
 import type { Area, Person, Role, Site, SiteAccess, SiteId } from "./types";
 
-/** Staff IDs match the Staff ID column in the rota sheets: PC-0001, PC-0002 ... */
-export const STAFF_CODE = /^PC-\d{4}$/;
+/** Staff IDs are three digits (001, 002 ...) and match the Staff ID column in the rota sheets. */
+export const STAFF_CODE = /^\d{3}$/;
+
+/**
+ * Reads a staff ID the way people type it or Google Sheets stores it: "1", "01", "001" and the
+ * older "PC-0001" all become "001". Returns null when it can't be a staff ID.
+ */
+export function normalizeStaffCode(input: string | number | null | undefined): string | null {
+  const s = String(input ?? "").trim().toUpperCase();
+  const m = /^(?:PC-?)?0*(\d{1,3})$/.exec(s);
+  return m ? m[1].padStart(3, "0") : null;
+}
 const ROLES: Role[] = ["owner", "manager", "staff"];
 
 /** Sections that exist at each kind of site. */
@@ -20,9 +30,9 @@ export function validatePersonInput(input: PersonInput, sites: Site[], people: P
   const name = input.name.trim().replace(/\s+/g, " ");
   if (!name) return { ok: false, error: "Add a name" };
   if (name.length > 40) return { ok: false, error: "Keep the name under 40 characters" };
-  const staffCode = input.staffCode.trim().toUpperCase();
-  if (!STAFF_CODE.test(staffCode)) return { ok: false, error: "Staff ID must look like PC-0001" };
-  const taken = people.find((p) => p.staffCode.toUpperCase() === staffCode && p.id !== editingId);
+  const staffCode = normalizeStaffCode(input.staffCode);
+  if (!staffCode || !STAFF_CODE.test(staffCode)) return { ok: false, error: "Staff ID must be a number from 001 to 999" };
+  const taken = people.find((p) => normalizeStaffCode(p.staffCode) === staffCode && p.id !== editingId);
   if (taken) return { ok: false, error: `${staffCode} is already used by ${taken.name}` };
 
   if (!input.access.length) return { ok: false, error: "Choose at least one site" };
@@ -62,9 +72,9 @@ export function canMarkLeft(actor: Person, target: Person, people: Person[]): Ch
   return { ok: true, value: true };
 }
 
-/** The next free staff ID, e.g. PC-0009 when PC-0001..PC-0008 exist. */
+/** The next free staff ID, e.g. 009 when 001..008 exist. */
 export function nextStaffCode(people: Person[]): string {
-  const used = people.map((p) => /^PC-(\d{4})$/.exec(p.staffCode)?.[1]).filter(Boolean).map(Number);
+  const used = people.map((p) => normalizeStaffCode(p.staffCode)).filter((c): c is string => !!c).map(Number);
   const n = used.length ? Math.max(...used) + 1 : 1;
-  return `PC-${String(Math.min(n, 9999)).padStart(4, "0")}`;
+  return String(Math.min(n, 999)).padStart(3, "0");
 }

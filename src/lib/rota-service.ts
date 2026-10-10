@@ -4,6 +4,7 @@ import { addDays, afterQuietHours, londonDate, londonHM, QUIET_START } from "@/l
 import type { RotaResult } from "@/lib/data/store";
 import type { SiteId } from "@/lib/domain/types";
 import { pushToPerson } from "@/lib/push";
+import { normalizeStaffCode } from "@/lib/domain/staff";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
 
@@ -18,7 +19,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
 
   // Staff IDs in the sheet must exist in the Hub (Owner → Staff accounts) to get shifts.
   const people = await db.people();
-  const byCode = new Map(people.filter((p) => p.status !== "left").map((p) => [p.staffCode.toUpperCase(), p.id]));
+  const byCode = new Map(people.filter((p) => p.status !== "left").map((p) => [normalizeStaffCode(p.staffCode) ?? p.staffCode, p.id]));
   const missing = new Map<string, string>();
   for (const st of staff) if (!byCode.has(st.staffCode)) missing.set(st.staffCode, st.name);
   const known = shifts.filter((s) => byCode.has(s.staffCode));

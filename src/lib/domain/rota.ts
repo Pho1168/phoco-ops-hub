@@ -1,3 +1,4 @@
+import { normalizeStaffCode } from "./staff";
 import { addDays, shortDay } from "./time";
 
 /**
@@ -52,8 +53,8 @@ export function parseStaffTab(rows: string[][]): StaffRow[] {
   const col = (name: string) => rows[h].findIndex((c) => c.trim() === name);
   const [n, s, a, id] = [col("Name"), col("Section"), col("Active"), col("Staff ID")];
   return rows.slice(h + 1)
-    .filter((r) => (r[n] || "").trim() && /^PC-\d{4}$/i.test((r[id] || "").trim()))
-    .map((r) => ({ name: r[n].trim(), section: (r[s] || "").trim().toUpperCase(), staffCode: r[id].trim().toUpperCase(), active: (r[a] || "Yes").trim().toLowerCase() !== "no" }));
+    .filter((r) => (r[n] || "").trim() && normalizeStaffCode(r[id]))
+    .map((r) => ({ name: r[n].trim(), section: (r[s] || "").trim().toUpperCase(), staffCode: normalizeStaffCode(r[id])!, active: (r[a] || "Yes").trim().toLowerCase() !== "no" }));
 }
 
 /** Settings week table → week start → status. Rows look like [week#, "Mon 5 Oct 2026", ..., "Draft"|"Published"]. */

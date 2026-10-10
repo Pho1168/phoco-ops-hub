@@ -48,7 +48,7 @@ The app uses the database when the server has a `DATABASE_URL` (Supabase project
 3. Create the first owner, typing the PIN when asked (it is never shown or stored in plain text):
 
 ```bash
-DATABASE_URL=... npm run person:add -- --code PC-0001 --name "First name" --access "EAS:owner:FOH,BOH;WEM:owner:PROD;SYD:owner"
+DATABASE_URL=... npm run person:add -- --code 001 --name "First name" --access "EAS:owner:FOH,BOH;WEM:owner:PROD;SYD:owner"
 ```
 
 Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, manager and staff. Sections are FOH, BOH and PROD.
