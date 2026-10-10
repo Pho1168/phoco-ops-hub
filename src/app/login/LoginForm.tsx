@@ -7,7 +7,7 @@ import { signIn } from "@/app/actions";
 interface P { id: string; name: string; frozen: boolean; sites: string[]; label: string }
 interface S { id: string; name: string; closed: boolean; reason?: string }
 
-export function LoginForm({ sites, people }: { sites: S[]; people: P[] }) {
+export function LoginForm({ sites, people, deviceLabel }: { sites: S[]; people: P[]; deviceLabel?: string }) {
   const router = useRouter();
   const [siteId, setSiteId] = useState(sites[0]?.id ?? "EAS");
   const [pick, setPick] = useState<string | null>(null);
@@ -37,13 +37,15 @@ export function LoginForm({ sites, people }: { sites: S[]; people: P[] }) {
       <div>
         <div className="logo" style={{ color: "var(--brand)", fontSize: 28 }}>PHO &amp; CO</div>
         <h1 className="h-display" style={{ marginTop: 6 }}>Who&apos;s working?</h1>
+        {deviceLabel && <div className="muted" style={{ marginTop: 6 }}>{site?.name} · {deviceLabel}</div>}
       </div>
-      <div className="seg" role="group" aria-label="Site">
+      {sites.length > 1 && <div className="seg" role="group" aria-label="Site">
         {sites.map((s) => (
           <button key={s.id} type="button" aria-pressed={s.id === siteId} onClick={() => { setSiteId(s.id); setPick(null); setPin(""); setErr(""); }}>{s.name}</button>
         ))}
-      </div>
+      </div>}
       {site?.closed && <div className="err"><strong>{site.name} is closed.</strong> {site.reason ? `${site.reason}. ` : ""}Staff sign-in is frozen until the owner reopens it.</div>}
+      {list.length === 0 && <div className="card muted">No staff at this site yet. An owner can add people from the Owner screen.</div>}
       <div className="people">
         {list.map((p) => (
           <button key={p.id} type="button" className="person" aria-pressed={pick === p.id} onClick={() => { setPick(p.id); setPin(""); setErr(""); }}>

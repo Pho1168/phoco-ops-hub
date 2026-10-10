@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { classifyReading, parseReading } from "./temperature";
 import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
-import { diffShifts, parseExport, reminderTimes } from "./rota";
+import { buildEveningNotices, buildImportNotices, parseExport, parseStaffTab, parseWeekTable, planSync, type StoredShift } from "./rota";
+import { afterQuietHours, londonToUtc } from "./time";
 import { hashPin, isValidPin, verifyPin } from "./pin";
+import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
 import { canChangeAccess, canMarkLeft, nextStaffCode, validatePersonInput } from "./staff";
 import type { Answer, Checklist, Person, Site, TempRule } from "./types";
 
@@ -120,51 +122,86 @@ describe("PINs", () => {
 
 describe("rota import", () => {
   const header = ["Week starting", "Week #", "Slot", "Rota row", "Name", "Section"];
-  const row = (name: string, section: string, days: Record<number, [string, string]>, checks = "0") => {
-    const r = ["05/10/2026", "1", "1", "8", name, section, "", "", "", "", "", "", "", "", checks];
+  const row = (name: string, section: string, days: Record<number, [string, string]>, checks = "0", week = "05/10/2026") => {
+    const r = [week, "1", "1", "8", name, section, "", "", "", "", "", "", "", "", checks];
     for (let d = 0; d < 7; d++) r.push(...(days[d] ?? ["", ""]));
     return r;
   };
-  const staff = [{ name: "Alex", section: "FOH", staffCode: "PC-9001" }, { name: "Alex", section: "BOH", staffCode: "PC-9001" }];
+  const staffTab = [["PHO & CO  ·  EAS STAFF LIST"], ["Name", "Section", "Active", "Slot key", "Notes", "Capacity", "Staff ID"],
+    ["Alex", "FOH", "Yes", "FOH1", "", "", "PC-9001"], ["Alex", "BOH", "Yes", "BOH1", "", "", "PC-9001"], ["Bo", "BOH", "Yes", "BOH2", "", "", ""]];
+  const staff = parseStaffTab(staffTab);
 
+  it("reads the Staff tab and the Settings week table like the real sheet", () => {
+    expect(staff).toEqual([
+      { name: "Alex", section: "FOH", staffCode: "PC-9001", active: true },
+      { name: "Alex", section: "BOH", staffCode: "PC-9001", active: true }]);
+    const weeks = parseWeekTable([["1", "Mon 5 Oct 2026", "4", "8", "16", "28", "29", "Published"], ["2", "Mon 12 Oct 2026", "33", "37", "45", "57", "58", "Draft"], ["Week #", "Week starting"]]);
+    expect(Array.from(weeks.entries())).toEqual([["2026-10-05", "published"], ["2026-10-12", "draft"]]);
+  });
   it("turns Export rows into dated shifts and flags problems", () => {
     const { shifts, issues } = parseExport("EAS", [
       header,
       row("Alex", "FOH", { 1: ["11:00", "21:45"], 4: ["17:00", "21:00"] }),
-      row("Alex", "BOH", { 3: ["11:00", "21:30"] }),
+      row("Alex", "BOH", { 3: ["9:00", "21:30"] }),
       row("Sam", "BOH", { 0: ["11:00", "15:00"] }),
       row("Alex", "FOH", { 0: ["25:00", "22:00"] }),
       row("Alex", "FOH", { 2: ["11:00", "22:00"] }, "1"),
       row("", "", {}),
     ], staff);
-    expect(shifts.map((s) => `${s.section} ${s.date} ${s.start}-${s.end}`)).toEqual([
-      "FOH 2026-10-06 11:00-21:45", "FOH 2026-10-09 17:00-21:00", "BOH 2026-10-08 11:00-21:30",
+    expect(shifts.map((s) => `${s.section} ${s.week} ${s.date} ${s.start}-${s.end}`)).toEqual([
+      "FOH 2026-10-05 2026-10-06 11:00-21:45", "FOH 2026-10-05 2026-10-09 17:00-21:00", "BOH 2026-10-05 2026-10-08 09:00-21:30",
     ]);
     expect(issues.map((i) => i.message)).toEqual([
       "Sam (BOH) has no Staff ID in the Staff tab",
-      'Alex: day 1 times "25:00–22:00" are not valid',
-      "Alex: the sheet flags this row (Checks). Not imported",
+      'Alex, Mon 5 Oct: times "25:00–22:00" aren\'t valid',
+      "Alex (FOH), week of Mon 5 Oct: the sheet flags this row (Checks), so it wasn't imported",
     ]);
   });
-  it("only published weeks get reminders, and quiet hours are respected", () => {
-    const s = { sourceKey: "k", staffCode: "PC-9001", section: "FOH", date: "2026-10-09", start: "11:00", end: "22:15", endsNextDay: false };
-    expect(reminderTimes(s, false)).toEqual([]);
-    expect(reminderTimes(s, true)).toEqual([
-      { date: "2026-10-08", time: "18:00", kind: "evening" },
-      { date: "2026-10-09", time: "09:00", kind: "before" },
-    ]);
-    const early = { ...s, start: "08:00" };
-    expect(reminderTimes(early, true).map((r) => r.kind)).toEqual(["evening"]);
+
+  const sh = (date: string, start: string, end: string, week = "2026-10-12"): StoredShift =>
+    ({ sourceKey: `EAS|${week}|PC-9001|FOH|${date}`, staffCode: "PC-9001", section: "FOH", week, date, start, end, endsNextDay: false, cancelled: false });
+
+  it("plans adds, changes and cancellations, only within the imported weeks", () => {
+    const old = [sh("2026-10-13", "11:00", "21:45"), sh("2026-10-14", "11:00", "22:00"), sh("2026-10-06", "11:00", "15:00", "2026-10-05"), { ...sh("2026-10-16", "17:00", "21:00"), cancelled: true }];
+    const next = [sh("2026-10-13", "12:00", "20:00"), sh("2026-10-16", "17:00", "21:00"), sh("2026-10-17", "11:00", "22:00")];
+    const plan = planSync(old, next, new Set(["2026-10-12"]));
+    expect(plan.changed.map((c) => `${c.before.start}->${c.after.start}`)).toEqual(["11:00->12:00"]);
+    expect(plan.added.map((s) => s.date)).toEqual(["2026-10-16", "2026-10-17"]);
+    expect(plan.cancelled.map((s) => s.date)).toEqual(["2026-10-14"]);
   });
-  it("detects changed and cancelled shifts between imports", () => {
-    const a = { sourceKey: "1", staffCode: "x", section: "FOH", date: "2026-10-09", start: "11:00", end: "22:00", endsNextDay: false };
-    const b = { ...a, sourceKey: "2" };
-    const d = diffShifts([a, b], [{ ...a, start: "12:00" }]);
-    expect(d.changed).toHaveLength(1);
-    expect(d.cancelled.map((s) => s.sourceKey)).toEqual(["2"]);
+  it("messages: a newly published week sends one list; changes in published weeks send one message; drafts send nothing", () => {
+    const imported = [sh("2026-10-13", "12:00", "20:00"), sh("2026-10-16", "17:00", "21:00")];
+    const first = buildImportNotices({ siteName: "Eastcote", today: "2026-10-10", plan: { added: imported, changed: [], cancelled: [] }, imported,
+      before: new Map([["2026-10-12", "draft"]]), after: new Map([["2026-10-12", "published"]]) });
+    expect(first).toEqual([{ staffCode: "PC-9001", kind: "published", title: "Rota out: Eastcote, week of Mon 12 Oct", body: "Tue 13 Oct 12:00–20:00 (FOH)\nFri 16 Oct 17:00–21:00 (FOH)" }]);
+    const plan = { added: [], changed: [{ before: sh("2026-10-13", "11:00", "21:45"), after: imported[0] }], cancelled: [sh("2026-10-15", "11:00", "15:00"), sh("2026-10-09", "11:00", "15:00")] };
+    const pub = new Map([["2026-10-12", "published" as const]]);
+    const later = buildImportNotices({ siteName: "Eastcote", today: "2026-10-10", plan, imported, before: pub, after: pub });
+    expect(later).toEqual([{ staffCode: "PC-9001", kind: "changed", title: "Rota change at Eastcote", body: "Tue 13 Oct is now 12:00–20:00 (was 11:00–21:45)\nCancelled: Thu 15 Oct 11:00–15:00 (FOH)" }]);
+    const draft = new Map([["2026-10-12", "draft" as const]]);
+    expect(buildImportNotices({ siteName: "Eastcote", today: "2026-10-10", plan, imported, before: draft, after: draft })).toEqual([]);
+  });
+  it("evening reminder lists tomorrow's shifts per person", () => {
+    const n = buildEveningNotices("2026-10-13", [
+      { staffCode: "PC-9001", siteName: "Eastcote", section: "FOH", start: "17:00", end: "21:00", date: "2026-10-13" },
+      { staffCode: "PC-9001", siteName: "Eastcote", section: "BOH", start: "09:00", end: "13:00", date: "2026-10-13" },
+      { staffCode: "PC-9002", siteName: "Wembley", section: "PROD", start: "08:00", end: "16:00", date: "2026-10-14" }]);
+    expect(n).toEqual([{ staffCode: "PC-9001", kind: "evening", title: "Tomorrow (Tue 13 Oct)", body: "Eastcote: 09:00–13:00 (BOH)\nEastcote: 17:00–21:00 (FOH)" }]);
   });
 });
 
+describe("London time", () => {
+  it("converts wall-clock times across BST and GMT", () => {
+    expect(new Date(londonToUtc("2026-10-13", "11:00")).toISOString()).toBe("2026-10-13T10:00:00.000Z");
+    expect(new Date(londonToUtc("2026-12-01", "11:00")).toISOString()).toBe("2026-12-01T11:00:00.000Z");
+  });
+  it("holds messages in quiet hours until 08:00", () => {
+    const noon = londonToUtc("2026-10-13", "12:00");
+    expect(afterQuietHours(noon)).toBe(noon);
+    expect(new Date(afterQuietHours(londonToUtc("2026-10-13", "23:10"))).toISOString()).toBe("2026-10-14T07:00:00.000Z");
+    expect(new Date(afterQuietHours(londonToUtc("2026-10-14", "06:00"))).toISOString()).toBe("2026-10-14T07:00:00.000Z");
+  });
+});
 describe("PIN lockout shared by sign-in and sign-off", () => {
   it("locks after the maximum attempts and unlocks after the lock period", () => {
     let p = { pinFailed: 0, pinLockedUntil: undefined as number | undefined };
@@ -206,5 +243,35 @@ describe("staff management", () => {
   it("suggests the next staff ID", () => {
     expect(nextStaffCode([cook, { ...owner, staffCode: "PC-0000" }])).toBe("PC-0004");
     expect(nextStaffCode([])).toBe("PC-0001");
+  });
+});
+
+describe("site devices", () => {
+  const tablet: Device = { id: "d1", siteId: "EAS", label: "Kitchen tablet", status: "active", createdAt: 0 };
+  it("reads pairing codes the way people type them", () => {
+    expect(normalizePairCode(" abc-234 ")).toBe("ABC234");
+    expect(normalizePairCode("ABC23")).toBeNull();
+    expect(normalizePairCode("ABC10O")).toBeNull(); // 1, 0 and O are never used
+    expect(formatPairCode("ABC234")).toBe("ABC-234");
+  });
+  it("makes codes only from the readable alphabet", () => {
+    let i = 0;
+    const code = makePairCode(() => (i++ % 10) / 10);
+    expect(code).toHaveLength(6);
+    for (const ch of code) expect(PAIR_ALPHABET).toContain(ch);
+    expect(makePairCode(() => 0.9999)).toBe("999999");
+  });
+  it("only lets a registered, active device sign staff in to its own site", () => {
+    expect(canUseDeviceForSite(tablet, "EAS").allowed).toBe(true);
+    expect(canUseDeviceForSite(tablet, "WEM").allowed).toBe(false);
+    expect(canUseDeviceForSite({ ...tablet, status: "locked" }, "EAS").allowed).toBe(false);
+    expect(canUseDeviceForSite(null, "EAS").allowed).toBe(false);
+  });
+  it("ends sessions when their device is removed; device-less sessions are owners only", () => {
+    expect(sessionDeviceOk("d1", tablet, false)).toBe(true);
+    expect(sessionDeviceOk("d1", { ...tablet, status: "locked" }, true)).toBe(false);
+    expect(sessionDeviceOk(undefined, undefined, true)).toBe(true);
+    expect(sessionDeviceOk(undefined, undefined, false)).toBe(false);
+    expect(sessionDeviceOk(undefined, undefined, false, "shifts")).toBe(true);
   });
 });

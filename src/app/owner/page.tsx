@@ -1,5 +1,9 @@
 import { redirect } from "next/navigation";
-import { store } from "@/lib/data";
+import { DEMO_MODE, store } from "@/lib/data";
+import { currentDevice } from "@/lib/device";
+import { DevicesCard, type DeviceRow } from "./DevicesCard";
+import { RotaCard, type RotaRow } from "./RotaCard";
+import { shortDay } from "@/lib/domain/time";
 import { progress, runState } from "@/lib/domain/checklist";
 import { londonNow, requireCtx } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
@@ -35,10 +39,29 @@ export default async function Owner() {
   const log = (await db.auditLog(30)).map((e) => ({
     at: new Date(e.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }), site: e.siteId ?? "", who: e.actorId ? names.get(e.actorId) ?? "" : "", action: e.action, detail: e.detail,
   }));
+  const here = await currentDevice();
+  const siteName = new Map((await db.sites()).map((s) => [s.id, s.name]));
+  const fmt = (t?: number) => (t ? new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }) : "never");
+  const devices: DeviceRow[] = (await db.devices()).map((d) => ({
+    id: d.id, label: d.label, site: siteName.get(d.siteId) ?? d.siteId, status: d.status, lastSeen: fmt(d.lastSeen), current: d.id === here?.id,
+  }));
+  const sources = await db.rotaSources();
+  const rota: RotaRow[] = sites.filter((s) => s.status === "open").map((s) => {
+    const src = sources.find((x) => x.siteId === s.id);
+    const r = src?.lastResult;
+    return {
+      siteId: s.id, site: s.name, connected: !!src, last: src?.lastImportAt ? fmt(src.lastImportAt) : undefined,
+      summary: r ? `${r.shifts} shifts · ${r.added} new · ${r.changed} changed · ${r.cancelled} cancelled · ${r.notices} messages` : undefined,
+      published: r?.published.length ? r.published.map((w) => `week of ${shortDay(w)}`).join(", ") : undefined,
+      issues: r?.issues ?? [],
+    };
+  });
   return (
     <>
       <TopBar ctx={ctx} />
-      <OwnerClient sites={summaries} people={people} log={log} currentSite={ctx.site.id} />
+      <OwnerClient sites={summaries} people={people} log={log} currentSite={ctx.site.id}
+        rota={<RotaCard rows={rota} />}
+        devices={<DevicesCard devices={devices} demo={DEMO_MODE} sites={sites.filter((s) => s.status === "open").map((s) => ({ id: s.id, name: s.name }))} />} />
       <BottomNav ctx={ctx} current="owner" />
     </>
   );

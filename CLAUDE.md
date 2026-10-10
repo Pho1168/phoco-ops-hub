@@ -11,3 +11,5 @@
 - Brand: cream `#F6F1E7`, green `#2F4A3A`, sage `#DCE3D6`, orange `#C2611A`. Fonts Barlow Condensed (headings), Be Vietnam Pro (body).
 - Database: Supabase project `phoco-ops-hub` (ref iklgabptdlwjwwngepyc, eu-west-2 London). The org's other project ("Pho & Co's Project") is a separate purchase-ledger app: never touch it.
 - Schema changes go in a new numbered file in `supabase/migrations/` and are applied to Supabase too.
+- Rota: the app never writes to the rota sheets. Imports arrive at `/api/rota/import` (per-site token, hashed in `rota_sources`). Rules in `src/lib/domain/rota.ts`; times are London wall-clock (`src/lib/domain/time.ts`).
+- Secrets the server generates (VAPID push keys, scheduler token) live in `app_secrets`; the Supabase cron job `ops-hub-reminders` reads the `cron` token from there.

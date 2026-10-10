@@ -4,7 +4,13 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { store } from "@/lib/data";
+import { DEMO_MODE, store } from "@/lib/data";
+import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
+import { currentDevice, DEVICE_COOKIE, DEVICE_COOKIE_MAX_AGE, newDeviceToken, sha256 } from "@/lib/device";
+import { pushToPerson } from "@/lib/push";
+import { rotaScript } from "@/lib/rota-script";
+import { headers } from "next/headers";
+import { randomInt } from "node:crypto";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
@@ -21,17 +27,78 @@ export async function signIn(siteId: string, personId: string, pin: string): Pro
   const person = await db.person(personId);
   if (!site || !person) return { ok: false, error: "Choose your name again" };
   const now = Date.now();
+  const device = await currentDevice();
+  if (!DEMO_MODE) {
+    const d = canUseDeviceForSite(device, site.id);
+    if (!d.allowed) return { ok: false, error: d.reason };
+  }
   const gate = canSignIn(person, site, now);
   if (!gate.allowed) return { ok: false, error: gate.reason };
   if (!verifyPin(pin, person.pinHash)) {
     await db.updatePerson(person.id, registerPinFailure(person, now));
-    await db.audit({ actorId: person.id, siteId: site.id, action: "signin.failed", detail: "Wrong PIN" });
+    await db.audit({ actorId: person.id, siteId: site.id, action: "signin.failed", detail: `Wrong PIN${device ? ` on ${device.label}` : ""}` });
     return { ok: false, error: "That PIN doesn't match. Try again" };
   }
-  await db.updatePerson(person.id, { pinFailed: 0, pinLockedUntil: undefined });
-  const s = await db.createSession(person.id, site.id, SESSION_TTL_MS);
-  cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
-  await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Signed in" });
+  await startSession(person.id, site.id, device?.id);
+  await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: device ? `Signed in on ${device.label}` : "Signed in" });
+  return { ok: true };
+}
+
+/** "My shifts" on a personal phone stays signed in for 60 days so reminders lead straight to it. */
+const SHIFTS_TTL_MS = 60 * 24 * 60 * 60 * 1000;
+
+async function startSession(personId: string, siteId: SiteId, deviceId?: string, scope: "full" | "shifts" = "full") {
+  const db = store();
+  await db.updatePerson(personId, { pinFailed: 0, pinLockedUntil: undefined });
+  const ttl = scope === "shifts" ? SHIFTS_TTL_MS : SESSION_TTL_MS;
+  const s = await db.createSession(personId, siteId, ttl, deviceId, scope);
+  cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: ttl / 1000, path: "/" });
+}
+
+/**
+ * Sign-in by staff ID + PIN on a device that isn't a registered site tablet (someone's own phone or computer).
+ * Owners get the full app. Everyone else gets "My shifts" only: their own shifts and messages, no names, no checklists.
+ * The error is the same "not recognised" for every failure, so the screen gives nothing away.
+ */
+export async function staffIdSignIn(staffCode: string, pin: string): Promise<ActionResult> {
+  const db = store();
+  const code = z.string().max(20).parse(staffCode).trim().toUpperCase();
+  const notRecognised = { ok: false as const, error: "Staff ID or PIN not recognised" };
+  const person = (await db.people()).find((p) => p.staffCode.toUpperCase() === code);
+  if (!person || !person.access.length) return notRecognised;
+  const isOwner = person.access.some((a) => a.role === "owner");
+  const sites = await db.sites();
+  const mine = person.access.map((a) => sites.find((s) => s.id === a.siteId)).filter((s): s is NonNullable<typeof s> => !!s);
+  const site = mine.find((s) => s.status === "open") ?? (isOwner ? mine[0] : undefined);
+  if (!site) return notRecognised;
+  const now = Date.now();
+  const gate = canSignIn(person, site, now);
+  if (!gate.allowed) return { ok: false, error: gate.reason };
+  if (!verifyPin(pin, person.pinHash)) {
+    await db.updatePerson(person.id, registerPinFailure(person, now));
+    await db.audit({ actorId: person.id, action: "signin.failed", detail: "Wrong PIN (staff ID sign-in, unregistered device)" });
+    return notRecognised;
+  }
+  if (isOwner) {
+    await startSession(person.id, site.id);
+    await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Owner signed in on an unregistered device" });
+  } else {
+    await startSession(person.id, site.id, undefined, "shifts");
+    await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Signed in to My shifts on own phone" });
+  }
+  return { ok: true };
+}
+
+/** Registers this browser as a site tablet using a one-time code from an owner. */
+export async function pairDevice(input: string): Promise<ActionResult> {
+  const code = normalizePairCode(z.string().max(20).parse(input));
+  if (!code) return { ok: false, error: "That code doesn't look right. It's 6 letters and numbers, like ABC-234" };
+  const token = newDeviceToken();
+  const device = await store().redeemPairing(sha256(code), sha256(token), Date.now());
+  if (!device) return { ok: false, error: "Code not recognised, already used or expired. Ask an owner for a new one" };
+  cookies().set(DEVICE_COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: DEVICE_COOKIE_MAX_AGE, path: "/" });
+  cookies().delete(SESSION_COOKIE);
+  await store().audit({ siteId: device.siteId, action: "device.paired", detail: `${device.label} set up` });
   return { ok: true };
 }
 
@@ -217,7 +284,8 @@ export async function switchSite(siteId: string): Promise<void> {
   const db = store();
   const id = SiteIdZ.parse(siteId);
   await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
-  const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS);
+  const prev = await db.session(ctx.sessionId);
+  const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS, prev?.deviceId);
   cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
   redirect("/today");
 }
@@ -330,5 +398,80 @@ export async function changeMyPin(currentPin: string, nextPin: string, confirmPi
   // Sign out other devices that might know the old PIN's session; keep this one.
   await db.revokeSessions({ personId: ctx.person.id, exceptSessionId: ctx.sessionId }, "PIN changed");
   await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "pin_change", detail: "Changed their PIN" });
+  return { ok: true };
+}
+
+// ---------- site devices (owners) ----------
+
+export async function createPairingCode(siteId: string, label: string): Promise<ActionResult & { code?: string; expiresAt?: number }> {
+  const ctx = await requireOwner();
+  const db = store();
+  const site = await db.site(SiteIdZ.parse(siteId));
+  if (!site) return { ok: false, error: "Site not found" };
+  const name = z.string().max(80).parse(label).trim().replace(/\s+/g, " ");
+  if (!name) return { ok: false, error: "Give the device a name, e.g. Eastcote kitchen tablet" };
+  if (name.length > 40) return { ok: false, error: "Keep the name under 40 characters" };
+  const code = makePairCode(() => randomInt(0, 1_000_000_000) / 1_000_000_000);
+  const expiresAt = Date.now() + PAIR_TTL_MINUTES * 60_000;
+  await db.createPairing({ codeHash: sha256(code), siteId: site.id, label: name, createdBy: ctx.person.id, expiresAt });
+  await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "device.code", detail: `Set-up code created for ${name}` });
+  return { ok: true, code: formatPairCode(code), expiresAt };
+}
+
+export async function removeDevice(deviceId: string): Promise<ActionResult> {
+  const ctx = await requireOwner();
+  const db = store();
+  const device = await db.device(z.string().max(64).parse(deviceId));
+  if (!device) return { ok: false, error: "Device not found" };
+  await db.setDeviceStatus(device.id, "locked");
+  const ended = await db.revokeSessions({ deviceId: device.id }, "device removed");
+  await db.audit({ actorId: ctx.person.id, siteId: device.siteId, action: "device.removed", detail: `${device.label} removed · ${ended} sessions ended` });
+  revalidatePath("/owner");
+  return { ok: true };
+}
+
+// ---------- rota sheet connection (owners) ----------
+
+/** Creates (or replaces) the token a site's rota sheet uses, and returns the ready-to-paste script. Shown once. */
+export async function connectRotaSheet(siteId: string): Promise<ActionResult & { script?: string }> {
+  const ctx = await requireOwner();
+  const db = store();
+  const site = await db.site(SiteIdZ.parse(siteId));
+  if (!site) return { ok: false, error: "Site not found" };
+  const token = newDeviceToken();
+  await db.setRotaToken(site.id, sha256(token), ctx.person.id);
+  const h = headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "phoco-ops-hub.vercel.app";
+  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "rota.connect", detail: `Rota sheet connection created for ${site.name} (any older connection stops working)` });
+  revalidatePath("/owner");
+  return { ok: true, script: rotaScript(`${proto}://${host}/api/rota/import`, token, site.name) };
+}
+
+// ---------- reminders on a personal phone ----------
+
+const PushSubZ = z.object({ endpoint: z.string().url().max(1000), keys: z.object({ p256dh: z.string().max(200), auth: z.string().max(100) }) });
+
+/** Saves this phone's push subscription and sends a test message. Not allowed on shared site tablets. */
+export async function enableReminders(sub: unknown): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const db = store();
+  const session = await db.session(ctx.sessionId);
+  if (session?.deviceId) return { ok: false, error: "Turn reminders on from your own phone, not the shared tablet" };
+  const parsed = PushSubZ.safeParse(sub);
+  if (!parsed.success) return { ok: false, error: "This phone didn't give a usable notification address" };
+  await db.savePushSub({ personId: ctx.person.id, endpoint: parsed.data.endpoint, p256dh: parsed.data.keys.p256dh, auth: parsed.data.keys.auth });
+  await db.audit({ actorId: ctx.person.id, action: "reminders.on", detail: "Turned on rota reminders on a phone" });
+  await pushToPerson(ctx.person.id, { title: "Reminders are on", body: "You'll get a message the evening before each shift and when your rota changes.", url: "/me" });
+  return { ok: true };
+}
+
+export async function disableReminders(endpoint: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const db = store();
+  const mine = await db.pushSubs(ctx.person.id);
+  if (mine.some((s) => s.endpoint === endpoint)) await db.dropPushSub(endpoint);
   return { ok: true };
 }
