@@ -4,6 +4,7 @@ import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
 import { diffShifts, parseExport, reminderTimes } from "./rota";
 import { hashPin, isValidPin, verifyPin } from "./pin";
+import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
 import { canChangeAccess, canMarkLeft, nextStaffCode, validatePersonInput } from "./staff";
 import type { Answer, Checklist, Person, Site, TempRule } from "./types";
 
@@ -206,5 +207,34 @@ describe("staff management", () => {
   it("suggests the next staff ID", () => {
     expect(nextStaffCode([cook, { ...owner, staffCode: "PC-0000" }])).toBe("PC-0004");
     expect(nextStaffCode([])).toBe("PC-0001");
+  });
+});
+
+describe("site devices", () => {
+  const tablet: Device = { id: "d1", siteId: "EAS", label: "Kitchen tablet", status: "active", createdAt: 0 };
+  it("reads pairing codes the way people type them", () => {
+    expect(normalizePairCode(" abc-234 ")).toBe("ABC234");
+    expect(normalizePairCode("ABC23")).toBeNull();
+    expect(normalizePairCode("ABC10O")).toBeNull(); // 1, 0 and O are never used
+    expect(formatPairCode("ABC234")).toBe("ABC-234");
+  });
+  it("makes codes only from the readable alphabet", () => {
+    let i = 0;
+    const code = makePairCode(() => (i++ % 10) / 10);
+    expect(code).toHaveLength(6);
+    for (const ch of code) expect(PAIR_ALPHABET).toContain(ch);
+    expect(makePairCode(() => 0.9999)).toBe("999999");
+  });
+  it("only lets a registered, active device sign staff in to its own site", () => {
+    expect(canUseDeviceForSite(tablet, "EAS").allowed).toBe(true);
+    expect(canUseDeviceForSite(tablet, "WEM").allowed).toBe(false);
+    expect(canUseDeviceForSite({ ...tablet, status: "locked" }, "EAS").allowed).toBe(false);
+    expect(canUseDeviceForSite(null, "EAS").allowed).toBe(false);
+  });
+  it("ends sessions when their device is removed; device-less sessions are owners only", () => {
+    expect(sessionDeviceOk("d1", tablet, false)).toBe(true);
+    expect(sessionDeviceOk("d1", { ...tablet, status: "locked" }, true)).toBe(false);
+    expect(sessionDeviceOk(undefined, undefined, true)).toBe(true);
+    expect(sessionDeviceOk(undefined, undefined, false)).toBe(false);
   });
 });

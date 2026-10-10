@@ -4,7 +4,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { store } from "@/lib/data";
+import { DEMO_MODE, store } from "@/lib/data";
+import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
+import { currentDevice, DEVICE_COOKIE, DEVICE_COOKIE_MAX_AGE, newDeviceToken, sha256 } from "@/lib/device";
+import { randomInt } from "node:crypto";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
@@ -21,17 +24,68 @@ export async function signIn(siteId: string, personId: string, pin: string): Pro
   const person = await db.person(personId);
   if (!site || !person) return { ok: false, error: "Choose your name again" };
   const now = Date.now();
+  const device = await currentDevice();
+  if (!DEMO_MODE) {
+    const d = canUseDeviceForSite(device, site.id);
+    if (!d.allowed) return { ok: false, error: d.reason };
+  }
   const gate = canSignIn(person, site, now);
   if (!gate.allowed) return { ok: false, error: gate.reason };
   if (!verifyPin(pin, person.pinHash)) {
     await db.updatePerson(person.id, registerPinFailure(person, now));
-    await db.audit({ actorId: person.id, siteId: site.id, action: "signin.failed", detail: "Wrong PIN" });
+    await db.audit({ actorId: person.id, siteId: site.id, action: "signin.failed", detail: `Wrong PIN${device ? ` on ${device.label}` : ""}` });
     return { ok: false, error: "That PIN doesn't match. Try again" };
   }
-  await db.updatePerson(person.id, { pinFailed: 0, pinLockedUntil: undefined });
-  const s = await db.createSession(person.id, site.id, SESSION_TTL_MS);
+  await startSession(person.id, site.id, device?.id);
+  await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: device ? `Signed in on ${device.label}` : "Signed in" });
+  return { ok: true };
+}
+
+async function startSession(personId: string, siteId: SiteId, deviceId?: string) {
+  const db = store();
+  await db.updatePerson(personId, { pinFailed: 0, pinLockedUntil: undefined });
+  const s = await db.createSession(personId, siteId, SESSION_TTL_MS, deviceId);
   cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
-  await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Signed in" });
+}
+
+/**
+ * Owner sign-in from a device that isn't a registered site tablet (e.g. the owner's own phone).
+ * No names are shown anywhere on that screen; anyone who isn't an owner gets the same "not recognised".
+ */
+export async function ownerSignIn(staffCode: string, pin: string): Promise<ActionResult> {
+  const db = store();
+  const code = z.string().max(20).parse(staffCode).trim().toUpperCase();
+  const notRecognised = { ok: false as const, error: "Staff ID or PIN not recognised" };
+  const person = (await db.people()).find((p) => p.staffCode.toUpperCase() === code);
+  const ownerSites = person?.access.filter((a) => a.role === "owner") ?? [];
+  if (!person || !ownerSites.length) return notRecognised;
+  const sites = await db.sites();
+  const open = ownerSites.map((a) => sites.find((s) => s.id === a.siteId)).filter((s): s is NonNullable<typeof s> => !!s);
+  const site = open.find((s) => s.status === "open") ?? open[0];
+  if (!site) return notRecognised;
+  const now = Date.now();
+  const gate = canSignIn(person, site, now);
+  if (!gate.allowed) return { ok: false, error: gate.reason };
+  if (!verifyPin(pin, person.pinHash)) {
+    await db.updatePerson(person.id, registerPinFailure(person, now));
+    await db.audit({ actorId: person.id, action: "signin.failed", detail: "Wrong PIN (owner sign-in, unregistered device)" });
+    return notRecognised;
+  }
+  await startSession(person.id, site.id);
+  await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Owner signed in on an unregistered device" });
+  return { ok: true };
+}
+
+/** Registers this browser as a site tablet using a one-time code from an owner. */
+export async function pairDevice(input: string): Promise<ActionResult> {
+  const code = normalizePairCode(z.string().max(20).parse(input));
+  if (!code) return { ok: false, error: "That code doesn't look right. It's 6 letters and numbers, like ABC-234" };
+  const token = newDeviceToken();
+  const device = await store().redeemPairing(sha256(code), sha256(token), Date.now());
+  if (!device) return { ok: false, error: "Code not recognised, already used or expired. Ask an owner for a new one" };
+  cookies().set(DEVICE_COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: DEVICE_COOKIE_MAX_AGE, path: "/" });
+  cookies().delete(SESSION_COOKIE);
+  await store().audit({ siteId: device.siteId, action: "device.paired", detail: `${device.label} set up` });
   return { ok: true };
 }
 
@@ -217,7 +271,8 @@ export async function switchSite(siteId: string): Promise<void> {
   const db = store();
   const id = SiteIdZ.parse(siteId);
   await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
-  const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS);
+  const prev = await db.session(ctx.sessionId);
+  const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS, prev?.deviceId);
   cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
   redirect("/today");
 }
@@ -330,5 +385,34 @@ export async function changeMyPin(currentPin: string, nextPin: string, confirmPi
   // Sign out other devices that might know the old PIN's session; keep this one.
   await db.revokeSessions({ personId: ctx.person.id, exceptSessionId: ctx.sessionId }, "PIN changed");
   await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "pin_change", detail: "Changed their PIN" });
+  return { ok: true };
+}
+
+// ---------- site devices (owners) ----------
+
+export async function createPairingCode(siteId: string, label: string): Promise<ActionResult & { code?: string; expiresAt?: number }> {
+  const ctx = await requireOwner();
+  const db = store();
+  const site = await db.site(SiteIdZ.parse(siteId));
+  if (!site) return { ok: false, error: "Site not found" };
+  const name = z.string().max(80).parse(label).trim().replace(/\s+/g, " ");
+  if (!name) return { ok: false, error: "Give the device a name, e.g. Eastcote kitchen tablet" };
+  if (name.length > 40) return { ok: false, error: "Keep the name under 40 characters" };
+  const code = makePairCode(() => randomInt(0, 1_000_000_000) / 1_000_000_000);
+  const expiresAt = Date.now() + PAIR_TTL_MINUTES * 60_000;
+  await db.createPairing({ codeHash: sha256(code), siteId: site.id, label: name, createdBy: ctx.person.id, expiresAt });
+  await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "device.code", detail: `Set-up code created for ${name}` });
+  return { ok: true, code: formatPairCode(code), expiresAt };
+}
+
+export async function removeDevice(deviceId: string): Promise<ActionResult> {
+  const ctx = await requireOwner();
+  const db = store();
+  const device = await db.device(z.string().max(64).parse(deviceId));
+  if (!device) return { ok: false, error: "Device not found" };
+  await db.setDeviceStatus(device.id, "locked");
+  const ended = await db.revokeSessions({ deviceId: device.id }, "device removed");
+  await db.audit({ actorId: ctx.person.id, siteId: device.siteId, action: "device.removed", detail: `${device.label} removed · ${ended} sessions ended` });
+  revalidatePath("/owner");
   return { ok: true };
 }

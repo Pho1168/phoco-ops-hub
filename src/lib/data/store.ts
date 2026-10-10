@@ -1,6 +1,7 @@
 import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
+import type { Device } from "@/lib/domain/devices";
 
-export interface Session { id: string; personId: string; siteId: SiteId; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
+export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 export interface Run { listId: string; date: string; answers: Answer[]; signedBy?: string; signedAt?: number }
 export interface Alert { id: string; siteId: SiteId; level: "warning" | "critical"; title: string; detail: string; dedupeKey: string; createdAt: number; resolvedAt?: number; resolvedBy?: string; resolutionNote?: string }
 /** createdBy/closedBy are person ids; createdByName is filled in by the store for display. */
@@ -25,9 +26,18 @@ export interface Store {
   /** Replaces a person's site access. */
   setAccess(personId: string, access: Person["access"]): Promise<void>;
 
-  createSession(personId: string, siteId: SiteId, ttlMs: number): Promise<Session>;
+  createSession(personId: string, siteId: SiteId, ttlMs: number, deviceId?: string): Promise<Session>;
   session(id: string): Promise<Session | undefined>;
-  revokeSessions(match: { personId?: string; siteId?: SiteId; exceptPersonIds?: string[]; exceptSessionId?: string }, reason: string): Promise<number>;
+  revokeSessions(match: { personId?: string; siteId?: SiteId; deviceId?: string; exceptPersonIds?: string[]; exceptSessionId?: string }, reason: string): Promise<number>;
+
+  devices(): Promise<Device[]>;
+  /** The active-or-locked device holding this token hash; also records when it was last seen. */
+  deviceByToken(tokenHash: string): Promise<Device | undefined>;
+  device(id: string): Promise<Device | undefined>;
+  setDeviceStatus(id: string, status: Device["status"]): Promise<void>;
+  createPairing(p: { codeHash: string; siteId: SiteId; label: string; createdBy: string; expiresAt: number }): Promise<void>;
+  /** Uses a pairing code once: registers the device and returns it, or undefined if the code is unknown, used or expired. */
+  redeemPairing(codeHash: string, tokenHash: string, now: number): Promise<Device | undefined>;
 
   rules(): Promise<Record<string, TempRule>>;
   checklists(siteId: SiteId): Promise<Checklist[]>;

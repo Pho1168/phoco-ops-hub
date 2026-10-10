@@ -6,7 +6,9 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
 
 ## What works today
 
-- **Sign in** with name + 4-digit PIN, per site. 5 wrong PINs locks the account for 15 minutes.
+- **Site tablets only**: staff names and the name + PIN sign-in appear only on tablets registered to a site with a one-time set-up code from an owner. Any other device shows no names, just a pairing box and an owner sign-in (staff ID + PIN). Removing a tablet signs out everyone on it.
+- **Sign in** with name + 4-digit PIN. 5 wrong PINs (at sign-in, sign-off or PIN change) locks the account for 15 minutes.
+- **Staff management** (owners): add people, sites, roles, sections; temporary PINs that must be changed on first use; reset PIN; mark as left.
 - **Today screen**: the site's checklists for each section (FOH, BOH, Production) with due times, overdue flags, open alerts and handover items.
 - **Checklists**: tick items, temperature readings, numbers, text, photo placeholders. Readings are checked against the approved limits:
   - Fridge: target ≤ 5 °C, legal limit 8 °C
@@ -26,7 +28,7 @@ Not built yet: rota reminders from Google Sheets, Wembley batch codes, labels, d
 
 ## Try it (demo mode)
 
-With no database configured the app runs in **demo mode** on sample data held in memory. Restarting the server resets the data.
+With no database configured the app runs in **demo mode** on sample data held in memory. Restarting the server resets the data. Demo mode skips the site-tablet check.
 
 ```bash
 npm install

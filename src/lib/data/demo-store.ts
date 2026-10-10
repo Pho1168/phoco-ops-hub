@@ -3,6 +3,7 @@ import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, HandoverItem, Run, Session, Store } from "./store";
+import type { Device } from "@/lib/domain/devices";
 
 /** Demo-only people. Real staff come from the database, never from the code. */
 export const DEMO_PINS = { owner: "4826", staff: "1357" } as const;
@@ -50,6 +51,8 @@ function buildChecklists(): Checklist[] {
 interface State {
   sites: Site[]; people: Person[]; sessions: Session[]; lists: Checklist[]; rules: Record<string, TempRule>;
   runs: Map<string, Run>; alerts: Alert[]; handover: HandoverItem[]; audit: AuditEntry[];
+  devices: (Device & { tokenHash: string })[];
+  pairings: { codeHash: string; siteId: SiteId; label: string; createdBy: string; expiresAt: number; usedAt?: number }[];
 }
 
 function seed(): State {
@@ -78,9 +81,13 @@ function seed(): State {
       Z: { code: "Z", label: "Freezer", targetMax: -18 },
       C: { code: "C", label: "Cooking core", targetMin: 75, legalMin: 75 },
     },
-    runs: new Map(), alerts: [], handover: [], audit: [],
+    runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
   };
 }
+
+/** Never hand the token hash out of the store. */
+const publicDevice = (d: Device & { tokenHash: string }): Device =>
+  ({ id: d.id, siteId: d.siteId, label: d.label, status: d.status, lastSeen: d.lastSeen, createdAt: d.createdAt });
 
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
@@ -105,8 +112,8 @@ export const demoStore: Store = {
   },
   async setAccess(personId, access) { const p = S().people.find((x) => x.id === personId); if (p) p.access = access; },
 
-  async createSession(personId, siteId, ttlMs) {
-    const s: Session = { id: randomUUID(), personId, siteId, startedAt: Date.now(), expiresAt: Date.now() + ttlMs };
+  async createSession(personId, siteId, ttlMs, deviceId) {
+    const s: Session = { id: randomUUID(), personId, siteId, deviceId, startedAt: Date.now(), expiresAt: Date.now() + ttlMs };
     S().sessions.push(s);
     return s;
   },
@@ -117,11 +124,31 @@ export const demoStore: Store = {
       if (s.revokedAt) continue;
       if (match.personId && s.personId !== match.personId) continue;
       if (match.siteId && s.siteId !== match.siteId) continue;
+      if (match.deviceId && s.deviceId !== match.deviceId) continue;
       if (match.exceptPersonIds?.includes(s.personId)) continue;
       if (match.exceptSessionId === s.id) continue;
       s.revokedAt = Date.now(); s.revokedReason = reason; n++;
     }
     return n;
+  },
+
+  async devices() { return S().devices.map(publicDevice); },
+  async deviceByToken(tokenHash) {
+    const d = S().devices.find((x) => x.tokenHash === tokenHash);
+    if (!d) return undefined;
+    d.lastSeen = Date.now();
+    return publicDevice(d);
+  },
+  async device(id) { const d = S().devices.find((x) => x.id === id); return d ? publicDevice(d) : undefined; },
+  async setDeviceStatus(id, status) { const d = S().devices.find((x) => x.id === id); if (d) d.status = status; },
+  async createPairing(p) { S().pairings.push({ ...p }); },
+  async redeemPairing(codeHash, tokenHash, now) {
+    const p = S().pairings.find((x) => x.codeHash === codeHash && !x.usedAt && x.expiresAt > now);
+    if (!p) return undefined;
+    p.usedAt = now;
+    const d = { id: randomUUID(), siteId: p.siteId, label: p.label, status: "active" as const, createdAt: now, lastSeen: now, tokenHash };
+    S().devices.push(d);
+    return publicDevice(d);
   },
 
   async rules() { return S().rules; },

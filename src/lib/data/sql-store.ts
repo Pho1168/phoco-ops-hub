@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import type { Answer, Area, Checklist, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, HandoverItem, Run, Session, Store } from "./store";
+import type { Device } from "@/lib/domain/devices";
 
 /**
  * Postgres implementation of Store, used when DATABASE_URL is set (Supabase in production).
@@ -85,6 +86,9 @@ async function loadChecklists(filter: postgres.PendingQuery<postgres.Row[]>): Pr
   }));
 }
 
+interface DeviceRow { id: string; site_id: SiteId; label: string; status: Device["status"]; last_seen: Date | null; created_at: Date }
+const toDevice = (r: DeviceRow): Device => ({ id: r.id, siteId: r.site_id, label: r.label, status: r.status, lastSeen: ms(r.last_seen), createdAt: r.created_at.getTime() });
+
 export const sqlStore: Store = {
   async sites() {
     const q = sql();
@@ -146,20 +150,21 @@ export const sqlStore: Store = {
     });
   },
 
-  async createSession(personId, siteId, ttlMs) {
+  async createSession(personId, siteId, ttlMs, deviceId) {
     const q = sql();
+    const dev = deviceId && isUuid(deviceId) ? deviceId : null;
     const [r] = await q<{ id: string; started_at: Date; expires_at: Date }[]>`
-      insert into app_sessions (person_id, site_id, expires_at) values (${personId}, ${siteId}, ${new Date(Date.now() + ttlMs)})
+      insert into app_sessions (person_id, site_id, device_id, expires_at) values (${personId}, ${siteId}, ${dev}, ${new Date(Date.now() + ttlMs)})
       returning id, started_at, expires_at`;
-    return { id: r.id, personId, siteId, startedAt: r.started_at.getTime(), expiresAt: r.expires_at.getTime() };
+    return { id: r.id, personId, siteId, deviceId: dev ?? undefined, startedAt: r.started_at.getTime(), expiresAt: r.expires_at.getTime() };
   },
   async session(id) {
     if (!isUuid(id)) return undefined;
     const q = sql();
-    const [r] = await q<{ id: string; person_id: string; site_id: SiteId; started_at: Date; expires_at: Date; revoked_at: Date | null; revoked_reason: string | null }[]>`
-      select id, person_id, site_id, started_at, expires_at, revoked_at, revoked_reason from app_sessions where id = ${id}`;
+    const [r] = await q<{ id: string; person_id: string; site_id: SiteId; device_id: string | null; started_at: Date; expires_at: Date; revoked_at: Date | null; revoked_reason: string | null }[]>`
+      select id, person_id, site_id, device_id, started_at, expires_at, revoked_at, revoked_reason from app_sessions where id = ${id}`;
     if (!r) return undefined;
-    const s: Session = { id: r.id, personId: r.person_id, siteId: r.site_id, startedAt: r.started_at.getTime(), expiresAt: r.expires_at.getTime() };
+    const s: Session = { id: r.id, personId: r.person_id, siteId: r.site_id, deviceId: opt(r.device_id), startedAt: r.started_at.getTime(), expiresAt: r.expires_at.getTime() };
     if (r.revoked_at) { s.revokedAt = r.revoked_at.getTime(); s.revokedReason = opt(r.revoked_reason); }
     return s;
   },
@@ -172,9 +177,54 @@ export const sqlStore: Store = {
       where revoked_at is null
         ${match.personId ? q`and person_id = ${match.personId}` : q``}
         ${match.siteId ? q`and site_id = ${match.siteId}` : q``}
+        ${match.deviceId && isUuid(match.deviceId) ? q`and device_id = ${match.deviceId}` : q``}
         ${except.length ? q`and not (person_id = any(${except}::uuid[]))` : q``}
         ${match.exceptSessionId && isUuid(match.exceptSessionId) ? q`and id <> ${match.exceptSessionId}` : q``}`;
     return res.count;
+  },
+
+  async devices() {
+    const q = sql();
+    return (await q<DeviceRow[]>`select id, site_id, label, status, last_seen, created_at from devices where token_hash is not null order by status, site_id, label`).map(toDevice);
+  },
+  async deviceByToken(tokenHash) {
+    const q = sql();
+    const [r] = await q<DeviceRow[]>`
+      update devices set last_seen = now() where token_hash = ${tokenHash}
+      returning id, site_id, label, status, last_seen, created_at`;
+    return r ? toDevice(r) : undefined;
+  },
+  async device(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<DeviceRow[]>`select id, site_id, label, status, last_seen, created_at from devices where id = ${id}`;
+    return r ? toDevice(r) : undefined;
+  },
+  async setDeviceStatus(id, status) {
+    if (!isUuid(id)) return;
+    const q = sql();
+    await q`update devices set status = ${status} where id = ${id}`;
+  },
+  async createPairing(p) {
+    const q = sql();
+    await q`insert into device_pairings (code_hash, site_id, label, created_by, expires_at)
+            values (${p.codeHash}, ${p.siteId}, ${p.label}, ${p.createdBy}, ${new Date(p.expiresAt)})`;
+  },
+  async redeemPairing(codeHash, tokenHash, now) {
+    return sql().begin(async (tx) => {
+      // Locks the code row so two tablets can't use the same code at once.
+      const [p] = await tx<{ id: string; site_id: SiteId; label: string; created_by: string }[]>`
+        select id, site_id, label, created_by from device_pairings
+        where code_hash = ${codeHash} and used_at is null and expires_at > ${new Date(now)}
+        for update`;
+      if (!p) return undefined;
+      const [d] = await tx<DeviceRow[]>`
+        insert into devices (site_id, label, status, token_hash, created_by, last_seen)
+        values (${p.site_id}, ${p.label}, 'active', ${tokenHash}, ${p.created_by}, now())
+        returning id, site_id, label, status, last_seen, created_at`;
+      await tx`update device_pairings set used_at = now(), device_id = ${d.id} where id = ${p.id}`;
+      return toDevice(d);
+    });
   },
 
   async rules() {

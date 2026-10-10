@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { store } from "@/lib/data";
+import { DEMO_MODE, store } from "@/lib/data";
+import { sessionDeviceOk } from "@/lib/domain/devices";
 import type { Person, Site, SiteAccess } from "@/lib/domain/types";
 
 export const SESSION_COOKIE = "phoco_sid";
@@ -9,7 +10,7 @@ export const SESSION_TTL_MS = 14 * 60 * 60 * 1000; // one long shift
 export interface Ctx { person: Person; site: Site; access: SiteAccess; sessionId: string; isOwner: boolean; isManager: boolean }
 
 /**
- * Re-validated on every request: a revoked session, frozen person or closed site ends access at once.
+ * Re-validated on every request: a revoked session, frozen person, closed site or removed device ends access at once.
  */
 export async function current(): Promise<Ctx | null> {
   const sid = cookies().get(SESSION_COOKIE)?.value;
@@ -24,6 +25,8 @@ export async function current(): Promise<Ctx | null> {
   if (!access) return null;
   const isOwner = person.access.some((a) => a.role === "owner");
   if (site.status === "closed" && !isOwner) return null;
+  // A removed tablet ends every session on it; device-less sessions are owner sign-ins only.
+  if (!DEMO_MODE && !sessionDeviceOk(s.deviceId, s.deviceId ? await db.device(s.deviceId) : undefined, isOwner)) return null;
   return { person, site, access, sessionId: s.id, isOwner, isManager: isOwner || access.role === "manager" };
 }
 
