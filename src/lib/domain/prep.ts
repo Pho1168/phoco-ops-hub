@@ -1,4 +1,4 @@
-import type { Area, SiteAccess } from "./types";
+import type { SiteAccess } from "./types";
 
 /**
  * Kitchen prep handover. One master list is shared by every restaurant; each site keeps its own handovers.
@@ -105,9 +105,12 @@ export const PREP_MASTER: [id: string, name: string, category: PrepCategory][] =
 
 export const masterItems = (): PrepItem[] => PREP_MASTER.map(([id, name, category], i) => ({ id, name, category, position: i + 1, active: true }));
 
-/** Kitchen staff (BOH) and managers use the prep board. */
-export function canUsePrep(access: SiteAccess, isManager: boolean): boolean {
-  return isManager || access.sections.includes("BOH" as Area);
+/**
+ * Everyone working at the site uses the prep board, front and back of house alike: the teams are small and
+ * help each other. (Whether the board is on at all is per site, in prep_sites.)
+ */
+export function canUsePrep(access: SiteAccess | undefined): boolean {
+  return !!access;
 }
 
 const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();

@@ -19,7 +19,7 @@ export function TopBar({ ctx }: { ctx: Ctx }) {
 }
 
 export async function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "prep" | "handover" | "owner" }) {
-  const prep = canUsePrep(ctx.access, ctx.isManager) && (await store().prepEnabledSites()).includes(ctx.site.id);
+  const prep = canUsePrep(ctx.access) && (await store().prepEnabledSites()).includes(ctx.site.id);
   const item = (href: string, id: typeof current, label: string, icon: string) => (
     <Link href={href} aria-current={current === id ? "page" : undefined}><Icon name={icon} />{label}</Link>
   );

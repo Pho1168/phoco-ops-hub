@@ -205,10 +205,10 @@ const PrepShiftZ = z.enum(["next", "tomorrow_am", "tomorrow_pm"]);
 const PrepItemZ = z.string().regex(/^kp-\d{3}$/);
 const UuidZ = z.string().uuid();
 
-/** Kitchen staff (BOH) and managers, at a site where the prep board is switched on. */
+/** Anyone working at a site where the prep board is switched on. */
 async function prepCtx(): Promise<{ ctx: Awaited<ReturnType<typeof requireCtx>>; error?: string }> {
   const ctx = await requireCtx();
-  if (!canUsePrep(ctx.access, ctx.isManager)) return { ctx, error: "Kitchen prep is for kitchen staff and managers" };
+  if (!canUsePrep(ctx.access)) return { ctx, error: "You don't work at this site" };
   if (!(await store().prepEnabledSites()).includes(ctx.site.id)) return { ctx, error: `Kitchen prep isn't switched on at ${ctx.site.name}` };
   return { ctx };
 }

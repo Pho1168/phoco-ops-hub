@@ -27,7 +27,7 @@ export default async function Today() {
   const alerts = (await db.alerts(ctx.site.id)).filter((a) => !a.resolvedAt);
   const handover = (await db.handover(ctx.site.id)).filter((h) => h.needsAction && !h.closedAt);
   const done = rows.filter((r) => r.state === "done").length;
-  const prepOn = canUsePrep(ctx.access, ctx.isManager) && (await db.prepEnabledSites()).includes(ctx.site.id);
+  const prepOn = canUsePrep(ctx.access) && (await db.prepEnabledSites()).includes(ctx.site.id);
   const prepOpen = prepOn ? await db.prepOutstanding(ctx.site.id) : [];
 
   return (

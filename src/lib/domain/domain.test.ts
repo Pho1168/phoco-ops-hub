@@ -308,10 +308,11 @@ describe("kitchen prep", () => {
     expect(filterPrep(items, "drinks", "onion")).toHaveLength(0);
     expect(filterPrep([...items.slice(0, 2), { ...items[2], active: false }], "all", "oil").map((i) => i.id)).toEqual(["kp-001", "kp-002"]);
   });
-  it("lets kitchen staff and managers use the board, not front of house", () => {
-    expect(canUsePrep({ siteId: "EAS", role: "staff", sections: ["BOH"] }, false)).toBe(true);
-    expect(canUsePrep({ siteId: "EAS", role: "staff", sections: ["FOH"] }, false)).toBe(false);
-    expect(canUsePrep({ siteId: "EAS", role: "manager", sections: ["FOH"] }, true)).toBe(true);
+  it("lets everyone at the site use the board, front and back of house", () => {
+    expect(canUsePrep({ siteId: "EAS", role: "staff", sections: ["BOH"] })).toBe(true);
+    expect(canUsePrep({ siteId: "EAS", role: "staff", sections: ["FOH"] })).toBe(true);
+    expect(canUsePrep({ siteId: "EAS", role: "manager", sections: ["FOH"] })).toBe(true);
+    expect(canUsePrep(undefined)).toBe(false);
   });
   it("carries outstanding items into the next handover once, keeping urgency and notes", () => {
     const draft = [entry("kp-007", { id: "d7", handoverId: "new" }), entry("kp-040", { id: "d40", handoverId: "new", urgent: false })];
