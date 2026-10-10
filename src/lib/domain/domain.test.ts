@@ -6,7 +6,7 @@ import { buildEveningNotices, buildImportNotices, parseExport, parseStaffTab, pa
 import { afterQuietHours, londonToUtc } from "./time";
 import { hashPin, isValidPin, verifyPin } from "./pin";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
-import { canChangeAccess, canMarkLeft, nextStaffCode, validatePersonInput } from "./staff";
+import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
 import type { Answer, Checklist, Person, Site, TempRule } from "./types";
 
 const FRIDGE: TempRule = { code: "F", label: "Fridge", targetMax: 5, legalMax: 8 };
@@ -128,13 +128,13 @@ describe("rota import", () => {
     return r;
   };
   const staffTab = [["PHO & CO  ·  EAS STAFF LIST"], ["Name", "Section", "Active", "Slot key", "Notes", "Capacity", "Staff ID"],
-    ["Alex", "FOH", "Yes", "FOH1", "", "", "PC-9001"], ["Alex", "BOH", "Yes", "BOH1", "", "", "PC-9001"], ["Bo", "BOH", "Yes", "BOH2", "", "", ""]];
+    ["Alex", "FOH", "Yes", "FOH1", "", "", "001"], ["Alex", "BOH", "Yes", "BOH1", "", "", "001"], ["Bo", "BOH", "Yes", "BOH2", "", "", ""]];
   const staff = parseStaffTab(staffTab);
 
   it("reads the Staff tab and the Settings week table like the real sheet", () => {
     expect(staff).toEqual([
-      { name: "Alex", section: "FOH", staffCode: "PC-9001", active: true },
-      { name: "Alex", section: "BOH", staffCode: "PC-9001", active: true }]);
+      { name: "Alex", section: "FOH", staffCode: "001", active: true },
+      { name: "Alex", section: "BOH", staffCode: "001", active: true }]);
     const weeks = parseWeekTable([["1", "Mon 5 Oct 2026", "4", "8", "16", "28", "29", "Published"], ["2", "Mon 12 Oct 2026", "33", "37", "45", "57", "58", "Draft"], ["Week #", "Week starting"]]);
     expect(Array.from(weeks.entries())).toEqual([["2026-10-05", "published"], ["2026-10-12", "draft"]]);
   });
@@ -159,7 +159,7 @@ describe("rota import", () => {
   });
 
   const sh = (date: string, start: string, end: string, week = "2026-10-12"): StoredShift =>
-    ({ sourceKey: `EAS|${week}|PC-9001|FOH|${date}`, staffCode: "PC-9001", section: "FOH", week, date, start, end, endsNextDay: false, cancelled: false });
+    ({ sourceKey: `EAS|${week}|001|FOH|${date}`, staffCode: "001", section: "FOH", week, date, start, end, endsNextDay: false, cancelled: false });
 
   it("plans adds, changes and cancellations, only within the imported weeks", () => {
     const old = [sh("2026-10-13", "11:00", "21:45"), sh("2026-10-14", "11:00", "22:00"), sh("2026-10-06", "11:00", "15:00", "2026-10-05"), { ...sh("2026-10-16", "17:00", "21:00"), cancelled: true }];
@@ -173,20 +173,20 @@ describe("rota import", () => {
     const imported = [sh("2026-10-13", "12:00", "20:00"), sh("2026-10-16", "17:00", "21:00")];
     const first = buildImportNotices({ siteName: "Eastcote", today: "2026-10-10", plan: { added: imported, changed: [], cancelled: [] }, imported,
       before: new Map([["2026-10-12", "draft"]]), after: new Map([["2026-10-12", "published"]]) });
-    expect(first).toEqual([{ staffCode: "PC-9001", kind: "published", title: "Rota out: Eastcote, week of Mon 12 Oct", body: "Tue 13 Oct 12:00–20:00 (FOH)\nFri 16 Oct 17:00–21:00 (FOH)" }]);
+    expect(first).toEqual([{ staffCode: "001", kind: "published", title: "Rota out: Eastcote, week of Mon 12 Oct", body: "Tue 13 Oct 12:00–20:00 (FOH)\nFri 16 Oct 17:00–21:00 (FOH)" }]);
     const plan = { added: [], changed: [{ before: sh("2026-10-13", "11:00", "21:45"), after: imported[0] }], cancelled: [sh("2026-10-15", "11:00", "15:00"), sh("2026-10-09", "11:00", "15:00")] };
     const pub = new Map([["2026-10-12", "published" as const]]);
     const later = buildImportNotices({ siteName: "Eastcote", today: "2026-10-10", plan, imported, before: pub, after: pub });
-    expect(later).toEqual([{ staffCode: "PC-9001", kind: "changed", title: "Rota change at Eastcote", body: "Tue 13 Oct is now 12:00–20:00 (was 11:00–21:45)\nCancelled: Thu 15 Oct 11:00–15:00 (FOH)" }]);
+    expect(later).toEqual([{ staffCode: "001", kind: "changed", title: "Rota change at Eastcote", body: "Tue 13 Oct is now 12:00–20:00 (was 11:00–21:45)\nCancelled: Thu 15 Oct 11:00–15:00 (FOH)" }]);
     const draft = new Map([["2026-10-12", "draft" as const]]);
     expect(buildImportNotices({ siteName: "Eastcote", today: "2026-10-10", plan, imported, before: draft, after: draft })).toEqual([]);
   });
   it("evening reminder lists tomorrow's shifts per person", () => {
     const n = buildEveningNotices("2026-10-13", [
-      { staffCode: "PC-9001", siteName: "Eastcote", section: "FOH", start: "17:00", end: "21:00", date: "2026-10-13" },
-      { staffCode: "PC-9001", siteName: "Eastcote", section: "BOH", start: "09:00", end: "13:00", date: "2026-10-13" },
-      { staffCode: "PC-9002", siteName: "Wembley", section: "PROD", start: "08:00", end: "16:00", date: "2026-10-14" }]);
-    expect(n).toEqual([{ staffCode: "PC-9001", kind: "evening", title: "Tomorrow (Tue 13 Oct)", body: "Eastcote: 09:00–13:00 (BOH)\nEastcote: 17:00–21:00 (FOH)" }]);
+      { staffCode: "001", siteName: "Eastcote", section: "FOH", start: "17:00", end: "21:00", date: "2026-10-13" },
+      { staffCode: "001", siteName: "Eastcote", section: "BOH", start: "09:00", end: "13:00", date: "2026-10-13" },
+      { staffCode: "002", siteName: "Wembley", section: "PROD", start: "08:00", end: "16:00", date: "2026-10-14" }]);
+    expect(n).toEqual([{ staffCode: "001", kind: "evening", title: "Tomorrow (Tue 13 Oct)", body: "Eastcote: 09:00–13:00 (BOH)\nEastcote: 17:00–21:00 (FOH)" }]);
   });
 });
 
@@ -216,19 +216,19 @@ describe("PIN lockout shared by sign-in and sign-off", () => {
 describe("staff management", () => {
   const SITES: Site[] = [site("EAS"), { ...site("WEM"), kind: "production" }];
   const owner = person("own", [{ siteId: "EAS", role: "owner", sections: [] }]);
-  const cook = { ...person("cook", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }]), staffCode: "PC-0003" };
+  const cook = { ...person("cook", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }]), staffCode: "003" };
 
   it("cleans input and keeps only sections that exist at each site", () => {
-    const r = validatePersonInput({ name: "  Mai  Tran ", staffCode: "pc-0009", access: [
+    const r = validatePersonInput({ name: "  Mai  Tran ", staffCode: "9", access: [
       { siteId: "EAS", role: "staff", sections: ["FOH", "PROD"] }, { siteId: "WEM", role: "staff", sections: ["PROD"] }] }, SITES, [owner, cook]);
-    expect(r).toEqual({ ok: true, value: { name: "Mai Tran", staffCode: "PC-0009", access: [
+    expect(r).toEqual({ ok: true, value: { name: "Mai Tran", staffCode: "009", access: [
       { siteId: "EAS", role: "staff", sections: ["FOH"] }, { siteId: "WEM", role: "staff", sections: ["PROD"] }] } });
   });
   it("rejects a taken staff ID, a bad ID, no sites and no sections", () => {
-    const base = { name: "X", staffCode: "PC-0003", access: [{ siteId: "EAS" as const, role: "staff" as const, sections: ["FOH" as const] }] };
+    const base = { name: "X", staffCode: "003", access: [{ siteId: "EAS" as const, role: "staff" as const, sections: ["FOH" as const] }] };
     expect(validatePersonInput(base, SITES, [cook]).ok).toBe(false);
     expect(validatePersonInput(base, SITES, [cook], "cook").ok).toBe(true);
-    expect(validatePersonInput({ ...base, staffCode: "123" }, SITES, []).ok).toBe(false);
+    expect(validatePersonInput({ ...base, staffCode: "1234" }, SITES, []).ok).toBe(false);
     expect(validatePersonInput({ ...base, access: [] }, SITES, []).ok).toBe(false);
     expect(validatePersonInput({ ...base, access: [{ siteId: "EAS", role: "staff", sections: [] }] }, SITES, []).ok).toBe(false);
   });
@@ -240,9 +240,15 @@ describe("staff management", () => {
     expect(canMarkLeft(owner, owner, [owner, owner2]).ok).toBe(false);
     expect(canMarkLeft(owner, cook, [owner, cook]).ok).toBe(true);
   });
+  it("reads staff IDs however they're typed or stored", () => {
+    expect(["1", "01", "001", " 7 ", "PC-0001", "pc-0012"].map((x) => normalizeStaffCode(x))).toEqual(["001", "001", "001", "007", "001", "012"]);
+    expect(normalizeStaffCode("1000")).toBeNull();
+    expect(normalizeStaffCode("abc")).toBeNull();
+    expect(normalizeStaffCode("")).toBeNull();
+  });
   it("suggests the next staff ID", () => {
-    expect(nextStaffCode([cook, { ...owner, staffCode: "PC-0000" }])).toBe("PC-0004");
-    expect(nextStaffCode([])).toBe("PC-0001");
+    expect(nextStaffCode([cook, { ...owner, staffCode: "000" }])).toBe("004");
+    expect(nextStaffCode([])).toBe("001");
   });
 });
 

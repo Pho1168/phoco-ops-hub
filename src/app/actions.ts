@@ -14,7 +14,7 @@ import { randomInt } from "node:crypto";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
-import { canChangeAccess, canMarkLeft, validatePersonInput } from "@/lib/domain/staff";
+import { canChangeAccess, canMarkLeft, normalizeStaffCode, validatePersonInput } from "@/lib/domain/staff";
 import type { SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
 
@@ -62,9 +62,9 @@ async function startSession(personId: string, siteId: SiteId, deviceId?: string,
  */
 export async function staffIdSignIn(staffCode: string, pin: string): Promise<ActionResult> {
   const db = store();
-  const code = z.string().max(20).parse(staffCode).trim().toUpperCase();
+  const code = normalizeStaffCode(z.string().max(20).parse(staffCode));
   const notRecognised = { ok: false as const, error: "Staff ID or PIN not recognised" };
-  const person = (await db.people()).find((p) => p.staffCode.toUpperCase() === code);
+  const person = code ? (await db.people()).find((p) => normalizeStaffCode(p.staffCode) === code) : undefined;
   if (!person || !person.access.length) return notRecognised;
   const isOwner = person.access.some((a) => a.role === "owner");
   const sites = await db.sites();
