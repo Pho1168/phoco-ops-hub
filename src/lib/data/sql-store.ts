@@ -1,6 +1,8 @@
 import postgres from "postgres";
 import type { Answer, Area, Checklist, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
-import type { Alert, AuditEntry, HandoverItem, Run, Session, Store } from "./store";
+import type { Alert, AuditEntry, HandoverItem, NoticeRow, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
+import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
+import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
 import type { Device } from "@/lib/domain/devices";
 
 /**
@@ -86,6 +88,9 @@ async function loadChecklists(filter: postgres.PendingQuery<postgres.Row[]>): Pr
   }));
 }
 
+interface NoticeDbRow { id: string; person_id: string; kind: NoticeRow["kind"]; title: string; body: string; send_after: Date; sent_at: Date | null; created_at: Date }
+const toNotice = (r: NoticeDbRow): NoticeRow => ({ id: r.id, personId: r.person_id, kind: r.kind, title: r.title, body: r.body, sendAfter: r.send_after.getTime(), sentAt: ms(r.sent_at), createdAt: r.created_at.getTime() });
+
 interface DeviceRow { id: string; site_id: SiteId; label: string; status: Device["status"]; last_seen: Date | null; created_at: Date }
 const toDevice = (r: DeviceRow): Device => ({ id: r.id, siteId: r.site_id, label: r.label, status: r.status, lastSeen: ms(r.last_seen), createdAt: r.created_at.getTime() });
 
@@ -150,21 +155,21 @@ export const sqlStore: Store = {
     });
   },
 
-  async createSession(personId, siteId, ttlMs, deviceId) {
+  async createSession(personId, siteId, ttlMs, deviceId, scope = "full") {
     const q = sql();
     const dev = deviceId && isUuid(deviceId) ? deviceId : null;
     const [r] = await q<{ id: string; started_at: Date; expires_at: Date }[]>`
-      insert into app_sessions (person_id, site_id, device_id, expires_at) values (${personId}, ${siteId}, ${dev}, ${new Date(Date.now() + ttlMs)})
+      insert into app_sessions (person_id, site_id, device_id, scope, expires_at) values (${personId}, ${siteId}, ${dev}, ${scope}, ${new Date(Date.now() + ttlMs)})
       returning id, started_at, expires_at`;
-    return { id: r.id, personId, siteId, deviceId: dev ?? undefined, startedAt: r.started_at.getTime(), expiresAt: r.expires_at.getTime() };
+    return { id: r.id, personId, siteId, deviceId: dev ?? undefined, scope, startedAt: r.started_at.getTime(), expiresAt: r.expires_at.getTime() };
   },
   async session(id) {
     if (!isUuid(id)) return undefined;
     const q = sql();
-    const [r] = await q<{ id: string; person_id: string; site_id: SiteId; device_id: string | null; started_at: Date; expires_at: Date; revoked_at: Date | null; revoked_reason: string | null }[]>`
-      select id, person_id, site_id, device_id, started_at, expires_at, revoked_at, revoked_reason from app_sessions where id = ${id}`;
+    const [r] = await q<{ id: string; person_id: string; site_id: SiteId; device_id: string | null; scope: SessionScope; started_at: Date; expires_at: Date; revoked_at: Date | null; revoked_reason: string | null }[]>`
+      select id, person_id, site_id, device_id, scope, started_at, expires_at, revoked_at, revoked_reason from app_sessions where id = ${id}`;
     if (!r) return undefined;
-    const s: Session = { id: r.id, personId: r.person_id, siteId: r.site_id, deviceId: opt(r.device_id), startedAt: r.started_at.getTime(), expiresAt: r.expires_at.getTime() };
+    const s: Session = { id: r.id, personId: r.person_id, siteId: r.site_id, deviceId: opt(r.device_id), scope: r.scope, startedAt: r.started_at.getTime(), expiresAt: r.expires_at.getTime() };
     if (r.revoked_at) { s.revokedAt = r.revoked_at.getTime(); s.revokedReason = opt(r.revoked_reason); }
     return s;
   },
@@ -335,6 +340,158 @@ export const sqlStore: Store = {
     if (!isUuid(id)) return;
     const q = sql();
     await q`update handover_items set closed_at = now(), closed_by = ${personId} where id = ${id} and closed_at is null`;
+  },
+
+  // ---------- rota ----------
+  async rotaSources() {
+    const q = sql();
+    const rows = await q<{ site_id: SiteId; created_at: Date; last_import_at: Date | null; last_result: RotaResult | null }[]>`
+      select site_id, created_at, last_import_at, last_result from rota_sources`;
+    return rows.map((r) => ({ siteId: r.site_id, createdAt: r.created_at.getTime(), lastImportAt: ms(r.last_import_at), lastResult: opt(r.last_result) }));
+  },
+  async rotaSourceByToken(tokenHash) {
+    const q = sql();
+    const [r] = await q<{ site_id: SiteId }[]>`select site_id from rota_sources where token_hash = ${tokenHash}`;
+    return r?.site_id;
+  },
+  async setRotaToken(siteId, tokenHash, createdBy) {
+    const q = sql();
+    await q`insert into rota_sources (site_id, token_hash, created_by) values (${siteId}, ${tokenHash}, ${createdBy})
+            on conflict (site_id) do update set token_hash = excluded.token_hash, created_by = excluded.created_by, created_at = now()`;
+  },
+  async recordRotaImport(siteId, result) {
+    const q = sql();
+    await q`update rota_sources set last_import_at = now(), last_result = ${q.json(result as unknown as postgres.JSONValue)} where site_id = ${siteId}`;
+  },
+  async weekStatuses(siteId) {
+    const q = sql();
+    const rows = await q<{ week: string; status: WeekStatus }[]>`select to_char(week_start, 'YYYY-MM-DD') as week, status from rota_weeks where site_id = ${siteId}`;
+    return new Map(rows.map((r) => [r.week, r.status]));
+  },
+  async setWeekStatuses(siteId, statuses) {
+    if (!statuses.size) return;
+    await sql().begin(async (tx) => {
+      for (const [week, status] of Array.from(statuses.entries())) {
+        await tx`insert into rota_weeks (site_id, week_start, status) values (${siteId}, ${week}, ${status})
+                 on conflict (site_id, week_start) do update set status = excluded.status, imported_at = now()`;
+      }
+    });
+  },
+  async siteShifts(siteId) {
+    const q = sql();
+    const rows = await q<{ source_key: string; staff_code: string; section: string; week: string; starts_at: Date; ends_at: Date; cancelled_at: Date | null }[]>`
+      select s.source_key, p.staff_code, s.section, to_char(s.week_start, 'YYYY-MM-DD') as week, s.starts_at, s.ends_at, s.cancelled_at
+      from shifts s join people p on p.id = s.person_id where s.site_id = ${siteId}`;
+    return rows.map((r): StoredShift => {
+      const date = londonDate(r.starts_at.getTime());
+      const start = londonHM(r.starts_at.getTime()), end = londonHM(r.ends_at.getTime());
+      return { sourceKey: r.source_key, staffCode: r.staff_code, section: r.section, week: r.week, date, start, end, endsNextDay: end <= start, cancelled: !!r.cancelled_at };
+    });
+  },
+  async applyShiftSync(siteId, plan, personIdByCode) {
+    const times = (s: { date: string; start: string; end: string; endsNextDay: boolean }) => ({
+      starts: new Date(londonToUtc(s.date, s.start)),
+      ends: new Date(londonToUtc(s.endsNextDay ? addDays(s.date, 1) : s.date, s.end)),
+    });
+    await sql().begin(async (tx) => {
+      for (const s of [...plan.added, ...plan.changed.map((c) => c.after)]) {
+        const personId = personIdByCode.get(s.staffCode);
+        if (!personId) continue;
+        const t = times(s);
+        await tx`
+          insert into shifts (site_id, person_id, section, starts_at, ends_at, source_key, week_start)
+          values (${siteId}, ${personId}, ${s.section}, ${t.starts}, ${t.ends}, ${s.sourceKey}, ${s.week})
+          on conflict (source_key) do update set person_id = excluded.person_id, section = excluded.section,
+            starts_at = excluded.starts_at, ends_at = excluded.ends_at, week_start = excluded.week_start,
+            changed_at = now(), cancelled_at = null`;
+      }
+      for (const s of plan.cancelled) {
+        await tx`update shifts set cancelled_at = now(), changed_at = now() where source_key = ${s.sourceKey} and cancelled_at is null`;
+      }
+    });
+  },
+  async shiftsForPerson(personId, fromDate, toDate) {
+    if (!isUuid(personId)) return [];
+    const q = sql();
+    const rows = await q<{ id: string; site_id: SiteId; site_name: string; section: string; week: string; starts_at: Date; ends_at: Date; cancelled_at: Date | null; status: WeekStatus | null }[]>`
+      select s.id, s.site_id, si.name as site_name, s.section, to_char(s.week_start, 'YYYY-MM-DD') as week, s.starts_at, s.ends_at, s.cancelled_at, w.status
+      from shifts s join sites si on si.id = s.site_id
+      left join rota_weeks w on w.site_id = s.site_id and w.week_start = s.week_start
+      where s.person_id = ${personId}
+        and s.starts_at >= ${new Date(londonToUtc(fromDate, "00:00"))} and s.starts_at < ${new Date(londonToUtc(addDays(toDate, 1), "00:00"))}
+      order by s.starts_at`;
+    return rows.map((r): ShiftView => ({
+      id: r.id, siteId: r.site_id, siteName: r.site_name, section: r.section, week: r.week,
+      date: londonDate(r.starts_at.getTime()), start: londonHM(r.starts_at.getTime()), end: londonHM(r.ends_at.getTime()),
+      published: r.status === "published", cancelled: !!r.cancelled_at,
+    }));
+  },
+  async shiftsOnDate(date) {
+    const q = sql();
+    const rows = await q<{ id: string; site_id: SiteId; site_name: string; section: string; week: string; starts_at: Date; ends_at: Date; person_id: string; staff_code: string }[]>`
+      select s.id, s.site_id, si.name as site_name, s.section, to_char(s.week_start, 'YYYY-MM-DD') as week, s.starts_at, s.ends_at, s.person_id, p.staff_code
+      from shifts s join sites si on si.id = s.site_id join people p on p.id = s.person_id
+      join rota_weeks w on w.site_id = s.site_id and w.week_start = s.week_start and w.status = 'published'
+      where s.cancelled_at is null and p.status = 'active' and si.status = 'open'
+        and s.starts_at >= ${new Date(londonToUtc(date, "00:00"))} and s.starts_at < ${new Date(londonToUtc(addDays(date, 1), "00:00"))}`;
+    return rows.map((r) => ({
+      id: r.id, siteId: r.site_id, siteName: r.site_name, section: r.section, week: r.week,
+      date: londonDate(r.starts_at.getTime()), start: londonHM(r.starts_at.getTime()), end: londonHM(r.ends_at.getTime()),
+      published: true, cancelled: false, personId: r.person_id, staffCode: r.staff_code,
+    }));
+  },
+
+  // ---------- messages and push ----------
+  async queueNotice(n) {
+    const q = sql();
+    const r = await q`insert into notifications (person_id, kind, title, body, dedupe_key, send_after)
+                      values (${n.personId}, ${n.kind}, ${n.title}, ${n.body}, ${n.dedupeKey ?? null}, ${new Date(n.sendAfter)})
+                      on conflict (dedupe_key) do nothing`;
+    return r.count > 0;
+  },
+  async dueNotices(now, limit) {
+    const q = sql();
+    const rows = await q<NoticeDbRow[]>`
+      select id, person_id, kind, title, body, send_after, sent_at, created_at from notifications
+      where sent_at is null and send_after <= ${new Date(now)} order by send_after limit ${limit}`;
+    return rows.map(toNotice);
+  },
+  async markNoticeSent(id) {
+    if (!isUuid(id)) return;
+    const q = sql();
+    await q`update notifications set sent_at = now() where id = ${id}`;
+  },
+  async notices(personId, limit) {
+    if (!isUuid(personId)) return [];
+    const q = sql();
+    const rows = await q<NoticeDbRow[]>`
+      select id, person_id, kind, title, body, send_after, sent_at, created_at from notifications
+      where person_id = ${personId} and send_after <= now() order by send_after desc limit ${limit}`;
+    return rows.map(toNotice);
+  },
+  async savePushSub(sub) {
+    const q = sql();
+    await q`insert into push_subscriptions (person_id, endpoint, p256dh, auth) values (${sub.personId}, ${sub.endpoint}, ${sub.p256dh}, ${sub.auth})
+            on conflict (endpoint) do update set person_id = excluded.person_id, p256dh = excluded.p256dh, auth = excluded.auth, failures = 0`;
+  },
+  async pushSubs(personId) {
+    if (!isUuid(personId)) return [];
+    const q = sql();
+    const rows = await q<{ person_id: string; endpoint: string; p256dh: string; auth: string }[]>`
+      select person_id, endpoint, p256dh, auth from push_subscriptions where person_id = ${personId}`;
+    return rows.map((r) => ({ personId: r.person_id, endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth }));
+  },
+  async dropPushSub(endpoint) {
+    const q = sql();
+    await q`delete from push_subscriptions where endpoint = ${endpoint}`;
+  },
+  async secret(key, make) {
+    const q = sql();
+    const [have] = await q<{ value: string }[]>`select value from app_secrets where key = ${key}`;
+    if (have) return have.value;
+    await q`insert into app_secrets (key, value) values (${key}, ${make()}) on conflict (key) do nothing`;
+    const [r] = await q<{ value: string }[]>`select value from app_secrets where key = ${key}`;
+    return r.value;
   },
 
   async audit(entry) {

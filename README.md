@@ -24,7 +24,9 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
   - **close a site with one button**, which logs everyone out there and freezes staff who only work at that site; reopening unfreezes them
   - audit trail of every action
 
-Not built yet: rota reminders from Google Sheets, Wembley batch codes, labels, dispatch and receiving, and the remaining MVP features. See the PRD.
+- **Rota and reminders**: each site's rota Google Sheet sends its Export, week status (Settings) and Staff tabs every hour through a small Apps Script (Owner → Rota sheets → Connect sheet). Only Published weeks are shown or messaged. Staff sign in on their own phone with staff ID + PIN to a limited **My shifts** view and turn on notifications: a list when a week is published, a message when a published shift changes, and a reminder at 18:00 the evening before. Nothing is sent 22:00–08:00. A Supabase schedule (pg_cron) calls `/api/cron/tick` every 10 minutes.
+
+Not built yet: Wembley batch codes, labels, dispatch and receiving, and the remaining MVP features. See the PRD.
 
 ## Try it (demo mode)
 

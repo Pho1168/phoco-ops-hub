@@ -14,7 +14,7 @@ export interface PersonRow { id: string; name: string; code: string; status: str
 
 type Modal = { type: "close"; site: SiteSummary } | { type: "resolve"; id: string } | null;
 
-export function OwnerClient({ sites, people, log, currentSite, devices }: { sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode }) {
+export function OwnerClient({ sites, people, log, currentSite, devices, rota }: { sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [modal, setModal] = useState<Modal>(null);
@@ -87,6 +87,8 @@ export function OwnerClient({ sites, people, log, currentSite, devices }: { site
         {err && !modal && <div className="err" role="alert">{err}</div>}
       </section>
 
+      {rota}
+
       {devices}
 
       <section className="card stack" aria-label="Activity">
@@ -100,7 +102,7 @@ export function OwnerClient({ sites, people, log, currentSite, devices }: { site
       {modal?.type === "close" && <CloseSiteModal site={modal.site} err={err} pending={pending} onCancel={() => setModal(null)}
         onConfirm={(name, reason) => run(() => closeSite(modal.site.id, name, reason), `${modal.site.name} closed. Staff there are logged out and frozen`)} />}
       {modal?.type === "resolve" && <ResolveModal err={err} pending={pending} onCancel={() => setModal(null)} onConfirm={(note) => run(() => resolveAlert(modal.id, note), "Alert resolved")} />}
-      <div className="foot-links"><Link href="/pin">Change my PIN</Link></div>
+      <div className="foot-links"><Link href="/me">My shifts</Link><Link href="/pin">Change my PIN</Link></div>
     </main>
   );
 }

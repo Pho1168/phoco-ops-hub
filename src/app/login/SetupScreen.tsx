@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ownerSignIn, pairDevice } from "@/app/actions";
+import { pairDevice, staffIdSignIn } from "@/app/actions";
 
 export function SetupScreen({ removed }: { removed: boolean }) {
   const router = useRouter();
@@ -42,12 +42,12 @@ export function SetupScreen({ removed }: { removed: boolean }) {
       <form className="card stack" onSubmit={(e) => {
         e.preventDefault();
         start(async () => {
-          const r = await ownerSignIn(staff, pin);
+          const r = await staffIdSignIn(staff, pin);
           if (r.ok) router.replace("/"); else { setOwnerErr(r.error); setPin(""); }
         });
       }}>
-        <h2 className="h-sec">Owner sign-in</h2>
-        <p className="muted" style={{ margin: 0 }}>For owners on their own phone or computer.</p>
+        <h2 className="h-sec">Sign in with your staff ID</h2>
+        <p className="muted" style={{ margin: 0 }}>On your own phone: staff see their shifts and can turn on reminders. Owners get the full app.</p>
         <div className="row wrap">
           <label className="stack" style={{ gap: 6, flex: "1 1 140px" }}>
             <span className="strong" style={{ fontSize: 15 }}>Staff ID</span>

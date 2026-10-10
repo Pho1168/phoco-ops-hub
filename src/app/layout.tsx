@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "PHO & CO Ops Hub",
   description: "Checklists, food safety and shift handover for PHO & CO",
+  manifest: "/manifest.webmanifest",
+  icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: "PHO & CO", statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#2F4A3A" };

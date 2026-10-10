@@ -46,9 +46,10 @@ export function canUseDeviceForSite(device: Device | null, siteId: SiteId): Devi
 
 /**
  * A session stays valid only while its device does. Sessions without a device are owner sign-ins
- * from an unregistered device and are valid for owners only.
+ * from an unregistered device (valid for owners only), or "My shifts" sessions on a staff member's own phone.
  */
-export function sessionDeviceOk(deviceId: string | undefined, device: Device | undefined, isOwner: boolean): boolean {
+export function sessionDeviceOk(deviceId: string | undefined, device: Device | undefined, isOwner: boolean, scope: "full" | "shifts" = "full"): boolean {
+  if (scope === "shifts") return true; // "My shifts" on a personal phone: no names, no checklists
   if (!deviceId) return isOwner;
   return !!device && device.status === "active";
 }

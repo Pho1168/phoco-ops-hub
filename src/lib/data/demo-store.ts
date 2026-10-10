@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
-import type { Alert, AuditEntry, HandoverItem, Run, Session, Store } from "./store";
+import type { Alert, AuditEntry, HandoverItem, NoticeRow, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
+import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
 /** Demo-only people. Real staff come from the database, never from the code. */
@@ -53,6 +54,12 @@ interface State {
   runs: Map<string, Run>; alerts: Alert[]; handover: HandoverItem[]; audit: AuditEntry[];
   devices: (Device & { tokenHash: string })[];
   pairings: { codeHash: string; siteId: SiteId; label: string; createdBy: string; expiresAt: number; usedAt?: number }[];
+  rotaSources: { siteId: SiteId; tokenHash: string; createdAt: number; lastImportAt?: number; lastResult?: RotaResult }[];
+  weeks: Map<string, WeekStatus>; // "SITE|week"
+  shifts: (StoredShift & { id: string; siteId: SiteId; personId: string })[];
+  notices: (NoticeRow & { dedupeKey?: string })[];
+  pushSubs: PushSub[];
+  secrets: Map<string, string>;
 }
 
 function seed(): State {
@@ -82,6 +89,7 @@ function seed(): State {
       C: { code: "C", label: "Cooking core", targetMin: 75, legalMin: 75 },
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
+    rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
   };
 }
 
@@ -112,8 +120,8 @@ export const demoStore: Store = {
   },
   async setAccess(personId, access) { const p = S().people.find((x) => x.id === personId); if (p) p.access = access; },
 
-  async createSession(personId, siteId, ttlMs, deviceId) {
-    const s: Session = { id: randomUUID(), personId, siteId, deviceId, startedAt: Date.now(), expiresAt: Date.now() + ttlMs };
+  async createSession(personId, siteId, ttlMs, deviceId, scope = "full") {
+    const s: Session = { id: randomUUID(), personId, siteId, deviceId, scope, startedAt: Date.now(), expiresAt: Date.now() + ttlMs };
     S().sessions.push(s);
     return s;
   },
@@ -176,6 +184,59 @@ export const demoStore: Store = {
   async handover(siteId) { return S().handover.filter((h) => h.siteId === siteId); },
   async addHandover(h) { S().handover.unshift({ ...h, createdByName: S().people.find((p) => p.id === h.createdBy)?.name ?? "", id: randomUUID(), createdAt: Date.now() }); },
   async closeHandover(id, personId) { const h = S().handover.find((x) => x.id === id); if (h && !h.closedAt) { h.closedAt = Date.now(); h.closedBy = personId; } },
+
+  async rotaSources() { return S().rotaSources.map((r) => ({ siteId: r.siteId, createdAt: r.createdAt, lastImportAt: r.lastImportAt, lastResult: r.lastResult })); },
+  async rotaSourceByToken(tokenHash) { return S().rotaSources.find((r) => r.tokenHash === tokenHash)?.siteId; },
+  async setRotaToken(siteId, tokenHash) {
+    S().rotaSources = [...S().rotaSources.filter((r) => r.siteId !== siteId), { siteId, tokenHash, createdAt: Date.now() }];
+  },
+  async recordRotaImport(siteId, result) { const r = S().rotaSources.find((x) => x.siteId === siteId); if (r) { r.lastImportAt = Date.now(); r.lastResult = result; } },
+  async weekStatuses(siteId) {
+    const out = new Map<string, WeekStatus>();
+    for (const [k, v] of Array.from(S().weeks.entries())) if (k.startsWith(`${siteId}|`)) out.set(k.slice(4), v);
+    return out;
+  },
+  async setWeekStatuses(siteId, statuses) { for (const [w, st] of Array.from(statuses.entries())) S().weeks.set(`${siteId}|${w}`, st); },
+  async siteShifts(siteId) {
+    return S().shifts.filter((s) => s.siteId === siteId).map((s): StoredShift => ({ sourceKey: s.sourceKey, staffCode: s.staffCode, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end, endsNextDay: s.endsNextDay, cancelled: s.cancelled }));
+  },
+  async applyShiftSync(siteId, plan, personIdByCode) {
+    for (const s of [...plan.added, ...plan.changed.map((c) => c.after)]) {
+      const personId = personIdByCode.get(s.staffCode);
+      if (!personId) continue;
+      const i = S().shifts.findIndex((x) => x.sourceKey === s.sourceKey);
+      const row = { ...s, id: i >= 0 ? S().shifts[i].id : randomUUID(), siteId, personId, cancelled: false };
+      if (i >= 0) S().shifts[i] = row; else S().shifts.push(row);
+    }
+    for (const s of plan.cancelled) { const x = S().shifts.find((y) => y.sourceKey === s.sourceKey); if (x) x.cancelled = true; }
+  },
+  async shiftsForPerson(personId, fromDate, toDate) {
+    const names = new Map(S().sites.map((s) => [s.id, s.name]));
+    return S().shifts.filter((s) => s.personId === personId && s.date >= fromDate && s.date <= toDate)
+      .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
+      .map((s): ShiftView => ({ id: s.id, siteId: s.siteId, siteName: names.get(s.siteId) ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
+        published: S().weeks.get(`${s.siteId}|${s.week}`) === "published", cancelled: s.cancelled }));
+  },
+  async shiftsOnDate(date) {
+    const names = new Map(S().sites.map((s) => [s.id, s.name]));
+    return S().shifts.filter((s) => s.date === date && !s.cancelled && S().weeks.get(`${s.siteId}|${s.week}`) === "published")
+      .map((s) => ({ id: s.id, siteId: s.siteId, siteName: names.get(s.siteId) ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
+        published: true, cancelled: false, personId: s.personId, staffCode: s.staffCode }));
+  },
+  async queueNotice(n) {
+    if (n.dedupeKey && S().notices.some((x) => x.dedupeKey === n.dedupeKey)) return false;
+    S().notices.push({ id: randomUUID(), personId: n.personId, kind: n.kind, title: n.title, body: n.body, dedupeKey: n.dedupeKey, sendAfter: n.sendAfter, createdAt: Date.now() });
+    return true;
+  },
+  async dueNotices(now, limit) { return S().notices.filter((n) => !n.sentAt && n.sendAfter <= now).slice(0, limit); },
+  async markNoticeSent(id) { const n = S().notices.find((x) => x.id === id); if (n) n.sentAt = Date.now(); },
+  async notices(personId, limit) {
+    return S().notices.filter((n) => n.personId === personId && n.sendAfter <= Date.now()).sort((a, b) => b.sendAfter - a.sendAfter).slice(0, limit);
+  },
+  async savePushSub(sub) { S().pushSubs = [...S().pushSubs.filter((p) => p.endpoint !== sub.endpoint), sub]; },
+  async pushSubs(personId) { return S().pushSubs.filter((p) => p.personId === personId); },
+  async dropPushSub(endpoint) { S().pushSubs = S().pushSubs.filter((p) => p.endpoint !== endpoint); },
+  async secret(key, make) { if (!S().secrets.has(key)) S().secrets.set(key, make()); return S().secrets.get(key)!; },
 
   async audit(entry) { S().audit.unshift({ ...entry, at: Date.now() }); },
   async auditLog(limit) { return S().audit.slice(0, limit); },

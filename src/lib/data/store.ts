@@ -1,7 +1,15 @@
 import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Device } from "@/lib/domain/devices";
+import type { Notice, StoredShift, SyncPlan, WeekStatus } from "@/lib/domain/rota";
 
-export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
+export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
+/** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
+export type SessionScope = "full" | "shifts";
+export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
+export interface NoticeRow { id: string; personId: string; kind: Notice["kind"]; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number }
+export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
+export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
+export interface RotaSource { siteId: SiteId; createdAt: number; lastImportAt?: number; lastResult?: RotaResult }
 export interface Run { listId: string; date: string; answers: Answer[]; signedBy?: string; signedAt?: number }
 export interface Alert { id: string; siteId: SiteId; level: "warning" | "critical"; title: string; detail: string; dedupeKey: string; createdAt: number; resolvedAt?: number; resolvedBy?: string; resolutionNote?: string }
 /** createdBy/closedBy are person ids; createdByName is filled in by the store for display. */
@@ -26,7 +34,7 @@ export interface Store {
   /** Replaces a person's site access. */
   setAccess(personId: string, access: Person["access"]): Promise<void>;
 
-  createSession(personId: string, siteId: SiteId, ttlMs: number, deviceId?: string): Promise<Session>;
+  createSession(personId: string, siteId: SiteId, ttlMs: number, deviceId?: string, scope?: SessionScope): Promise<Session>;
   session(id: string): Promise<Session | undefined>;
   revokeSessions(match: { personId?: string; siteId?: SiteId; deviceId?: string; exceptPersonIds?: string[]; exceptSessionId?: string }, reason: string): Promise<number>;
 
@@ -53,6 +61,31 @@ export interface Store {
   handover(siteId: SiteId): Promise<HandoverItem[]>;
   addHandover(h: Omit<HandoverItem, "id" | "createdAt" | "createdByName">): Promise<void>;
   closeHandover(id: string, personId: string): Promise<void>;
+
+  // Rota (read from the site Google Sheets; never written back)
+  rotaSources(): Promise<RotaSource[]>;
+  rotaSourceByToken(tokenHash: string): Promise<SiteId | undefined>;
+  setRotaToken(siteId: SiteId, tokenHash: string, createdBy: string): Promise<void>;
+  recordRotaImport(siteId: SiteId, result: RotaResult): Promise<void>;
+  weekStatuses(siteId: SiteId): Promise<Map<string, WeekStatus>>;
+  setWeekStatuses(siteId: SiteId, statuses: Map<string, WeekStatus>): Promise<void>;
+  /** Every stored shift for the site, cancelled ones included, keyed the way the import builds them. */
+  siteShifts(siteId: SiteId): Promise<StoredShift[]>;
+  applyShiftSync(siteId: SiteId, plan: SyncPlan, personIdByCode: Map<string, string>): Promise<void>;
+  shiftsForPerson(personId: string, fromDate: string, toDate: string): Promise<ShiftView[]>;
+  /** Published, not-cancelled shifts on a London date, with the person's staff ID. */
+  shiftsOnDate(date: string): Promise<(ShiftView & { personId: string; staffCode: string })[]>;
+
+  // Messages and push
+  queueNotice(n: { personId: string; kind: Notice["kind"]; title: string; body: string; dedupeKey?: string; sendAfter: number }): Promise<boolean>;
+  dueNotices(now: number, limit: number): Promise<NoticeRow[]>;
+  markNoticeSent(id: string): Promise<void>;
+  notices(personId: string, limit: number): Promise<NoticeRow[]>;
+  savePushSub(sub: PushSub): Promise<void>;
+  pushSubs(personId: string): Promise<PushSub[]>;
+  dropPushSub(endpoint: string): Promise<void>;
+  /** Returns the stored value, creating it with `make()` the first time. */
+  secret(key: string, make: () => string): Promise<string>;
 
   audit(entry: Omit<AuditEntry, "at">): Promise<void>;
   auditLog(limit: number): Promise<AuditEntry[]>;

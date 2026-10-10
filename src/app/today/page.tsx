@@ -81,7 +81,7 @@ export default async function Today() {
             </section>
           );
         })}
-        <div className="foot-links"><Link href="/pin">Change my PIN</Link></div>
+        <div className="foot-links"><Link href="/me">My shifts</Link><Link href="/pin">Change my PIN</Link></div>
       </main>
       <BottomNav ctx={ctx} current="today" />
     </>

@@ -7,6 +7,9 @@ import { z } from "zod";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
 import { currentDevice, DEVICE_COOKIE, DEVICE_COOKIE_MAX_AGE, newDeviceToken, sha256 } from "@/lib/device";
+import { pushToPerson } from "@/lib/push";
+import { rotaScript } from "@/lib/rota-script";
+import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
@@ -41,38 +44,48 @@ export async function signIn(siteId: string, personId: string, pin: string): Pro
   return { ok: true };
 }
 
-async function startSession(personId: string, siteId: SiteId, deviceId?: string) {
+/** "My shifts" on a personal phone stays signed in for 60 days so reminders lead straight to it. */
+const SHIFTS_TTL_MS = 60 * 24 * 60 * 60 * 1000;
+
+async function startSession(personId: string, siteId: SiteId, deviceId?: string, scope: "full" | "shifts" = "full") {
   const db = store();
   await db.updatePerson(personId, { pinFailed: 0, pinLockedUntil: undefined });
-  const s = await db.createSession(personId, siteId, SESSION_TTL_MS, deviceId);
-  cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
+  const ttl = scope === "shifts" ? SHIFTS_TTL_MS : SESSION_TTL_MS;
+  const s = await db.createSession(personId, siteId, ttl, deviceId, scope);
+  cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: ttl / 1000, path: "/" });
 }
 
 /**
- * Owner sign-in from a device that isn't a registered site tablet (e.g. the owner's own phone).
- * No names are shown anywhere on that screen; anyone who isn't an owner gets the same "not recognised".
+ * Sign-in by staff ID + PIN on a device that isn't a registered site tablet (someone's own phone or computer).
+ * Owners get the full app. Everyone else gets "My shifts" only: their own shifts and messages, no names, no checklists.
+ * The error is the same "not recognised" for every failure, so the screen gives nothing away.
  */
-export async function ownerSignIn(staffCode: string, pin: string): Promise<ActionResult> {
+export async function staffIdSignIn(staffCode: string, pin: string): Promise<ActionResult> {
   const db = store();
   const code = z.string().max(20).parse(staffCode).trim().toUpperCase();
   const notRecognised = { ok: false as const, error: "Staff ID or PIN not recognised" };
   const person = (await db.people()).find((p) => p.staffCode.toUpperCase() === code);
-  const ownerSites = person?.access.filter((a) => a.role === "owner") ?? [];
-  if (!person || !ownerSites.length) return notRecognised;
+  if (!person || !person.access.length) return notRecognised;
+  const isOwner = person.access.some((a) => a.role === "owner");
   const sites = await db.sites();
-  const open = ownerSites.map((a) => sites.find((s) => s.id === a.siteId)).filter((s): s is NonNullable<typeof s> => !!s);
-  const site = open.find((s) => s.status === "open") ?? open[0];
+  const mine = person.access.map((a) => sites.find((s) => s.id === a.siteId)).filter((s): s is NonNullable<typeof s> => !!s);
+  const site = mine.find((s) => s.status === "open") ?? (isOwner ? mine[0] : undefined);
   if (!site) return notRecognised;
   const now = Date.now();
   const gate = canSignIn(person, site, now);
   if (!gate.allowed) return { ok: false, error: gate.reason };
   if (!verifyPin(pin, person.pinHash)) {
     await db.updatePerson(person.id, registerPinFailure(person, now));
-    await db.audit({ actorId: person.id, action: "signin.failed", detail: "Wrong PIN (owner sign-in, unregistered device)" });
+    await db.audit({ actorId: person.id, action: "signin.failed", detail: "Wrong PIN (staff ID sign-in, unregistered device)" });
     return notRecognised;
   }
-  await startSession(person.id, site.id);
-  await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Owner signed in on an unregistered device" });
+  if (isOwner) {
+    await startSession(person.id, site.id);
+    await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Owner signed in on an unregistered device" });
+  } else {
+    await startSession(person.id, site.id, undefined, "shifts");
+    await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Signed in to My shifts on own phone" });
+  }
   return { ok: true };
 }
 
@@ -414,5 +427,51 @@ export async function removeDevice(deviceId: string): Promise<ActionResult> {
   const ended = await db.revokeSessions({ deviceId: device.id }, "device removed");
   await db.audit({ actorId: ctx.person.id, siteId: device.siteId, action: "device.removed", detail: `${device.label} removed · ${ended} sessions ended` });
   revalidatePath("/owner");
+  return { ok: true };
+}
+
+// ---------- rota sheet connection (owners) ----------
+
+/** Creates (or replaces) the token a site's rota sheet uses, and returns the ready-to-paste script. Shown once. */
+export async function connectRotaSheet(siteId: string): Promise<ActionResult & { script?: string }> {
+  const ctx = await requireOwner();
+  const db = store();
+  const site = await db.site(SiteIdZ.parse(siteId));
+  if (!site) return { ok: false, error: "Site not found" };
+  const token = newDeviceToken();
+  await db.setRotaToken(site.id, sha256(token), ctx.person.id);
+  const h = headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "phoco-ops-hub.vercel.app";
+  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "rota.connect", detail: `Rota sheet connection created for ${site.name} (any older connection stops working)` });
+  revalidatePath("/owner");
+  return { ok: true, script: rotaScript(`${proto}://${host}/api/rota/import`, token, site.name) };
+}
+
+// ---------- reminders on a personal phone ----------
+
+const PushSubZ = z.object({ endpoint: z.string().url().max(1000), keys: z.object({ p256dh: z.string().max(200), auth: z.string().max(100) }) });
+
+/** Saves this phone's push subscription and sends a test message. Not allowed on shared site tablets. */
+export async function enableReminders(sub: unknown): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const db = store();
+  const session = await db.session(ctx.sessionId);
+  if (session?.deviceId) return { ok: false, error: "Turn reminders on from your own phone, not the shared tablet" };
+  const parsed = PushSubZ.safeParse(sub);
+  if (!parsed.success) return { ok: false, error: "This phone didn't give a usable notification address" };
+  await db.savePushSub({ personId: ctx.person.id, endpoint: parsed.data.endpoint, p256dh: parsed.data.keys.p256dh, auth: parsed.data.keys.auth });
+  await db.audit({ actorId: ctx.person.id, action: "reminders.on", detail: "Turned on rota reminders on a phone" });
+  await pushToPerson(ctx.person.id, { title: "Reminders are on", body: "You'll get a message the evening before each shift and when your rota changes.", url: "/me" });
+  return { ok: true };
+}
+
+export async function disableReminders(endpoint: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const db = store();
+  const mine = await db.pushSubs(ctx.person.id);
+  if (mine.some((s) => s.endpoint === endpoint)) await db.dropPushSub(endpoint);
   return { ok: true };
 }
