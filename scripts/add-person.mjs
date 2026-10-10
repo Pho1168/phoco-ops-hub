@@ -28,7 +28,7 @@ if (!access.length) fail("--access is required");
 
 async function readPin() {
   if (process.env.PIN) return process.env.PIN;
-  process.stdout.write("PIN (4-6 digits, not shown): ");
+  process.stdout.write("PIN (4 digits, not shown): ");
   const stdin = process.stdin;
   stdin.setRawMode?.(true); stdin.resume(); stdin.setEncoding("utf8");
   let pin = "";
@@ -44,7 +44,7 @@ async function readPin() {
 
 const pin = await readPin();
 // Same rules as src/lib/domain/pin.ts
-if (!/^\d{4,6}$/.test(pin) || /^(\d)\1+$/.test(pin) || ["1234", "12345", "123456", "0000"].includes(pin)) fail("PIN too weak: use 4-6 digits, not repeated or 1234.");
+if (!/^\d{4}$/.test(pin) || /^(\d)\1+$/.test(pin) || ["1234", "4321", "0123", "1212", "2580", "0852"].includes(pin)) fail("PIN too weak: use 4 digits, not repeated or an easy pattern.");
 const salt = randomBytes(16);
 const pinHash = `scrypt$${salt.toString("hex")}$${scryptSync(pin, salt, 32).toString("hex")}`;
 

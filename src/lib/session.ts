@@ -27,9 +27,11 @@ export async function current(): Promise<Ctx | null> {
   return { person, site, access, sessionId: s.id, isOwner, isManager: isOwner || access.role === "manager" };
 }
 
+/** Signed-in context for normal pages. Anyone still on a temporary PIN is sent to choose their own first. */
 export async function requireCtx(): Promise<Ctx> {
   const c = await current();
   if (!c) redirect("/login");
+  if (c.person.pinMustChange) redirect("/pin");
   return c;
 }
 

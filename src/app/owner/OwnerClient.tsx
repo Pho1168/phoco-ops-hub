@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { closeSite, logOutEverywhere, reopenSite, resolveAlert, setFrozen, switchSite } from "@/app/actions";
@@ -9,7 +10,7 @@ export interface SiteSummary {
   id: string; name: string; closed: boolean; reason?: string; lists: number; signed: number; overdue: number;
   alerts: { id: string; title: string; detail: string; critical: boolean }[];
 }
-export interface PersonRow { id: string; name: string; status: string; self: boolean; sites: string }
+export interface PersonRow { id: string; name: string; code: string; status: string; self: boolean; sites: string }
 
 type Modal = { type: "close"; site: SiteSummary } | { type: "resolve"; id: string } | null;
 
@@ -60,23 +61,26 @@ export function OwnerClient({ sites, people, log, currentSite }: { sites: SiteSu
       </div>
 
       <section className="card stack" aria-label="Accounts">
-        <h2 className="h-sec">Accounts</h2>
+        <div className="row"><h2 className="h-sec grow">Staff accounts</h2><Link className="btn accent small" href="/staff/new">Add person</Link></div>
         <ul className="accounts">
           {people.map((p) => (
             <li key={p.id}>
               <div className="grow">
                 <div className="strong">{p.name}{p.self ? " (you)" : ""}</div>
-                <div className="muted">{p.sites}</div>
+                <div className="muted">{p.code} · {p.sites}</div>
               </div>
-              <span className={`chip ${p.status === "active" ? "done" : "bad"}`}>{p.status === "active" ? "Active" : "Frozen"}</span>
-              {!p.self && (
-                <span className="acct-actions">
+              <span className={`chip ${p.status === "active" ? "done" : p.status === "left" ? "" : "bad"}`}>{p.status === "active" ? "Active" : p.status === "left" ? "Left" : "Frozen"}</span>
+              <span className="acct-actions">
+                <Link className="btn ghost small" href={`/staff/${p.id}`}>Edit</Link>
+              {!p.self && p.status !== "left" && (
+                <>
                   <button type="button" className="btn ghost small" disabled={pending} onClick={() => run(() => logOutEverywhere(p.id), `${p.name} logged out on all devices`)}>Log out</button>
                   {p.status === "active"
                     ? <button type="button" className="btn bad small" disabled={pending} onClick={() => run(() => setFrozen(p.id, true), `${p.name} frozen`)}>Freeze</button>
                     : <button type="button" className="btn small" disabled={pending} onClick={() => run(() => setFrozen(p.id, false), `${p.name} unfrozen`)}>Unfreeze</button>}
-                </span>
+                </>
               )}
+              </span>
             </li>
           ))}
         </ul>
@@ -94,6 +98,7 @@ export function OwnerClient({ sites, people, log, currentSite }: { sites: SiteSu
       {modal?.type === "close" && <CloseSiteModal site={modal.site} err={err} pending={pending} onCancel={() => setModal(null)}
         onConfirm={(name, reason) => run(() => closeSite(modal.site.id, name, reason), `${modal.site.name} closed. Staff there are logged out and frozen`)} />}
       {modal?.type === "resolve" && <ResolveModal err={err} pending={pending} onCancel={() => setModal(null)} onConfirm={(note) => run(() => resolveAlert(modal.id, note), "Alert resolved")} />}
+      <div className="foot-links"><Link href="/pin">Change my PIN</Link></div>
     </main>
   );
 }

@@ -1,9 +1,14 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
-/** PINs are 4–6 digits and are stored only as salted scrypt hashes. */
+export const PIN_LENGTH = 4;
+const WEAK = ["1234", "4321", "0123", "1212", "2580", "0852"];
+
+/** PINs are exactly 4 digits (the sign-in keypad), not all the same digit and not an obvious sequence. */
 export function isValidPin(pin: string): boolean {
-  return /^\d{4,6}$/.test(pin) && !/^(\d)\1+$/.test(pin) && !["1234", "12345", "123456", "0000"].includes(pin);
+  return /^\d{4}$/.test(pin) && !/^(\d)\1+$/.test(pin) && !WEAK.includes(pin);
 }
+
+export const PIN_RULE = "Use 4 digits. Not all the same digit and not an easy pattern like 1234.";
 
 export function hashPin(pin: string): string {
   const salt = randomBytes(16);

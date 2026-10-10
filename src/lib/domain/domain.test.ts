@@ -4,6 +4,7 @@ import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
 import { diffShifts, parseExport, reminderTimes } from "./rota";
 import { hashPin, isValidPin, verifyPin } from "./pin";
+import { canChangeAccess, canMarkLeft, nextStaffCode, validatePersonInput } from "./staff";
 import type { Answer, Checklist, Person, Site, TempRule } from "./types";
 
 const FRIDGE: TempRule = { code: "F", label: "Fridge", targetMax: 5, legalMax: 8 };
@@ -113,6 +114,7 @@ describe("PINs", () => {
     expect(isValidPin("1111")).toBe(false);
     expect(isValidPin("1234")).toBe(false);
     expect(isValidPin("4821")).toBe(true);
+    expect(isValidPin("48210")).toBe(false);
   });
 });
 
@@ -171,5 +173,38 @@ describe("PIN lockout shared by sign-in and sign-off", () => {
     p = { ...p, ...registerPinFailure(p as never, 1000) };
     expect(isPinLocked(p, 1001)).toBe(true);
     expect(isPinLocked(p, 1000 + PIN_LOCK_MINUTES * 60_000 + 1)).toBe(false);
+  });
+});
+
+describe("staff management", () => {
+  const SITES: Site[] = [site("EAS"), { ...site("WEM"), kind: "production" }];
+  const owner = person("own", [{ siteId: "EAS", role: "owner", sections: [] }]);
+  const cook = { ...person("cook", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }]), staffCode: "PC-0003" };
+
+  it("cleans input and keeps only sections that exist at each site", () => {
+    const r = validatePersonInput({ name: "  Mai  Tran ", staffCode: "pc-0009", access: [
+      { siteId: "EAS", role: "staff", sections: ["FOH", "PROD"] }, { siteId: "WEM", role: "staff", sections: ["PROD"] }] }, SITES, [owner, cook]);
+    expect(r).toEqual({ ok: true, value: { name: "Mai Tran", staffCode: "PC-0009", access: [
+      { siteId: "EAS", role: "staff", sections: ["FOH"] }, { siteId: "WEM", role: "staff", sections: ["PROD"] }] } });
+  });
+  it("rejects a taken staff ID, a bad ID, no sites and no sections", () => {
+    const base = { name: "X", staffCode: "PC-0003", access: [{ siteId: "EAS" as const, role: "staff" as const, sections: ["FOH" as const] }] };
+    expect(validatePersonInput(base, SITES, [cook]).ok).toBe(false);
+    expect(validatePersonInput(base, SITES, [cook], "cook").ok).toBe(true);
+    expect(validatePersonInput({ ...base, staffCode: "123" }, SITES, []).ok).toBe(false);
+    expect(validatePersonInput({ ...base, access: [] }, SITES, []).ok).toBe(false);
+    expect(validatePersonInput({ ...base, access: [{ siteId: "EAS", role: "staff", sections: [] }] }, SITES, []).ok).toBe(false);
+  });
+  it("keeps at least one owner and stops owners demoting or removing themselves", () => {
+    const owner2 = person("own2", owner.access);
+    expect(canChangeAccess(owner, owner, cook.access, [owner, owner2]).ok).toBe(false);
+    expect(canChangeAccess(owner2, owner, cook.access, [owner]).ok).toBe(false);
+    expect(canChangeAccess(owner2, owner, cook.access, [owner, owner2]).ok).toBe(true);
+    expect(canMarkLeft(owner, owner, [owner, owner2]).ok).toBe(false);
+    expect(canMarkLeft(owner, cook, [owner, cook]).ok).toBe(true);
+  });
+  it("suggests the next staff ID", () => {
+    expect(nextStaffCode([cook, { ...owner, staffCode: "PC-0000" }])).toBe("PC-0004");
+    expect(nextStaffCode([])).toBe("PC-0001");
   });
 });

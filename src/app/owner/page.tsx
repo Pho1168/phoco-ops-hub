@@ -27,8 +27,9 @@ export default async function Owner() {
   }));
   const all = await db.people();
   const names = new Map(all.map((p) => [p.id, p.name]));
-  const people: PersonRow[] = all.map((p) => ({
-    id: p.id, name: p.name, status: p.status, self: p.id === ctx.person.id,
+  const order = { active: 0, frozen: 1, left: 2 } as const;
+  const people: PersonRow[] = [...all].sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name)).map((p) => ({
+    id: p.id, name: p.name, code: p.staffCode, status: p.status, self: p.id === ctx.person.id,
     sites: p.access.map((a) => `${a.siteId} ${a.role}`).join(" · "),
   }));
   const log = (await db.auditLog(30)).map((e) => ({
