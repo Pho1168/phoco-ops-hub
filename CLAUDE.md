@@ -13,3 +13,4 @@
 - Schema changes go in a new numbered file in `supabase/migrations/` and are applied to Supabase too.
 - Rota: the app never writes to the rota sheets. Imports arrive at `/api/rota/import` (per-site token, hashed in `rota_sources`). Rules in `src/lib/domain/rota.ts`; times are London wall-clock (`src/lib/domain/time.ts`).
 - Secrets the server generates (VAPID push keys, scheduler token) live in `app_secrets`; the Supabase cron job `ops-hub-reminders` reads the `cron` token from there.
+- Kitchen prep: master list in `PREP_MASTER` (`src/lib/domain/prep.ts`) and `prep_items`; a test keeps them in step. Never delete or renumber an item: retire it with `active = false`. Submitted handovers and their entries are kept (database guards).

@@ -7,6 +7,8 @@ import { afterQuietHours, londonToUtc } from "./time";
 import { hashPin, isValidPin, verifyPin } from "./pin";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
+import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
+import { readFileSync } from "node:fs";
 import type { Answer, Checklist, Person, Site, TempRule } from "./types";
 
 const FRIDGE: TempRule = { code: "F", label: "Fridge", targetMax: 5, legalMax: 8 };
@@ -279,5 +281,66 @@ describe("site devices", () => {
     expect(sessionDeviceOk(undefined, undefined, true)).toBe(true);
     expect(sessionDeviceOk(undefined, undefined, false)).toBe(false);
     expect(sessionDeviceOk(undefined, undefined, false, "shifts")).toBe(true);
+  });
+});
+
+describe("kitchen prep", () => {
+  const items = masterItems();
+  const entry = (itemId: string, extra: Partial<PrepEntry> = {}): PrepEntry =>
+    ({ id: `e-${itemId}-${extra.handoverId ?? "h"}`, handoverId: "h", siteId: "EAS", itemId, status: "outstanding", urgent: false, createdBy: "p", createdAt: 1, ...extra });
+
+  it("has all 63 items exactly once, each in one of the five categories", () => {
+    expect(PREP_MASTER).toHaveLength(63);
+    expect(new Set(PREP_MASTER.map((r) => r[0])).size).toBe(63);
+    expect(new Set(PREP_MASTER.map((r) => r[1].toLowerCase())).size).toBe(63);
+    const counts = PREP_CATEGORIES.map((c) => items.filter((i) => i.category === c.id).length);
+    expect(counts).toEqual([17, 17, 6, 14, 9]);
+  });
+  it("seeds the database with the same list", () => {
+    const sql = readFileSync(new URL("../../../supabase/migrations/0006_kitchen_prep.sql", import.meta.url), "utf8");
+    for (const [id, name, cat] of PREP_MASTER) expect(sql).toContain(`('${id}', '${name.replace(/'/g, "''")}', '${cat}',`);
+  });
+  it("filters by category and search words, ignoring case and order", () => {
+    expect(filterPrep(items, "all", "")).toHaveLength(63);
+    expect(filterPrep(items, "sauces", "")).toHaveLength(6);
+    expect(filterPrep(items, "all", "S/V pork").map((i) => i.id)).toEqual(["kp-051", "kp-053"]);
+    expect(filterPrep(items, "all", "ONION").map((i) => i.id)).toEqual(["kp-020", "kp-021", "kp-029", "kp-032"]);
+    expect(filterPrep(items, "drinks", "onion")).toHaveLength(0);
+    expect(filterPrep([...items.slice(0, 2), { ...items[2], active: false }], "all", "oil").map((i) => i.id)).toEqual(["kp-001", "kp-002"]);
+  });
+  it("lets kitchen staff and managers use the board, not front of house", () => {
+    expect(canUsePrep({ siteId: "EAS", role: "staff", sections: ["BOH"] }, false)).toBe(true);
+    expect(canUsePrep({ siteId: "EAS", role: "staff", sections: ["FOH"] }, false)).toBe(false);
+    expect(canUsePrep({ siteId: "EAS", role: "manager", sections: ["FOH"] }, true)).toBe(true);
+  });
+  it("carries outstanding items into the next handover once, keeping urgency and notes", () => {
+    const draft = [entry("kp-007", { id: "d7", handoverId: "new" }), entry("kp-040", { id: "d40", handoverId: "new", urgent: false })];
+    const old = [entry("kp-040", { id: "o40", handoverId: "old", urgent: true, note: "Last tub" }), entry("kp-063", { id: "o63", handoverId: "old" })];
+    const plan = planSubmit(draft, old, items.map((i) => i.id));
+    expect(plan.carryIn).toEqual([{ itemId: "kp-063", from: "o63", urgent: false, note: undefined }]);
+    expect(plan.merge).toEqual([{ entryId: "d40", from: "o40", urgent: true, note: "Last tub" }]);
+    expect(plan.markCarried.sort()).toEqual(["o40", "o63"]);
+    expect(plan.missed.map((e) => e.itemId).sort()).toEqual(["kp-040", "kp-063"]);
+    expect(plan.stockedCount).toBe(60); // 63 minus rice, peanuts and lemonade
+  });
+  it("never duplicates an item that is outstanding twice", () => {
+    const old = [entry("kp-001", { id: "a", createdAt: 1 }), entry("kp-001", { id: "b", createdAt: 2 })];
+    const plan = planSubmit([], old, ["kp-001", "kp-002"]);
+    expect(plan.carryIn).toHaveLength(1);
+    expect(plan.carryIn[0].from).toBe("b");
+    expect(plan.markCarried.sort()).toEqual(["a", "b"]);
+    expect(plan.stockedCount).toBe(1);
+  });
+  it("a handover with nothing needed confirms every active item as stocked", () => {
+    expect(planSubmit([], [], items.map((i) => i.id)).stockedCount).toBe(63);
+  });
+  it("orders the report urgent first, then in list order", () => {
+    const list = [entry("kp-063"), entry("kp-001"), entry("kp-040", { urgent: true })];
+    expect(reportOrder(list, items).map((e) => e.itemId)).toEqual(["kp-040", "kp-001", "kp-063"]);
+  });
+  it("allows undoing a completed item for 10 minutes", () => {
+    expect(canUndo(1_000, 1_000 + 9 * 60_000)).toBe(true);
+    expect(canUndo(1_000, 1_000 + 11 * 60_000)).toBe(false);
+    expect(canUndo(undefined, 1_000)).toBe(false);
   });
 });

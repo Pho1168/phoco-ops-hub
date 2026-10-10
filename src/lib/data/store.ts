@@ -1,6 +1,7 @@
 import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Device } from "@/lib/domain/devices";
 import type { Notice, StoredShift, SyncPlan, WeekStatus } from "@/lib/domain/rota";
+import type { PrepEntry, PrepItem, PrepShift, SubmitPlan } from "@/lib/domain/prep";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
@@ -14,6 +15,14 @@ export interface Run { listId: string; date: string; answers: Answer[]; signedBy
 export interface Alert { id: string; siteId: SiteId; level: "warning" | "critical"; title: string; detail: string; dedupeKey: string; createdAt: number; resolvedAt?: number; resolvedBy?: string; resolutionNote?: string }
 /** createdBy/closedBy are person ids; createdByName is filled in by the store for display. */
 export interface HandoverItem { id: string; siteId: SiteId; category: string; body: string; needsAction: boolean; createdBy: string; createdByName: string; createdAt: number; closedAt?: number; closedBy?: string }
+/** A prep entry with display names filled in by the store. */
+export interface PrepEntryView extends PrepEntry { createdByName: string; completedByName?: string }
+export interface PrepHandover {
+  id: string; siteId: SiteId; shift: PrepShift; status: "draft" | "submitted";
+  createdBy: string; createdByName: string; createdAt: number; updatedAt: number;
+  submittedBy?: string; submittedByName?: string; submittedAt?: number; stockedCount?: number;
+  entries: PrepEntryView[];
+}
 export interface AuditEntry { at: number; actorId?: string; siteId?: SiteId; action: string; detail: string }
 
 /**
@@ -61,6 +70,27 @@ export interface Store {
   handover(siteId: SiteId): Promise<HandoverItem[]>;
   addHandover(h: Omit<HandoverItem, "id" | "createdAt" | "createdByName">): Promise<void>;
   closeHandover(id: string, personId: string): Promise<void>;
+
+  // Kitchen prep (one master list for every restaurant; handovers per site)
+  prepItems(): Promise<PrepItem[]>;
+  prepEnabledSites(): Promise<SiteId[]>;
+  /** The site's draft, if someone has started one. */
+  prepDraft(siteId: SiteId): Promise<PrepHandover | undefined>;
+  /** Starts the site's draft if there isn't one, then sets the shift and/or marks an item needed or not. */
+  prepEditDraft(siteId: SiteId, personId: string, change: { shift?: PrepShift; itemId?: string; needed?: boolean; urgent?: boolean; note?: string | null }): Promise<void>;
+  /** Outstanding entries in the site's submitted handovers. */
+  prepOutstanding(siteId: SiteId): Promise<PrepEntryView[]>;
+  /**
+   * Submits the site's draft in one transaction: `plan` (from planSubmit) is worked out inside it from the
+   * draft and the outstanding entries, so two people submitting at once can't carry an item twice.
+   */
+  prepSubmit(siteId: SiteId, personId: string, plan: (draft: PrepEntry[], outstanding: PrepEntry[], activeItemIds: string[]) => SubmitPlan):
+    Promise<{ handoverId: string; plan: SubmitPlan } | undefined>;
+  prepHandover(id: string): Promise<PrepHandover | undefined>;
+  /** Submitted handovers for the site, newest first. */
+  prepHandovers(siteId: SiteId, limit: number): Promise<PrepHandover[]>;
+  /** Marks an outstanding entry done (or back to outstanding). Returns false if it isn't at that site or not in that state. */
+  prepSetDone(entryId: string, siteId: SiteId, personId: string, done: boolean): Promise<boolean>;
 
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;

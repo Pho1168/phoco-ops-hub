@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import type { Answer, Area, Checklist, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
-import type { Alert, AuditEntry, HandoverItem, NoticeRow, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
+import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
+import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
 import type { Device } from "@/lib/domain/devices";
@@ -93,6 +94,44 @@ const toNotice = (r: NoticeDbRow): NoticeRow => ({ id: r.id, personId: r.person_
 
 interface DeviceRow { id: string; site_id: SiteId; label: string; status: Device["status"]; last_seen: Date | null; created_at: Date }
 const toDevice = (r: DeviceRow): Device => ({ id: r.id, siteId: r.site_id, label: r.label, status: r.status, lastSeen: ms(r.last_seen), createdAt: r.created_at.getTime() });
+
+// ---------- kitchen prep ----------
+interface PrepEntryRow {
+  id: string; handover_id: string; site_id: SiteId; item_id: string; status: PrepEntry["status"]; urgent: boolean; note: string | null;
+  carried_from: string | null; created_by: string; created_at: Date; completed_by: string | null; completed_at: Date | null;
+  created_by_name?: string | null; completed_by_name?: string | null;
+}
+const toPrepEntry = (r: PrepEntryRow): PrepEntryView => ({
+  id: r.id, handoverId: r.handover_id, siteId: r.site_id, itemId: r.item_id, status: r.status, urgent: r.urgent, note: opt(r.note),
+  carriedFrom: opt(r.carried_from), createdBy: r.created_by, createdAt: r.created_at.getTime(), completedBy: opt(r.completed_by),
+  completedAt: ms(r.completed_at), createdByName: r.created_by_name ?? "", completedByName: opt(r.completed_by_name ?? null),
+});
+interface PrepHandoverRow {
+  id: string; site_id: SiteId; shift: PrepShift; status: "draft" | "submitted"; created_by: string; created_by_name: string | null;
+  created_at: Date; updated_at: Date; submitted_by: string | null; submitted_by_name: string | null; submitted_at: Date | null; stocked_count: number | null;
+}
+async function prepEntriesOf(ids: string[]): Promise<PrepEntryView[]> {
+  if (!ids.length) return [];
+  const q = sql();
+  const rows = await q<PrepEntryRow[]>`
+    select e.*, c.display_name as created_by_name, d.display_name as completed_by_name
+    from prep_entries e join people c on c.id = e.created_by left join people d on d.id = e.completed_by
+    where e.handover_id = any(${ids}::uuid[])`;
+  return rows.map(toPrepEntry);
+}
+async function prepHandoversWhere(where: postgres.PendingQuery<postgres.Row[]>, limit = 50): Promise<PrepHandover[]> {
+  const q = sql();
+  const rows = await q<PrepHandoverRow[]>`
+    select h.*, c.display_name as created_by_name, s.display_name as submitted_by_name
+    from prep_handovers h join people c on c.id = h.created_by left join people s on s.id = h.submitted_by
+    where ${where} order by h.submitted_at desc nulls first, h.created_at desc limit ${limit}`;
+  const entries = await prepEntriesOf(rows.map((r) => r.id));
+  return rows.map((r) => ({
+    id: r.id, siteId: r.site_id, shift: r.shift, status: r.status, createdBy: r.created_by, createdByName: r.created_by_name ?? "",
+    createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), submittedBy: opt(r.submitted_by), submittedByName: opt(r.submitted_by_name),
+    submittedAt: ms(r.submitted_at), stockedCount: opt(r.stocked_count), entries: entries.filter((e) => e.handoverId === r.id),
+  }));
+}
 
 export const sqlStore: Store = {
   async sites() {
@@ -340,6 +379,92 @@ export const sqlStore: Store = {
     if (!isUuid(id)) return;
     const q = sql();
     await q`update handover_items set closed_at = now(), closed_by = ${personId} where id = ${id} and closed_at is null`;
+  },
+
+  async prepItems() {
+    const q = sql();
+    const rows = await q<{ id: string; name: string; category: PrepCategory; position: number; active: boolean }[]>`
+      select id, name, category, position, active from prep_items order by position`;
+    return rows.map((r): PrepItem => ({ id: r.id, name: r.name, category: r.category, position: r.position, active: r.active }));
+  },
+  async prepEnabledSites() {
+    const q = sql();
+    return (await q<{ site_id: SiteId }[]>`select site_id from prep_sites order by site_id`).map((r) => r.site_id);
+  },
+  async prepDraft(siteId) {
+    const q = sql();
+    return (await prepHandoversWhere(q`h.site_id = ${siteId} and h.status = 'draft'`, 1))[0];
+  },
+  async prepEditDraft(siteId, personId, change) {
+    const q = sql();
+    await q.begin(async (tx) => {
+      await tx`insert into prep_handovers (site_id, shift, created_by) values (${siteId}, ${change.shift ?? "next"}, ${personId})
+               on conflict (site_id) where status = 'draft' do nothing`;
+      const [h] = await tx<{ id: string }[]>`
+        update prep_handovers set updated_at = now() ${change.shift ? tx`, shift = ${change.shift}` : tx``}
+        where site_id = ${siteId} and status = 'draft' returning id`;
+      if (!h || !change.itemId) return;
+      if (change.needed === false) {
+        await tx`delete from prep_entries where handover_id = ${h.id} and item_id = ${change.itemId}`;
+        return;
+      }
+      await tx`insert into prep_entries (handover_id, site_id, item_id, created_by) values (${h.id}, ${siteId}, ${change.itemId}, ${personId})
+               on conflict (handover_id, item_id) do nothing`;
+      if (change.urgent !== undefined) await tx`update prep_entries set urgent = ${change.urgent} where handover_id = ${h.id} and item_id = ${change.itemId}`;
+      if (change.note !== undefined) await tx`update prep_entries set note = ${change.note || null} where handover_id = ${h.id} and item_id = ${change.itemId}`;
+    });
+  },
+  async prepOutstanding(siteId) {
+    const q = sql();
+    const rows = await q<PrepEntryRow[]>`
+      select e.*, c.display_name as created_by_name, null as completed_by_name
+      from prep_entries e join prep_handovers h on h.id = e.handover_id join people c on c.id = e.created_by
+      where e.site_id = ${siteId} and e.status = 'outstanding' and h.status = 'submitted'`;
+    return rows.map(toPrepEntry);
+  },
+  async prepSubmit(siteId, personId, makePlan) {
+    const q = sql();
+    return q.begin(async (tx) => {
+      const [h] = await tx<{ id: string }[]>`select id from prep_handovers where site_id = ${siteId} and status = 'draft' for update`;
+      if (!h) return undefined;
+      const draft = (await tx<PrepEntryRow[]>`select * from prep_entries where handover_id = ${h.id}`).map(toPrepEntry);
+      const outstanding = (await tx<PrepEntryRow[]>`
+        select e.* from prep_entries e join prep_handovers ph on ph.id = e.handover_id
+        where e.site_id = ${siteId} and e.status = 'outstanding' and ph.status = 'submitted' for update of e`).map(toPrepEntry);
+      const active = (await tx<{ id: string }[]>`select id from prep_items where active`).map((r) => r.id);
+      const plan = makePlan(draft, outstanding, active);
+      for (const c of plan.carryIn) {
+        await tx`insert into prep_entries (handover_id, site_id, item_id, urgent, note, carried_from, created_by)
+                 values (${h.id}, ${siteId}, ${c.itemId}, ${c.urgent}, ${c.note ?? null}, ${c.from}, ${personId})`;
+      }
+      for (const m of plan.merge) {
+        await tx`update prep_entries set carried_from = ${m.from}, urgent = ${m.urgent}, note = ${m.note ?? null} where id = ${m.entryId}`;
+      }
+      if (plan.markCarried.length) await tx`update prep_entries set status = 'carried' where id = any(${plan.markCarried}::uuid[]) and status = 'outstanding'`;
+      await tx`update prep_handovers set status = 'submitted', submitted_by = ${personId}, submitted_at = now(), updated_at = now(),
+               stocked_count = ${plan.stockedCount} where id = ${h.id}`;
+      return { handoverId: h.id, plan };
+    });
+  },
+  async prepHandover(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    return (await prepHandoversWhere(q`h.id = ${id}`, 1))[0];
+  },
+  async prepHandovers(siteId, limit) {
+    const q = sql();
+    return prepHandoversWhere(q`h.site_id = ${siteId} and h.status = 'submitted'`, limit);
+  },
+  async prepSetDone(entryId, siteId, personId, done) {
+    if (!isUuid(entryId)) return false;
+    const q = sql();
+    const rows = done
+      ? await q`update prep_entries e set status = 'completed', completed_by = ${personId}, completed_at = now()
+                from prep_handovers h where e.id = ${entryId} and e.site_id = ${siteId} and e.status = 'outstanding'
+                and h.id = e.handover_id and h.status = 'submitted' returning e.id`
+      : await q`update prep_entries set status = 'outstanding', completed_by = null, completed_at = null
+                where id = ${entryId} and site_id = ${siteId} and status = 'completed' returning id`;
+    return rows.length > 0;
   },
 
   // ---------- rota ----------

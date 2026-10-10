@@ -14,6 +14,7 @@ import { randomInt } from "node:crypto";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
+import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { canChangeAccess, canMarkLeft, normalizeStaffCode, validatePersonInput } from "@/lib/domain/staff";
 import type { SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
@@ -197,6 +198,77 @@ export async function closeHandover(id: string): Promise<void> {
   const ctx = await requireCtx();
   await store().closeHandover(z.string().max(64).parse(id), ctx.person.id);
   revalidatePath("/handover");
+}
+
+// ---------- kitchen prep ----------
+const PrepShiftZ = z.enum(["next", "tomorrow_am", "tomorrow_pm"]);
+const PrepItemZ = z.string().regex(/^kp-\d{3}$/);
+const UuidZ = z.string().uuid();
+
+/** Kitchen staff (BOH) and managers, at a site where the prep board is switched on. */
+async function prepCtx(): Promise<{ ctx: Awaited<ReturnType<typeof requireCtx>>; error?: string }> {
+  const ctx = await requireCtx();
+  if (!canUsePrep(ctx.access, ctx.isManager)) return { ctx, error: "Kitchen prep is for kitchen staff and managers" };
+  if (!(await store().prepEnabledSites()).includes(ctx.site.id)) return { ctx, error: `Kitchen prep isn't switched on at ${ctx.site.name}` };
+  return { ctx };
+}
+
+/** Draft changes save as staff tap, so a refresh or a second phone sees the same draft. */
+export async function prepEditDraft(input: unknown): Promise<ActionResult> {
+  const { ctx, error } = await prepCtx();
+  if (error) return { ok: false, error };
+  const c = z.object({
+    shift: PrepShiftZ.optional(), itemId: PrepItemZ.optional(), needed: z.boolean().optional(),
+    urgent: z.boolean().optional(), note: z.string().trim().max(200).nullable().optional(),
+  }).safeParse(input);
+  if (!c.success) return { ok: false, error: "That change couldn't be saved" };
+  if (c.data.itemId && !(await store().prepItems()).some((i) => i.id === c.data.itemId && i.active)) return { ok: false, error: "That item isn't on the list any more" };
+  await store().prepEditDraft(ctx.site.id, ctx.person.id, c.data);
+  return { ok: true };
+}
+
+export async function prepSubmit(): Promise<ActionResult & { id?: string }> {
+  const { ctx, error } = await prepCtx();
+  if (error) return { ok: false, error };
+  const db = store();
+  // "Nothing needed, all stocked" is a valid handover even if nobody tapped anything first.
+  if (!(await db.prepDraft(ctx.site.id))) await db.prepEditDraft(ctx.site.id, ctx.person.id, {});
+  const draft = await db.prepDraft(ctx.site.id);
+  const res = await db.prepSubmit(ctx.site.id, ctx.person.id, planSubmit);
+  if (!res || !draft) return { ok: false, error: "This handover has already been submitted. Open the report to see it" };
+  const { plan, handoverId } = res;
+  const needed = draft.entries.length + plan.carryIn.length;
+  if (plan.missed.length) {
+    const names = new Map((await db.prepItems()).map((i) => [i.id, i.name]));
+    const list = plan.missed.map((e) => names.get(e.itemId) ?? e.itemId);
+    await db.raiseAlert({
+      siteId: ctx.site.id, level: "warning", dedupeKey: `prep-missed|${handoverId}`,
+      title: `${list.length} prep item${list.length > 1 ? "s" : ""} not done last shift`,
+      detail: `${list.slice(0, 8).join(", ")}${list.length > 8 ? ` and ${list.length - 8} more` : ""}. Carried into the new handover.`,
+    });
+  }
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "prep.submit",
+    detail: `Kitchen prep handover for ${shiftLabel(draft.shift).toLowerCase()}: ${needed} needed (${plan.carryIn.length + plan.merge.length} carried over), ${plan.stockedCount} confirmed stocked` });
+  revalidatePath("/prep"); revalidatePath("/today");
+  return { ok: true, id: handoverId };
+}
+
+/** Incoming shift ticks an item done, or puts it back within a few minutes if it was a mistake. */
+export async function prepSetDone(handoverId: string, entryId: string, done: boolean): Promise<ActionResult> {
+  const { ctx, error } = await prepCtx();
+  if (error) return { ok: false, error };
+  const db = store();
+  const h = await db.prepHandover(UuidZ.parse(handoverId));
+  const e = h?.siteId === ctx.site.id ? h.entries.find((x) => x.id === UuidZ.parse(entryId)) : undefined;
+  if (!e) return { ok: false, error: "That item isn't on this site's handover" };
+  if (!done && !canUndo(e.completedAt, Date.now())) return { ok: false, error: "It's too late to undo this one" };
+  if (!(await db.prepSetDone(e.id, ctx.site.id, ctx.person.id, z.boolean().parse(done)))) return { ok: false, error: done ? "Someone has already done this one" : "This item has already changed" };
+  if (!done) {
+    const name = (await db.prepItems()).find((i) => i.id === e.itemId)?.name ?? e.itemId;
+    await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "prep.undo", detail: `Put "${name}" back to outstanding` });
+  }
+  revalidatePath("/prep"); revalidatePath("/today");
+  return { ok: true };
 }
 
 async function requireOwner() {

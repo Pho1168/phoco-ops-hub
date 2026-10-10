@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
-import type { Alert, AuditEntry, HandoverItem, NoticeRow, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
+import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
+import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -60,6 +61,9 @@ interface State {
   notices: (NoticeRow & { dedupeKey?: string })[];
   pushSubs: PushSub[];
   secrets: Map<string, string>;
+  prepItems: PrepItem[]; prepSites: SiteId[];
+  prepHandovers: Omit<PrepHandover, "entries" | "createdByName" | "submittedByName">[];
+  prepEntries: PrepEntry[];
 }
 
 function seed(): State {
@@ -90,12 +94,23 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [],
   };
 }
 
 /** Never hand the token hash out of the store. */
 const publicDevice = (d: Device & { tokenHash: string }): Device =>
   ({ id: d.id, siteId: d.siteId, label: d.label, status: d.status, lastSeen: d.lastSeen, createdAt: d.createdAt });
+
+const nameOf = (id?: string) => (id ? S().people.find((p) => p.id === id)?.name ?? "" : undefined);
+const prepView = (e: PrepEntry): PrepEntryView => ({ ...e, createdByName: nameOf(e.createdBy) ?? "", completedByName: nameOf(e.completedBy) });
+function prepFull(id: string): PrepHandover | undefined {
+  const h = S().prepHandovers.find((x) => x.id === id);
+  if (!h) return undefined;
+  return { ...h, createdByName: nameOf(h.createdBy) ?? "", submittedByName: nameOf(h.submittedBy), entries: S().prepEntries.filter((e) => e.handoverId === id).map(prepView) };
+}
+const prepOpen = (siteId: SiteId) => S().prepEntries.filter((e) => e.siteId === siteId && e.status === "outstanding"
+  && S().prepHandovers.find((h) => h.id === e.handoverId)?.status === "submitted");
 
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
@@ -184,6 +199,49 @@ export const demoStore: Store = {
   async handover(siteId) { return S().handover.filter((h) => h.siteId === siteId); },
   async addHandover(h) { S().handover.unshift({ ...h, createdByName: S().people.find((p) => p.id === h.createdBy)?.name ?? "", id: randomUUID(), createdAt: Date.now() }); },
   async closeHandover(id, personId) { const h = S().handover.find((x) => x.id === id); if (h && !h.closedAt) { h.closedAt = Date.now(); h.closedBy = personId; } },
+
+  async prepItems() { return S().prepItems; },
+  async prepEnabledSites() { return S().prepSites; },
+  async prepDraft(siteId) { const h = S().prepHandovers.find((x) => x.siteId === siteId && x.status === "draft"); return h ? prepFull(h.id) : undefined; },
+  async prepEditDraft(siteId, personId, change) {
+    let h = S().prepHandovers.find((x) => x.siteId === siteId && x.status === "draft");
+    const now = Date.now();
+    if (!h) { h = { id: randomUUID(), siteId, shift: change.shift ?? "next", status: "draft", createdBy: personId, createdAt: now, updatedAt: now }; S().prepHandovers.push(h); }
+    if (change.shift) h.shift = change.shift;
+    h.updatedAt = now;
+    if (!change.itemId) return;
+    const i = S().prepEntries.findIndex((e) => e.handoverId === h!.id && e.itemId === change.itemId);
+    if (change.needed === false) { if (i >= 0) S().prepEntries.splice(i, 1); return; }
+    let e = i >= 0 ? S().prepEntries[i] : undefined;
+    if (!e) { e = { id: randomUUID(), handoverId: h.id, siteId, itemId: change.itemId, status: "outstanding", urgent: false, createdBy: personId, createdAt: now }; S().prepEntries.push(e); }
+    if (change.urgent !== undefined) e.urgent = change.urgent;
+    if (change.note !== undefined) e.note = change.note || undefined;
+  },
+  async prepOutstanding(siteId) { return prepOpen(siteId).map(prepView); },
+  async prepSubmit(siteId, personId, makePlan) {
+    const h = S().prepHandovers.find((x) => x.siteId === siteId && x.status === "draft");
+    if (!h) return undefined;
+    const draft = S().prepEntries.filter((e) => e.handoverId === h.id);
+    const plan = makePlan(draft, prepOpen(siteId), S().prepItems.filter((i) => i.active).map((i) => i.id));
+    const now = Date.now();
+    for (const c of plan.carryIn) S().prepEntries.push({ id: randomUUID(), handoverId: h.id, siteId, itemId: c.itemId, status: "outstanding", urgent: c.urgent, note: c.note, carriedFrom: c.from, createdBy: personId, createdAt: now });
+    for (const m of plan.merge) { const e = S().prepEntries.find((x) => x.id === m.entryId); if (e) { e.carriedFrom = m.from; e.urgent = m.urgent; e.note = m.note; } }
+    for (const id of plan.markCarried) { const e = S().prepEntries.find((x) => x.id === id); if (e) e.status = "carried"; }
+    Object.assign(h, { status: "submitted", submittedBy: personId, submittedAt: now, updatedAt: now, stockedCount: plan.stockedCount });
+    return { handoverId: h.id, plan };
+  },
+  async prepHandover(id) { return prepFull(id); },
+  async prepHandovers(siteId, limit) {
+    return S().prepHandovers.filter((h) => h.siteId === siteId && h.status === "submitted")
+      .sort((a, b) => (b.submittedAt ?? 0) - (a.submittedAt ?? 0)).slice(0, limit).map((h) => prepFull(h.id)!);
+  },
+  async prepSetDone(entryId, siteId, personId, done) {
+    const e = S().prepEntries.find((x) => x.id === entryId && x.siteId === siteId && x.status === (done ? "outstanding" : "completed"));
+    if (!e || S().prepHandovers.find((h) => h.id === e.handoverId)?.status !== "submitted") return false;
+    if (done) { e.status = "completed"; e.completedBy = personId; e.completedAt = Date.now(); }
+    else { e.status = "outstanding"; e.completedBy = undefined; e.completedAt = undefined; }
+    return true;
+  },
 
   async rotaSources() { return S().rotaSources.map((r) => ({ siteId: r.siteId, createdAt: r.createdAt, lastImportAt: r.lastImportAt, lastResult: r.lastResult })); },
   async rotaSourceByToken(tokenHash) { return S().rotaSources.find((r) => r.tokenHash === tokenHash)?.siteId; },
