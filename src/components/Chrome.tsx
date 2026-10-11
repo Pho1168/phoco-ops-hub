@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { signOut } from "@/app/actions";
 import type { Ctx } from "@/lib/session";
+import { managedSites } from "@/lib/domain/access";
 import { Icon } from "./Icon";
 
 export function TopBar({ ctx }: { ctx: Ctx }) {
@@ -16,7 +17,7 @@ export function TopBar({ ctx }: { ctx: Ctx }) {
   );
 }
 
-export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "rota" | "owner" }) {
+export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "rota" | "owner" | "manage" }) {
   const item = (href: string, id: typeof current, label: string, icon: string) => (
     <Link href={href} aria-current={current === id ? "page" : undefined}><Icon name={icon} />{label}</Link>
   );
@@ -25,7 +26,9 @@ export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "hand
       {item("/today", "today", "Today", "today")}
       {item("/handover", "handover", "Handover", "handover")}
       {item("/rota", "rota", "Rota", "rota")}
-      {ctx.isOwner && item("/owner", "owner", "Owner", "owner")}
+      {ctx.isOwner
+        ? item("/owner", "owner", "Owner", "owner")
+        : managedSites(ctx.person).length > 0 && item("/manage", "manage", "Manage", "manage")}
     </nav>
   );
 }

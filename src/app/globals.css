@@ -213,3 +213,31 @@ main.rota-page { max-width: 1240px; }
 .rota-day.today { outline: 2px solid var(--accent); }
 .rota-line.me .grow { font-weight: 700; }
 @media (max-width: 719px) { .rota-grid-wrap { display: none; } .rota-days { display: flex; } }
+
+/* Manager tools */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.tile { display: flex; align-items: center; gap: 12px; background: var(--surface); border-radius: 16px; padding: 14px 16px; text-decoration: none; color: inherit; min-height: 76px; }
+.tile:hover { outline: 2px solid var(--sage); }
+.tile-ico { width: 42px; height: 42px; border-radius: 12px; background: var(--sage); color: var(--sage-ink); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.tile .muted { display: block; }
+
+/* Inspection records */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.stats .card { padding: 12px 14px; }
+.table-wrap { overflow-x: auto; background: var(--surface); border-radius: 16px; }
+table.rec { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.rec th, table.rec td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+table.rec thead th { font-size: 12px; color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+table.rec tr.bad td { background: color-mix(in srgb, var(--bad) 7%, transparent); }
+table.rec tr.warn td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+@media print {
+  .top, .nav, .no-print, .sticky-foot { display: none !important; }
+  body { background: #fff; color: #000; font-size: 11px; }
+  main, main.wide { max-width: none; padding: 0; gap: 10px; }
+  .card, .table-wrap { background: #fff; border: 1px solid #ccc; }
+  table.rec { font-size: 10px; }
+  table.rec tr { break-inside: avoid; }
+  .h-display { font-size: 26px; color: #000; }
+  .h-sec { color: #000; }
+  .chip { border: 1px solid #999; background: #fff !important; color: #000 !important; }
+}

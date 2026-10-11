@@ -9,6 +9,8 @@ import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, s
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
 import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
 import { readFileSync } from "node:fs";
+import { clampRange, datesBetween, readingLog, recordsSummary, signoffLog, type RawAnswer } from "./records";
+import { managedSites, canManage } from "./access";
 import { currentNotes, noteOrder, notesForHandover, INFO_NOTE_MAX_HOURS } from "./handover";
 import type { Answer, Checklist, Person, Site, TempRule } from "./types";
 
@@ -424,5 +426,60 @@ describe("team rota", () => {
     expect(w.dayHours).toBeUndefined();
     expect(w.weekHours).toBeUndefined();
     expect(w.rows.flatMap((r) => r.days.flat()).every((s) => s!.hours === undefined)).toBe(true);
+  });
+});
+
+describe("inspection records", () => {
+  const base = { listId: "L", listName: "BOH Opening", date: "2026-10-12", itemId: "fridge1", itemText: "Fridge 1", itemType: "temp" as const, ruleCode: "F", byName: "Vishal" };
+  const at = (hm: string) => londonToUtc("2026-10-12", hm);
+  it("keeps every reading and attaches the corrective action to the reading it was for", () => {
+    const rows: RawAnswer[] = [
+      { ...base, value: "9", outcome: "bad", at: at("10:00") },
+      { ...base, value: "9", outcome: "bad", at: at("10:05"), action: "Moved stock to fridge 2, engineer called", actionByName: "Vishal" },
+      { ...base, value: "4", outcome: "ok", at: at("11:00") },
+      { ...base, itemId: "tick", itemType: "tick", value: "yes", outcome: "done", at: at("10:01") },
+    ];
+    const log = readingLog(rows);
+    expect(log).toHaveLength(2);
+    expect(log[0]).toMatchObject({ value: "9", outcome: "bad", action: "Moved stock to fridge 2, engineer called", correctedTo: "4" });
+    expect(log[1]).toMatchObject({ value: "4", outcome: "ok" });
+    expect(log[1].action).toBeUndefined();
+  });
+  it("lists days newest first", () => {
+    expect(datesBetween("2026-10-10", "2026-10-12")).toEqual(["2026-10-12", "2026-10-11", "2026-10-10"]);
+  });
+  const lists = [{ id: "OPEN", name: "Opening", area: "BOH" as const, due: "11:00" }, { id: "CLOSE", name: "Closing", area: "BOH" as const, due: "22:30" }];
+  it("marks sign-offs on time, late, not signed or still open, from the day tracking started", () => {
+    const runs = [
+      { listId: "OPEN", date: "2026-10-11", signedAt: londonToUtc("2026-10-11", "10:50"), signedByName: "A", answered: 10, total: 10 },
+      { listId: "CLOSE", date: "2026-10-11", signedAt: londonToUtc("2026-10-12", "00:20"), signedByName: "B", answered: 8, total: 8 },
+      { listId: "OPEN", date: "2026-10-12", answered: 3, total: 10 },
+    ];
+    const now = londonToUtc("2026-10-12", "15:00");
+    const rows = signoffLog(lists, runs, datesBetween("2026-10-09", "2026-10-12"), now, "2026-10-11");
+    const st = (d: string, id: string) => rows.find((r) => r.date === d && r.listId === id)?.status;
+    expect(st("2026-10-11", "OPEN")).toBe("on_time");
+    expect(st("2026-10-11", "CLOSE")).toBe("late");          // signed after midnight
+    expect(st("2026-10-12", "OPEN")).toBe("not_signed");     // past 11:00 and not signed
+    expect(st("2026-10-12", "CLOSE")).toBe("open");          // due 22:30, still time
+    expect(rows.some((r) => r.date < "2026-10-11")).toBe(false); // before tracking started
+    expect(signoffLog(lists, [], ["2026-10-12"], now, undefined)).toEqual([]);
+    // No due time (deliveries, weekly cleans): only shown once started; unfinished on an earlier day = not signed.
+    const adhoc = [{ id: "DELIVERY", name: "Delivery", area: "BOH" as const }];
+    expect(signoffLog(adhoc, [], datesBetween("2026-10-10", "2026-10-12"), now, "2026-10-10")).toEqual([]);
+    expect(signoffLog(adhoc, [{ listId: "DELIVERY", date: "2026-10-11", answered: 2, total: 5 }], ["2026-10-11"], now, "2026-10-10")[0].status).toBe("not_signed");
+    const sum = recordsSummary([], rows);
+    expect([sum.onTime, sum.late, sum.notSigned]).toEqual([1, 1, 1]);
+  });
+  it("keeps the date range sensible", () => {
+    expect(clampRange(undefined, undefined, "2026-10-12", 7)).toEqual({ from: "2026-10-06", to: "2026-10-12" });
+    expect(clampRange("2026-10-20", "2026-10-30", "2026-10-12", 7)).toEqual({ from: "2026-10-12", to: "2026-10-12" });
+    expect(clampRange("2025-01-01", "2026-10-12", "2026-10-12", 7).from).toBe("2026-07-12");
+    expect(clampRange("bad", "worse", "2026-10-12", 28)).toEqual({ from: "2026-09-15", to: "2026-10-12" });
+  });
+  it("lets owners and managers manage their own sites only", () => {
+    const mgr = { access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }, { siteId: "WEM" as const, role: "staff" as const, sections: [] }] };
+    expect(managedSites(mgr)).toEqual(["EAS"]);
+    expect(canManage(mgr, "WEM")).toBe(false);
   });
 });

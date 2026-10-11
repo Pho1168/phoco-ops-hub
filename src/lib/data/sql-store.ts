@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import type { Answer, Area, Checklist, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
+import type { RawAnswer } from "@/lib/domain/records";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -354,6 +355,50 @@ export const sqlStore: Store = {
     const q = sql();
     await q`update alerts set resolved_at = now(), resolved_by = ${personId}, resolution_note = ${note}
             where id = ${id} and resolved_at is null`;
+  },
+
+  async recordsData(siteId, from, to) {
+    const q = sql();
+    const lists = await loadChecklists(q`t.site_id = ${siteId}`);
+    const runs = await q<{ list_id: string; d: string; signed_at: Date | null; signed_by_name: string | null; total: number; answered: number }[]>`
+      select r.template_id as list_id, to_char(r.business_date, 'YYYY-MM-DD') as d, r.signed_at, p.display_name as signed_by_name,
+        (select count(*)::int from checklist_items i where i.version_id = r.version_id) as total,
+        (select count(*)::int from (select distinct on (a.item_id) a.outcome from run_answers a where a.run_id = r.id
+                                    order by a.item_id, a.captured_at desc, a.synced_at desc) x where x.outcome <> 'cleared') as answered
+      from checklist_runs r left join people p on p.id = r.signed_by
+      where r.site_id = ${siteId} and r.business_date between ${from} and ${to}`;
+    const answers = await q<{ list_id: string; list_name: string; d: string; item_id: string; item_text: string; answer_type: RawAnswer["itemType"]; rule_code: string | null;
+      value: string | null; outcome: string; by_name: string; captured_at: Date; action: string | null; action_by: string | null }[]>`
+      select r.template_id as list_id, t.name as list_name, to_char(r.business_date, 'YYYY-MM-DD') as d, a.item_id, i.text as item_text, i.answer_type, i.rule_code,
+        a.value, a.outcome, p.display_name as by_name, a.captured_at, c.action, cp.display_name as action_by
+      from run_answers a
+        join checklist_runs r on r.id = a.run_id
+        join checklist_templates t on t.id = r.template_id
+        join checklist_items i on i.id = a.item_id
+        join people p on p.id = a.recorded_by
+        left join lateral (select c.action, c.recorded_by from corrective_actions c where c.answer_id = a.id order by c.recorded_at desc limit 1) c on true
+        left join people cp on cp.id = c.recorded_by
+      where r.site_id = ${siteId} and r.business_date between ${from} and ${to}
+      order by a.captured_at, a.synced_at`;
+    const alerts = await q<{ id: string; site_id: SiteId; level: Alert["level"]; title: string; detail: string | null; dedupe_key: string; created_at: Date; resolved_at: Date | null; resolved_by: string | null; resolution_note: string | null; resolved_by_name: string | null }[]>`
+      select a.id, a.site_id, a.level, a.title, a.detail, a.dedupe_key, a.created_at, a.resolved_at, a.resolved_by, a.resolution_note, p.display_name as resolved_by_name
+      from alerts a left join people p on p.id = a.resolved_by
+      where a.site_id = ${siteId} and a.created_at >= ${new Date(londonToUtc(from, "00:00"))} and a.created_at < ${new Date(londonToUtc(addDays(to, 1), "00:00"))}
+      order by a.created_at`;
+    const [first] = await q<{ d: string | null }[]>`select to_char(min(business_date), 'YYYY-MM-DD') as d from checklist_runs where site_id = ${siteId}`;
+    return {
+      lists: lists.map((l) => ({ id: l.id, name: l.name, area: l.area, due: l.due })),
+      runs: runs.map((r) => ({ listId: r.list_id, date: r.d, signedAt: ms(r.signed_at), signedByName: opt(r.signed_by_name), total: r.total, answered: r.answered })),
+      answers: answers.map((a) => ({
+        listId: a.list_id, listName: a.list_name, date: a.d, itemId: a.item_id, itemText: a.item_text, itemType: a.answer_type, ruleCode: opt(a.rule_code),
+        value: a.value ?? "", outcome: fromDbOutcome(a.outcome), byName: a.by_name, at: a.captured_at.getTime(), action: opt(a.action), actionByName: opt(a.action_by),
+      })),
+      alerts: alerts.map((r) => ({
+        id: r.id, siteId: r.site_id, level: r.level, title: r.title, detail: r.detail ?? "", dedupeKey: r.dedupe_key, createdAt: r.created_at.getTime(),
+        resolvedAt: ms(r.resolved_at), resolvedBy: opt(r.resolved_by), resolutionNote: opt(r.resolution_note), resolvedByName: opt(r.resolved_by_name),
+      })),
+      trackingFrom: first?.d ?? undefined,
+    };
   },
 
   async handover(siteId, createdSince = Date.now() - 7 * 86_400_000) {

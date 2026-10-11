@@ -3,6 +3,8 @@ import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
+import { latestAnswers } from "@/lib/domain/checklist";
+import { londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
 import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
@@ -194,6 +196,34 @@ export const demoStore: Store = {
   async resolveAlert(id, personId, note) {
     const a = S().alerts.find((x) => x.id === id);
     if (a && !a.resolvedAt) { a.resolvedAt = Date.now(); a.resolvedBy = personId; a.resolutionNote = note; }
+  },
+
+  async recordsData(siteId, from, to) {
+    const lists = S().lists.filter((l) => l.siteId === siteId);
+    const runs = Array.from(S().runs.values()).filter((r) => lists.some((l) => l.id === r.listId));
+    const inRange = runs.filter((r) => r.date >= from && r.date <= to);
+    const answers = inRange.flatMap((r) => {
+      const list = lists.find((l) => l.id === r.listId)!;
+      return r.answers.map((a) => {
+        const item = list.items.find((i) => i.id === a.itemId);
+        return { listId: list.id, listName: list.name, date: r.date, itemId: a.itemId, itemText: item?.text ?? a.itemId, itemType: item?.type ?? "tick",
+          ruleCode: item?.ruleCode, value: a.value, outcome: a.outcome, byName: nameOf(a.recordedBy) ?? "", at: a.capturedAt,
+          action: a.action, actionByName: a.action ? nameOf(a.recordedBy) : undefined };
+      });
+    }).sort((a, b) => a.at - b.at);
+    const start = londonToUtc(from, "00:00"), end = londonToUtc(addDaysIso(to, 1), "00:00");
+    return {
+      lists: lists.map((l) => ({ id: l.id, name: l.name, area: l.area, due: l.due })),
+      runs: inRange.map((r) => {
+        const list = lists.find((l) => l.id === r.listId)!;
+        const latest = latestAnswers(r.answers);
+        return { listId: r.listId, date: r.date, signedAt: r.signedAt, signedByName: nameOf(r.signedBy), total: list.items.length,
+          answered: list.items.filter((i) => { const a = latest.get(i.id); return a && a.outcome !== "todo"; }).length };
+      }),
+      answers,
+      alerts: S().alerts.filter((a) => a.siteId === siteId && a.createdAt >= start && a.createdAt < end).map((a) => ({ ...a, resolvedByName: nameOf(a.resolvedBy) })),
+      trackingFrom: runs.map((r) => r.date).sort()[0],
+    };
   },
 
   async handover(siteId, createdSince = Date.now() - 7 * 86_400_000) {

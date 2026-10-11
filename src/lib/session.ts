@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { DEMO_MODE, store } from "@/lib/data";
 import { sessionDeviceOk } from "@/lib/domain/devices";
-import type { Person, Site, SiteAccess } from "@/lib/domain/types";
+import { managedSites } from "@/lib/domain/access";
+import type { Person, Site, SiteAccess, SiteId } from "@/lib/domain/types";
 
 export const SESSION_COOKIE = "phoco_sid";
 export const SESSION_TTL_MS = 14 * 60 * 60 * 1000; // one long shift
@@ -37,6 +38,14 @@ export async function requireCtx(): Promise<Ctx> {
   if (c.person.pinMustChange) redirect("/pin");
   if (c.scope === "shifts") redirect("/me"); // personal phones only see My shifts
   return c;
+}
+
+/** Owners and managers only (on the full app). `managed` are the sites they can manage. */
+export async function requireManager(): Promise<Ctx & { managed: SiteId[] }> {
+  const ctx = await requireCtx();
+  const managed = managedSites(ctx.person);
+  if (!managed.length) redirect("/today");
+  return { ...ctx, managed };
 }
 
 export function londonNow(): { date: string; hm: string } {

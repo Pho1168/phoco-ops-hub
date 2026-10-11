@@ -2,6 +2,7 @@ import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/do
 import type { Device } from "@/lib/domain/devices";
 import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib/domain/rota";
 import type { PrepEntry, PrepItem, PrepShift, SubmitPlan } from "@/lib/domain/prep";
+import type { ListInfo, RawAnswer, RunInfo } from "@/lib/domain/records";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
@@ -22,6 +23,16 @@ export interface PrepHandover {
   createdBy: string; createdByName: string; createdAt: number; updatedAt: number;
   submittedBy?: string; submittedByName?: string; submittedAt?: number; stockedCount?: number;
   entries: PrepEntryView[];
+}
+/** Raw food-safety records for one site and date range (London dates, inclusive). */
+export interface RecordsData {
+  lists: ListInfo[]; runs: RunInfo[];
+  /** Every answer in the range's checklist runs, oldest first. */
+  answers: RawAnswer[];
+  /** Alerts raised in the range. */
+  alerts: (Alert & { resolvedByName?: string })[];
+  /** The first day the site recorded any checklist: days before it aren't counted as missed. */
+  trackingFrom?: string;
 }
 export interface AuditEntry { at: number; actorId?: string; siteId?: SiteId; action: string; detail: string }
 
@@ -68,6 +79,9 @@ export interface Store {
   resolveAlert(id: string, personId: string, note: string): Promise<void>;
 
   /** The site's open notes, plus every note written since `createdSince` (default: the last 7 days). */
+  /** Checklist runs, answers and alerts for inspection records and reports. */
+  recordsData(siteId: SiteId, from: string, to: string): Promise<RecordsData>;
+
   handover(siteId: SiteId, createdSince?: number): Promise<HandoverItem[]>;
   addHandover(h: Omit<HandoverItem, "id" | "createdAt" | "createdByName">): Promise<void>;
   /** Ticks a note done. Returns false if it isn't at that site or is already done. */
