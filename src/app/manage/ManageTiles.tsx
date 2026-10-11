@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { Icon } from "@/components/Icon";
 
-export interface ManageCounts { timeOffPending?: number; certIssues?: number; noticesActive?: number; equipmentIssues?: number }
+export interface ManageCounts { timeOffPending?: number; certIssues?: number; noticesActive?: number; equipmentIssues?: number; urgent?: number }
 
 const TILES = [
+  { href: "/manage/tasks", icon: "prep", title: "Task centre", text: "Everything open at your sites in one list, most urgent first", count: "urgent" as const, countLabel: "urgent" },
   { href: "/manage/report", icon: "report", title: "Weekly report", text: "Checks, temperatures, handovers and hours per site" },
   { href: "/manage/records", icon: "records", title: "Inspection records", text: "Temperature logs, sign-offs and corrective actions to show an inspector" },
   { href: "/manage/notices", icon: "notice", title: "Team notices", text: "Post a notice and see who has read it", count: "noticesActive" as const, countLabel: "live" },

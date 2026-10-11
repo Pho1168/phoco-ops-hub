@@ -13,6 +13,7 @@ import { canEditCerts, certReminderMessages, certStatus, expectedKinds, issueCou
 import { canCancel, canDecide, clashes, daysOf, offOn, rangeLabel, validateRequest, type TimeOff } from "./timeoff";
 import { audienceLabel, canPostTo, inAudience, isLive, readStats, unreadFor, type TeamNotice } from "./notices";
 import { change, groupTotals, siteWeekReport, weeklyDigest, type SiteWeekInput } from "./report";
+import { audienceText, canComplete, dueText, isForPerson, taskCentre, taskOrder, validateTask, TASK_CATEGORIES, type CentreInput, type Task } from "./tasks";
 import { addMonths, canUseEquipment, downHours, downSince, faultReportedMessages, faultsOf, openFaults, safeNextPath, serviceReminderMessages, serviceState, sinceText,
   validateEquipment, validateService, EQUIPMENT_KINDS, type Equipment, type EquipmentEvent } from "./equipment";
 import { clampRange, datesBetween, readingLog, recordsSummary, signoffLog, type RawAnswer } from "./records";
@@ -848,5 +849,77 @@ describe("Monday report message", () => {
     expect(d.body.split("\n")[0]).toBe("Eastcote: 50% of checks on time · 1 alert open");
     expect(d.body.split("\n")[1]).toBe("Wembley: checklists not in use yet");
     expect(d.body).toContain("things to look at.");
+  });
+});
+
+describe("tasks and the task centre", () => {
+  const today = "2026-10-12";
+  const staffBoh = { id: "b", status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: ["BOH" as const] }] };
+  const staffFoh = { id: "f", status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: ["FOH" as const] }] };
+  const mgr = { id: "m", status: "active" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] };
+  const task = (over: Partial<Task>): Task => ({ id: "t", siteId: "EAS", title: "Clean hood", priority: 3, category: "cleaning", status: "open", createdBy: "m", createdByName: "Mo", createdAt: 1, ...over });
+  it("checks a new task", () => {
+    expect(validateTask({ title: "Clean hood", priority: 3, category: "cleaning" }, today).ok).toBe(true);
+    expect(validateTask({ title: " ", priority: 3, category: "cleaning" }, today).ok).toBe(false);
+    expect(validateTask({ title: "x", priority: 3, category: "cleaning", dueOn: "2026-10-11" }, today).ok).toBe(false);
+    expect(validateTask({ title: "x", priority: 3, category: "cleaning", assigneeId: "b", section: "BOH" }, today).ok).toBe(false);
+    expect(validateTask({ title: "x", priority: 5 as never, category: "cleaning" }, today).ok).toBe(false);
+  });
+  it("shows a task to its person, its section or everyone at the site; managers can tick any", () => {
+    expect(isForPerson(task({ section: "BOH" }), staffBoh)).toBe(true);
+    expect(isForPerson(task({ section: "BOH" }), staffFoh)).toBe(false);
+    expect(isForPerson(task({}), staffFoh)).toBe(true);
+    expect(isForPerson(task({ assigneeId: "b" }), staffFoh)).toBe(false);
+    expect(isForPerson(task({ siteId: "WEM" }), staffFoh)).toBe(false);
+    expect(isForPerson(task({}), { ...staffFoh, status: "frozen" })).toBe(false);
+    expect(canComplete(task({ assigneeId: "b" }), mgr)).toBe(true);
+    expect(canComplete(task({ assigneeId: "b" }), staffFoh)).toBe(false);
+    expect(audienceText(task({ section: "BOH" }), "Eastcote")).toBe("BOH at Eastcote");
+    expect(audienceText(task({}), "Eastcote")).toBe("Anyone at Eastcote");
+  });
+  it("orders by priority, then overdue, then date", () => {
+    const list = [task({ id: "a", priority: 3, dueOn: "2026-10-20" }), task({ id: "b", priority: 2 }), task({ id: "c", priority: 3, dueOn: "2026-10-10" }), task({ id: "d", priority: 3, dueOn: "2026-10-13" })];
+    expect(list.sort(taskOrder(today)).map((t) => t.id)).toEqual(["b", "c", "d", "a"]);
+    expect(dueText("2026-10-10", today)).toEqual({ text: "Overdue since Sat 10 Oct", overdue: true });
+    expect(dueText("2026-10-13", today).text).toBe("Due tomorrow");
+  });
+  it("puts everything open at a site in one list by priority", () => {
+    const input: CentreInput = {
+      siteId: "EAS", today,
+      tasks: [task({ id: "t1", priority: 4, title: "Paint the back door" }), task({ id: "t2", status: "done" })],
+      alerts: [{ id: "a1", level: "critical", title: "Fridge 3 at 9°C", detail: "", createdAt: 5 }],
+      kit: [{ id: "k1", name: "Walk-in fridge", foodSafety: true, down: true, problems: 1, since: 3, latest: "Not cooling" },
+            { id: "k2", name: "Fryer 2", foodSafety: false, down: true, problems: 2, since: 4, latest: "No heat" },
+            { id: "k3", name: "Glasswasher", foodSafety: false, down: false, problems: 1, since: 2, latest: "Leaking" }],
+      handoverActions: [{ id: "n1", category: "Food safety", body: "Chicken delivery 9°C", createdAt: 1 }, { id: "n2", category: "Stock shortage", body: "Low on rice", createdAt: 1 }],
+      prepOutstanding: { urgent: 1, total: 3, since: 1 },
+      checklistsOverdue: [{ id: "EAS-BOH-OPEN", name: "BOH opening", due: "11:00" }],
+      timeOffPending: 2,
+      certificates: { expired: [{ personId: "p", name: "Ana", label: "Allergen awareness" }], expiring: [], missing: 4 },
+      services: [{ id: "k1", name: "Walk-in fridge", overdue: true, due: "2026-10-01" }],
+    };
+    const items = taskCentre(input);
+    const p = (key: string) => items.find((i) => i.key === key)?.priority;
+    expect(p("alert:a1")).toBe(1);
+    expect(p("kit:k1")).toBe(1);   // food-safety kit down
+    expect(p("kit:k2")).toBe(2);   // other kit down
+    expect(p("kit:k3")).toBe(3);   // needs attention
+    expect(p("note:n1")).toBe(2);  // food safety handover action
+    expect(p("note:n2")).toBe(3);
+    expect(p("prep")).toBe(2);     // an urgent item among them
+    expect(p("list:EAS-BOH-OPEN")).toBe(2);
+    expect(p("timeoff")).toBe(3);
+    expect(p("cert-x:p:Allergen awareness")).toBe(2);
+    expect(p("cert-missing")).toBe(4);
+    expect(p("svc:k1")).toBe(3);
+    expect(p("task:t1")).toBe(4);
+    expect(items.some((i) => i.key === "task:t2")).toBe(false); // done tasks drop off
+    expect(items.map((i) => i.priority)).toEqual([...items.map((i) => i.priority)].sort());
+    expect(items.find((i) => i.key === "kit:k2")?.detail).toBe("No heat (+1 more)");
+  });
+  it("keeps categories and message kinds in step with the database", () => {
+    const sqlText = readFileSync("supabase/migrations/0013_tasks.sql", "utf8");
+    for (const c of TASK_CATEGORIES) expect(sqlText).toContain(`'${c.id}'`);
+    for (const kind of ["published", "changed", "evening", "notice", "leave", "cert", "report", "fault", "service", "task"]) expect(sqlText).toContain(`'${kind}'`);
   });
 });

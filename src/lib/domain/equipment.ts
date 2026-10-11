@@ -26,6 +26,9 @@ export const EQUIPMENT_KINDS: { id: EquipmentKind; label: string }[] = [
   { id: "other", label: "Other" },
 ];
 export const equipmentKindLabel = (k: EquipmentKind) => EQUIPMENT_KINDS.find((x) => x.id === k)?.label ?? k;
+/** Kit that keeps food safe: a breakdown is critical. */
+export const keepsFoodSafe = (k: EquipmentKind) => k === "fridge" || k === "freezer" || k === "hot_holding" || k === "probe";
+
 /** What to do straight away when kit that keeps food safe stops working. Follows the site's procedures, no limits here. */
 export function faultHint(kind: EquipmentKind): string | undefined {
   if (kind === "fridge" || kind === "freezer") return "Move the food to a working fridge or freezer, tell the manager on shift, and note anything that had to be thrown away.";

@@ -7,13 +7,14 @@ import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
 import type { Certificate } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent, EquipmentInput } from "@/lib/domain/equipment";
+import type { Task, TaskInput, TaskStatus } from "@/lib/domain/tasks";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
 /** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
-export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service";
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task";
 export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
@@ -152,6 +153,18 @@ export interface Store {
   equipmentEvents(filter: { equipmentId?: string; siteId?: SiteId; since?: number; openFaultsOnly?: boolean }): Promise<EquipmentEvent[]>;
   /** Adds to the history. Returns undefined if the fault has already been fixed (a fault is fixed once). */
   addEquipmentEvent(e: Omit<EquipmentEvent, "id" | "createdAt" | "createdByName">): Promise<string | undefined>;
+
+  // Tasks (done or cancelled, never deleted)
+  /** Tasks at these sites: open ones, plus done or cancelled since a time when asked. Newest first. */
+  tasks(filter: { siteIds: SiteId[]; statuses?: TaskStatus[]; closedSince?: number }): Promise<Task[]>;
+  task(id: string): Promise<Task | undefined>;
+  addTask(t: TaskInput & { siteId: SiteId; createdBy: string }): Promise<string>;
+  /** Open → done. False if it isn't open. */
+  completeTask(id: string, personId: string, note?: string): Promise<boolean>;
+  /** Done → open again (a mis-tap), only by the person who ticked it. False otherwise. */
+  reopenTask(id: string, personId: string): Promise<boolean>;
+  /** Open → cancelled. False if it isn't open. */
+  cancelTask(id: string, personId: string): Promise<boolean>;
 
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;

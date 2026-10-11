@@ -3,6 +3,8 @@ import { store } from "@/lib/data";
 import { progress, runState } from "@/lib/domain/checklist";
 import { canUsePrep } from "@/lib/domain/prep";
 import { faultsOf, sinceText } from "@/lib/domain/equipment";
+import { dueText, isForPerson, priorityCode, taskOrder } from "@/lib/domain/tasks";
+import { TaskDone, UndoTask } from "@/components/TaskDone";
 import { currentNotes } from "@/lib/domain/handover";
 import { londonNow, requireCtx } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
@@ -39,6 +41,9 @@ export default async function Today() {
   const unread = unreadFor(await db.teamNotices(0), ctx.person, date);
   const [kit, kitOpen] = await Promise.all([db.equipment(ctx.site.id), db.equipmentEvents({ siteId: ctx.site.id, openFaultsOnly: true })]);
   const now = Date.now();
+  const siteTasks = await db.tasks({ siteIds: [ctx.site.id], closedSince: now - 10 * 60_000 });
+  const myTasks = siteTasks.filter((t) => t.status === "open" && isForPerson(t, ctx.person)).sort(taskOrder(date));
+  const justDone = siteTasks.filter((t) => t.status === "done" && t.doneBy === ctx.person.id);
   const down = kit.map((eq) => ({ eq, f: faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down") }))
     .filter((x) => x.f.length).map(({ eq, f }) => ({ eq, since: Math.min(...f.map((x) => x.fault.createdAt)), body: f[f.length - 1].fault.body }));
 
@@ -79,6 +84,31 @@ export default async function Today() {
               <div style={{ fontSize: 13 }}>{toDo.length ? (urgent ? `${urgent} urgent · ` : "") + "Open Handover and tick them off" : "Closing? Tap what the next shift needs to prep"}</div>
             </div>
           </Link>
+        )}
+        {(myTasks.length > 0 || justDone.length > 0) && (
+          <section className="stack" aria-label="Tasks">
+            <h2 className="h-sec">Tasks</h2>
+            {myTasks.map((t) => {
+              const due = dueText(t.dueOn, date);
+              return (
+                <div key={t.id} className="card stack" style={{ gap: 6 }}>
+                  <div className="row wrap" style={{ gap: 6 }}>
+                    <span className={`chip ${t.priority === 1 ? "bad" : t.priority === 2 ? "late" : t.priority === 3 ? "warn" : ""}`}>{priorityCode(t.priority)}</span>
+                    <span className="strong grow" style={{ fontSize: 15 }}>{t.title}</span>
+                    {t.dueOn && <span className={due.overdue ? "err" : "muted"} style={{ fontSize: 13 }}>{due.text}</span>}
+                  </div>
+                  {t.detail && <div className="muted" style={{ whiteSpace: "pre-wrap" }}>{t.detail}</div>}
+                  <div className="muted" style={{ fontSize: 13 }}>{t.assigneeName ? `For ${t.assigneeName}` : t.section ? `For ${t.section}` : "For anyone on shift"} · from {t.createdByName}</div>
+                  <TaskDone id={t.id} title={t.title} />
+                </div>
+              );
+            })}
+            {justDone.map((t) => (
+              <div key={t.id} className="row wrap card" style={{ gap: 8, padding: "10px 14px" }}>
+                <span className="chip done">Done</span><span className="grow">{t.title}</span><UndoTask id={t.id} />
+              </div>
+            ))}
+          </section>
         )}
         {overdue.length > 0 && (
           <div className="alert">

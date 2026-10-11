@@ -10,6 +10,7 @@ import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff } from "@/lib/domain/timeoff";
 import type { Certificate } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent } from "@/lib/domain/equipment";
+import type { Task } from "@/lib/domain/tasks";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -75,6 +76,7 @@ interface State {
   certificates: (Certificate & { removedAt?: number; removedBy?: string })[];
   equipment: Equipment[];
   equipmentEvents: EquipmentEvent[];
+  tasks: Task[];
 }
 
 /** Sample records so the certificates screens have something to show in demo mode. */
@@ -114,6 +116,19 @@ function demoEquipment(): { equipment: Equipment[]; equipmentEvents: EquipmentEv
   };
 }
 
+/** Sample tasks for demo mode. */
+function demoTasks(): Task[] {
+  const now = Date.now();
+  const today = londonDate(now);
+  const t = (id: string, title: string, priority: Task["priority"], category: Task["category"], over: Partial<Task> = {}): Task =>
+    ({ id, siteId: "EAS", title, priority, category, status: "open", createdBy: "DEMO-MGR", createdByName: "", createdAt: now - 3_600_000, ...over });
+  return [
+    t("demo-task-1", "Deep clean the extraction hood filters", 3, "cleaning", { section: "BOH", dueOn: addDaysIso(today, 3) }),
+    t("demo-task-2", "Order more takeaway boxes", 2, "stock", { assigneeId: "DEMO-FOH", dueOn: addDaysIso(today, 1) }),
+    t("demo-task-3", "Update the allergen matrix for the new lunch menu", 2, "food_safety", { dueOn: addDaysIso(today, 2) }),
+  ];
+}
+
 function seed(): State {
   const owner = hashPin(DEMO_PINS.owner), staff = hashPin(DEMO_PINS.staff);
   const p = (id: string, name: string, access: Person["access"], pin: string): Person =>
@@ -142,7 +157,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(),
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(),
   };
 }
 
@@ -164,6 +179,8 @@ const certView = (c: State["certificates"][number]): Certificate => ({
   id: c.id, personId: c.personId, kind: c.kind, issuedOn: c.issuedOn, expiresOn: c.expiresOn, provider: c.provider, reference: c.reference,
   note: c.note, createdBy: c.createdBy, createdByName: nameOf(c.createdBy) ?? "", createdAt: c.createdAt,
 });
+
+const taskView = (t: Task): Task => ({ ...t, createdByName: nameOf(t.createdBy) ?? "", assigneeName: nameOf(t.assigneeId), doneByName: nameOf(t.doneBy) });
 
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
@@ -433,6 +450,37 @@ export const demoStore: Store = {
     const id = randomUUID();
     S().equipmentEvents.push({ ...e, id, createdAt: Date.now() });
     return id;
+  },
+
+  async tasks(f) {
+    return S().tasks.filter((t) => f.siteIds.includes(t.siteId) && (f.statuses ? f.statuses.includes(t.status) : t.status === "open"
+      || (f.closedSince !== undefined && ((t.doneAt ?? 0) >= f.closedSince || (t.cancelledAt ?? 0) >= f.closedSince))))
+      .sort((a, b) => b.createdAt - a.createdAt).map(taskView);
+  },
+  async task(id) { const t = S().tasks.find((x) => x.id === id); return t && taskView(t); },
+  async addTask(t) {
+    const id = randomUUID();
+    S().tasks.push({ id, siteId: t.siteId, title: t.title, detail: t.detail, priority: t.priority, category: t.category, assigneeId: t.assigneeId, section: t.section,
+      dueOn: t.dueOn, status: "open", createdBy: t.createdBy, createdByName: "", createdAt: Date.now() });
+    return id;
+  },
+  async completeTask(id, personId, note) {
+    const t = S().tasks.find((x) => x.id === id && x.status === "open");
+    if (!t) return false;
+    Object.assign(t, { status: "done", doneBy: personId, doneAt: Date.now(), doneNote: note });
+    return true;
+  },
+  async reopenTask(id, personId) {
+    const t = S().tasks.find((x) => x.id === id && x.status === "done" && x.doneBy === personId);
+    if (!t) return false;
+    Object.assign(t, { status: "open", doneBy: undefined, doneAt: undefined, doneNote: undefined });
+    return true;
+  },
+  async cancelTask(id, personId) {
+    const t = S().tasks.find((x) => x.id === id && x.status === "open");
+    if (!t) return false;
+    Object.assign(t, { status: "cancelled", cancelledBy: personId, cancelledAt: Date.now() });
+    return true;
   },
 
   async rotaSources() { return S().rotaSources.map((r) => ({ siteId: r.siteId, createdAt: r.createdAt, lastImportAt: r.lastImportAt, lastResult: r.lastResult })); },

@@ -31,6 +31,7 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
 - **Team rota** (Rota tab, and "Team rota" on My shifts): the site's week laid out like the Schedule tab in the rota sheet, a grid on a computer and day by day on a phone. Everyone at the site can see published weeks; owners and managers also see paid hours, daily and weekly totals, and draft weeks (marked Draft). Paid hours come from the sheet's Export tab with each hourly sync.
 
 - **Manager tools** (Manage tab for managers; tiles at the top of the Owner screen for owners). Managers use them on the shop tablet; staff phones stay limited to My shifts and the team rota.
+  - **Task centre**: everything open at the sites a manager runs, in one list by priority (P1 critical to P4 improvement): critical alerts and broken fridges first, then overdue checklists, food-safety handover actions, urgent prep, run-out certificates, and so on. Managers add one-off tasks for a person, a section or everyone at a site, with a date; they show on Today (and My shifts on a phone) for the people they're for, who tick them done with a note (undo within 10 minutes). Alerts can be resolved from here. Everything else links to where it's dealt with.
   - **Inspection records**: for a site and date range, the temperature log (with limits, out-of-range readings and corrective actions), checklist sign-offs (on time, late, not signed), alerts with how they were resolved, and food-safety handover notes. Printable, with CSV downloads. Days before a site's first recorded checklist aren't counted as missed.
   - **Weekly report**: per site and for the group, Monday to Sunday: checklists on time, temperatures out of range, alerts, handover actions, prep carried over and planned hours, with a change on the week before and a short "needs attention" list in plain words. On Monday at 9am each owner and manager also gets last week's headline numbers for their sites as a message.
   - **Team notices**: post to a site (or every site, for someone who manages them all), optionally only FOH, BOH or PROD, with an end date. Everyone it's for sees it on Today or My shifts until they tap "Got it"; the poster sees who has and hasn't. Important notices also go to phones with notifications on.
@@ -72,7 +73,7 @@ Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, manager and s
 |---|---|
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build / serve |
-| `npm test` | Unit tests for the rules (temperatures, sign-off, access, rota, PINs, prep, records, reports, notices, time off, certificates, equipment) and the reminder scheduler on demo data |
+| `npm test` | Unit tests for the rules (temperatures, sign-off, access, rota, PINs, prep, records, reports, notices, time off, certificates, equipment, tasks) and the reminder scheduler on demo data |
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
 | `npm run person:add` | Create or update a person, their site access and PIN (see above) |

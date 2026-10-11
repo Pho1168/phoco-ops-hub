@@ -6,6 +6,7 @@ import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
 import type { Certificate, CertKind } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent, EquipmentKind, EventKind, Severity } from "@/lib/domain/equipment";
+import type { Priority, Task, TaskCategory, TaskStatus } from "@/lib/domain/tasks";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -35,6 +36,20 @@ const isUuid = (s: string) => UUID.test(s);
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : undefined);
 const num = (v: string | null) => (v === null ? undefined : Number(v));
 const opt = <T,>(v: T | null) => (v === null ? undefined : v);
+
+interface TaskRow { id: string; site_id: SiteId; title: string; detail: string | null; priority: number; category: TaskCategory; assignee_id: string | null; assignee_name: string | null;
+  section: Area | null; due_on: string | null; status: TaskStatus; created_by: string; created_by_name: string; created_at: Date; done_by: string | null; done_by_name: string | null;
+  done_at: Date | null; done_note: string | null; cancelled_by: string | null; cancelled_at: Date | null }
+const taskSelect = (q: postgres.Sql) => q`
+  select t.id, t.site_id, t.title, t.detail, t.priority, t.category, t.assignee_id, a.display_name as assignee_name, t.section, to_char(t.due_on, 'YYYY-MM-DD') as due_on,
+    t.status, t.created_by, c.display_name as created_by_name, t.created_at, t.done_by, d.display_name as done_by_name, t.done_at, t.done_note, t.cancelled_by, t.cancelled_at
+  from tasks t join people c on c.id = t.created_by left join people a on a.id = t.assignee_id left join people d on d.id = t.done_by`;
+const taskFrom = (r: TaskRow): Task => ({
+  id: r.id, siteId: r.site_id, title: r.title, detail: opt(r.detail), priority: r.priority as Priority, category: r.category, assigneeId: opt(r.assignee_id),
+  assigneeName: opt(r.assignee_name), section: opt(r.section), dueOn: opt(r.due_on), status: r.status, createdBy: r.created_by, createdByName: r.created_by_name,
+  createdAt: r.created_at.getTime(), doneBy: opt(r.done_by), doneByName: opt(r.done_by_name), doneAt: ms(r.done_at), doneNote: opt(r.done_note),
+  cancelledBy: opt(r.cancelled_by), cancelledAt: ms(r.cancelled_at),
+});
 
 interface EqRow { id: string; site_id: SiteId; name: string; kind: EquipmentKind; location: string | null; make_model: string | null; serial: string | null;
   service_every_months: number | null; service_contact: string | null; instructions: string | null; created_at: Date; retired_at: Date | null }
@@ -710,6 +725,50 @@ export const sqlStore: Store = {
       values (${e.equipmentId}, ${e.siteId}, ${e.kind}, ${e.faultId ?? null}, ${e.severity ?? null}, ${e.body}, ${e.doneOn ?? null}, ${e.createdBy})
       on conflict (fault_id) where kind = 'fixed' do nothing returning id`;
     return rows[0]?.id;
+  },
+
+  // ---------- tasks ----------
+  async tasks(f) {
+    if (!f.siteIds.length) return [];
+    const q = sql();
+    const rows = await q<TaskRow[]>`
+      ${taskSelect(q)} where t.site_id = any(${f.siteIds}::text[])
+        ${f.statuses ? q`and t.status = any(${f.statuses}::text[])`
+          : f.closedSince !== undefined ? q`and (t.status = 'open' or t.done_at >= ${new Date(f.closedSince)} or t.cancelled_at >= ${new Date(f.closedSince)})`
+          : q`and t.status = 'open'`}
+      order by t.created_at desc limit 500`;
+    return rows.map(taskFrom);
+  },
+  async task(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<TaskRow[]>`${taskSelect(q)} where t.id = ${id}`;
+    return r && taskFrom(r);
+  },
+  async addTask(t) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into tasks (site_id, title, detail, priority, category, assignee_id, section, due_on, created_by)
+      values (${t.siteId}, ${t.title}, ${t.detail ?? null}, ${t.priority}, ${t.category}, ${t.assigneeId ?? null}, ${t.section ?? null}, ${t.dueOn ?? null}, ${t.createdBy})
+      returning id`;
+    return r.id;
+  },
+  async completeTask(id, personId, note) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update tasks set status = 'done', done_by = ${personId}, done_at = now(), done_note = ${note ?? null}
+                    where id = ${id} and status = 'open' returning id`).length > 0;
+  },
+  async reopenTask(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update tasks set status = 'open', done_by = null, done_at = null, done_note = null
+                    where id = ${id} and status = 'done' and done_by = ${personId} returning id`).length > 0;
+  },
+  async cancelTask(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update tasks set status = 'cancelled', cancelled_by = ${personId}, cancelled_at = now() where id = ${id} and status = 'open' returning id`).length > 0;
   },
 
   // ---------- rota ----------

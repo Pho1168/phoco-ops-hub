@@ -16,6 +16,7 @@ import { canCancel, canDecide, clashes, kindLabel, rangeLabel, validateRequest }
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
 import { afterQuietHours, dayMonthYear, londonDate } from "@/lib/domain/time";
 import { canEditCerts, certType, validateCert, CERT_KINDS, type CertKind } from "@/lib/domain/certificates";
+import { canComplete, categoryLabel, isForPerson, priorityCode, validateTask, TASK_CATEGORIES, type Priority, type TaskCategory } from "@/lib/domain/tasks";
 import { canManageEquipment, canUseEquipment, faultReportedMessages, faultsOf, siteManagers, validateEquipment, validateService,
   EQUIPMENT_KINDS, INSTRUCTIONS_MAX, NAME_MAX, SEVERITY_LABEL, TEXT_MAX, type EquipmentKind } from "@/lib/domain/equipment";
 import { deliverDue } from "@/lib/rota-service";
@@ -23,7 +24,7 @@ import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
-import { canChangeAccess, canMarkLeft, normalizeStaffCode, validatePersonInput } from "@/lib/domain/staff";
+import { canChangeAccess, canMarkLeft, normalizeStaffCode, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
 import type { SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
 
@@ -369,14 +370,19 @@ export async function logOutEverywhere(personId: string): Promise<ActionResult> 
   return { ok: true };
 }
 
+/** A manager of the alert's site says what was done about it. */
 export async function resolveAlert(id: string, note: string): Promise<ActionResult> {
   const ctx = await requireCtx();
-  if (!ctx.isManager) return { ok: false, error: "Only managers can resolve alerts" };
   if (!note.trim()) return { ok: false, error: "Say what was done" };
-  await store().resolveAlert(z.string().max(64).parse(id), ctx.person.id, note.trim().slice(0, 500));
-  await store().audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "alert.resolve", detail: note.trim() });
-  revalidatePath("/owner");
-  revalidatePath("/today");
+  const alertId = z.string().max(64).parse(id);
+  const db = store();
+  const mine = (await Promise.all(managedSites(ctx.person).map((s) => db.alerts(s)))).flat();
+  const alert = mine.find((a) => a.id === alertId);
+  if (!alert) return { ok: false, error: "Only managers of that site can resolve its alerts" };
+  if (alert.resolvedAt) return { ok: false, error: "That alert has already been resolved" };
+  await db.resolveAlert(alert.id, ctx.person.id, note.trim().slice(0, 500));
+  await db.audit({ actorId: ctx.person.id, siteId: alert.siteId, action: "alert.resolve", detail: `${alert.title}: ${note.trim()}` });
+  revalidatePath("/owner"); revalidatePath("/today"); revalidatePath("/manage/tasks");
   return { ok: true };
 }
 
@@ -903,5 +909,90 @@ export async function logService(equipmentId: string, input: unknown): Promise<A
   await db.addEquipmentEvent({ equipmentId: eq.id, siteId: eq.siteId, kind: "service", body: s.data.body, doneOn: s.data.doneOn, createdBy: ctx.person.id });
   await db.audit({ actorId: ctx.person.id, siteId: eq.siteId, action: "equipment.service", detail: `${eq.name} serviced on ${s.data.doneOn}: ${s.data.body}` });
   equipmentPaths(eq.id);
+  return { ok: true };
+}
+
+// ---------- tasks ----------
+const TaskZ = z.object({
+  title: z.string().trim().min(1, "Say what needs doing").max(120, "Keep the task under 120 characters"),
+  detail: z.string().trim().max(1000, "Keep the details under 1000 characters").optional(),
+  priority: z.number().int().min(1).max(4),
+  category: z.enum(TASK_CATEGORIES.map((c) => c.id) as [TaskCategory, ...TaskCategory[]]),
+  assigneeId: z.string().max(64).optional(),
+  section: z.enum(["FOH", "BOH", "PROD"]).optional(),
+  dueOn: z.union([IsoDateZ, z.literal("")]).optional(),
+});
+
+/** A manager gives a job to a person, a section or everyone at a site. A named person is told; for a P1, everyone it's for is. */
+export async function addTask(siteId: string, input: unknown): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const site = SiteIdZ.safeParse(siteId);
+  if (!site.success || !canManage(ctx.person, site.data)) return { ok: false, error: "Only a manager of that site can add tasks" };
+  const t = TaskZ.safeParse(input);
+  if (!t.success) return { ok: false, error: t.error.issues[0]?.message ?? "That task couldn't be saved" };
+  const db = store();
+  const siteRow = await db.site(site.data);
+  if (!siteRow) return { ok: false, error: "Unknown site" };
+  const data = { title: t.data.title, detail: t.data.detail || undefined, priority: t.data.priority as Priority, category: t.data.category,
+    assigneeId: t.data.assigneeId || undefined, section: t.data.section, dueOn: t.data.dueOn || undefined };
+  const now = Date.now();
+  const check = validateTask(data, londonDate(now));
+  if (!check.ok) return check;
+  if (data.section && !sectionsFor(siteRow.kind).includes(data.section)) return { ok: false, error: `${siteRow.name} has no ${data.section} section` };
+  const people = await db.people();
+  const assignee = data.assigneeId ? people.find((p) => p.id === data.assigneeId) : undefined;
+  if (data.assigneeId && (!assignee || assignee.status !== "active" || !assignee.access.some((a) => a.siteId === site.data))) return { ok: false, error: "Choose someone who works at that site" };
+  const id = await db.addTask({ ...data, siteId: site.data, createdBy: ctx.person.id });
+  const due = data.dueOn ? ` · due ${data.dueOn === londonDate(now) ? "today" : data.dueOn}` : "";
+  const audience = assignee ? [assignee] : data.priority === 1 ? people.filter((p) => p.id !== ctx.person.id && isForPerson({ siteId: site.data, section: data.section }, p)) : [];
+  for (const p of audience) {
+    await db.queueNotice({ personId: p.id, kind: "task", title: `New task (${priorityCode(data.priority)}): ${data.title}`,
+      body: `${categoryLabel(data.category)}${due}${data.detail ? `\n${data.detail.slice(0, 160)}` : ""}\nFrom ${ctx.person.name}`, dedupeKey: `task|${id}|${p.id}`, sendAfter: afterQuietHours(now) });
+  }
+  if (audience.length) await deliverDue(now);
+  await db.audit({ actorId: ctx.person.id, siteId: site.data, action: "task.add", detail: `${priorityCode(data.priority)} task: ${data.title}${assignee ? ` (for ${assignee.name})` : data.section ? ` (for ${data.section})` : ""}` });
+  revalidatePath("/manage/tasks"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+/** Tick a task done, with an optional note. The people it's for, or a manager of the site. */
+export async function completeTask(id: string, note: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const db = store();
+  const t = await db.task(String(id ?? "").slice(0, 64));
+  if (!t || t.status !== "open") return { ok: false, error: "That task has already been done or taken off" };
+  if (!canComplete(t, ctx.person)) return { ok: false, error: "That task isn't yours" };
+  const why = z.string().trim().max(300, "Keep the note under 300 characters").safeParse(note ?? "");
+  if (!why.success) return { ok: false, error: why.error.issues[0]?.message ?? "Check the note" };
+  if (!(await db.completeTask(t.id, ctx.person.id, why.data || undefined))) return { ok: false, error: "Someone has just done it" };
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "task.done", detail: `Done: ${t.title}${why.data ? ` (${why.data})` : ""}` });
+  revalidatePath("/manage/tasks"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+/** Undo a mis-tap: only the person who ticked it, within 10 minutes. */
+export async function reopenTask(id: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const db = store();
+  const t = await db.task(String(id ?? "").slice(0, 64));
+  if (!t || t.status !== "done" || t.doneBy !== ctx.person.id || !t.doneAt || Date.now() - t.doneAt > 10 * 60_000) return { ok: false, error: "That can't be undone now" };
+  if (!(await db.reopenTask(t.id, ctx.person.id))) return { ok: false, error: "That can't be undone now" };
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "task.undo", detail: `Undid done: ${t.title}` });
+  revalidatePath("/manage/tasks"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+/** A manager takes a task off (not needed any more). It's kept, marked cancelled. */
+export async function cancelTask(id: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const db = store();
+  const t = await db.task(String(id ?? "").slice(0, 64));
+  if (!t || t.status !== "open") return { ok: false, error: "That task has already been done or taken off" };
+  if (!canManage(ctx.person, t.siteId)) return { ok: false, error: "Only a manager of that site can take a task off" };
+  if (!(await db.cancelTask(t.id, ctx.person.id))) return { ok: false, error: "It has just changed" };
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "task.cancel", detail: `Took off: ${t.title}` });
+  revalidatePath("/manage/tasks"); revalidatePath("/today"); revalidatePath("/me");
   return { ok: true };
 }

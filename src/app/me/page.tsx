@@ -12,6 +12,8 @@ import { NoticeBanner } from "@/components/NoticeBanner";
 import { inAudience, isLive, unreadFor } from "@/lib/domain/notices";
 import { certStatus, expectedKinds, statusText, visibleTypes } from "@/lib/domain/certificates";
 import { CHIP } from "@/app/manage/certificates/cells";
+import { dueText, isForPerson, priorityCode, taskOrder } from "@/lib/domain/tasks";
+import { TaskDone } from "@/components/TaskDone";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -32,6 +34,7 @@ export default async function MyShifts() {
   const expectedCerts = new Set(expectedKinds(ctx.person));
   const certRows = visibleTypes(false).filter((t) => expectedCerts.has(t.id) || myCerts.some((c) => c.kind === t.id))
     .map((t) => ({ t, s: certStatus(myCerts, t.id, expectedCerts.has(t.id), today) }));
+  const myTasks = (await db.tasks({ siteIds: ctx.person.access.map((a) => a.siteId) })).filter((t) => isForPerson(t, ctx.person)).sort(taskOrder(today));
   const session = await db.session(ctx.sessionId);
   const onTablet = !!session?.deviceId;
   const publicKey = onTablet ? "" : (await vapidKeys()).publicKey;
@@ -76,6 +79,23 @@ export default async function MyShifts() {
             </div>
           ))}
         </section>
+
+        {myTasks.length > 0 && (
+          <section className="card stack" aria-label="My tasks" style={{ gap: 10 }}>
+            <h2 className="h-sec">My tasks</h2>
+            {myTasks.map((t) => (
+              <div key={t.id} className="stack timeoff-row" style={{ gap: 6 }}>
+                <div className="row wrap" style={{ gap: 6 }}>
+                  <span className={`chip ${t.priority === 1 ? "bad" : t.priority === 2 ? "late" : t.priority === 3 ? "warn" : ""}`}>{priorityCode(t.priority)}</span>
+                  <span className="strong grow" style={{ fontSize: 15 }}>{t.title}</span>
+                  {t.dueOn && <span className={dueText(t.dueOn, today).overdue ? "err" : "muted"} style={{ fontSize: 13 }}>{dueText(t.dueOn, today).text}</span>}
+                </div>
+                {t.detail && <div className="muted" style={{ whiteSpace: "pre-wrap", fontSize: 14 }}>{t.detail}</div>}
+                <TaskDone id={t.id} title={t.title} />
+              </div>
+            ))}
+          </section>
+        )}
 
         <TimeOffCard today={today} shiftDays={shifts.map((s) => s.date)} requests={myTimeOff.map((t) => ({
           id: t.id, range: rangeLabel(t), kind: kindLabel(t.kind), status: t.status, note: t.note, canCancel: canCancel(t, today),
