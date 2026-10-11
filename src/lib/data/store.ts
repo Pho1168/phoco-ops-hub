@@ -3,12 +3,15 @@ import type { Device } from "@/lib/domain/devices";
 import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib/domain/rota";
 import type { PrepEntry, PrepItem, PrepShift, SubmitPlan } from "@/lib/domain/prep";
 import type { ListInfo, RawAnswer, RunInfo } from "@/lib/domain/records";
+import type { TeamNotice } from "@/lib/domain/notices";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
-export interface NoticeRow { id: string; personId: string; kind: Notice["kind"]; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number }
+/** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report";
+export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
 export interface RotaSource { siteId: SiteId; createdAt: number; lastImportAt?: number; lastResult?: RotaResult }
@@ -110,6 +113,14 @@ export interface Store {
   /** Marks an outstanding entry done (or back to outstanding). Returns false if it isn't at that site or not in that state. */
   prepSetDone(entryId: string, siteId: SiteId, personId: string, done: boolean): Promise<boolean>;
 
+  // Team notices
+  /** Live notices plus the most recent ended ones (newest first), with who has read them. */
+  teamNotices(recentEnded?: number): Promise<TeamNotice[]>;
+  addTeamNotice(n: Omit<TeamNotice, "id" | "createdAt" | "createdByName" | "reads" | "endedAt">): Promise<string>;
+  endTeamNotice(id: string, personId: string): Promise<boolean>;
+  /** Records "Got it". Returns false if the notice doesn't exist. */
+  readTeamNotice(id: string, personId: string): Promise<boolean>;
+
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;
   rotaSourceByToken(tokenHash: string): Promise<SiteId | undefined>;
@@ -127,7 +138,7 @@ export interface Store {
   shiftsOnDate(date: string): Promise<(ShiftView & { personId: string; staffCode: string })[]>;
 
   // Messages and push
-  queueNotice(n: { personId: string; kind: Notice["kind"]; title: string; body: string; dedupeKey?: string; sendAfter: number }): Promise<boolean>;
+  queueNotice(n: { personId: string; kind: MessageKind; title: string; body: string; dedupeKey?: string; sendAfter: number }): Promise<boolean>;
   dueNotices(now: number, limit: number): Promise<NoticeRow[]>;
   markNoticeSent(id: string): Promise<void>;
   notices(personId: string, limit: number): Promise<NoticeRow[]>;

@@ -9,6 +9,7 @@ import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, s
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
 import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
 import { readFileSync } from "node:fs";
+import { audienceLabel, canPostTo, inAudience, isLive, readStats, unreadFor, type TeamNotice } from "./notices";
 import { change, groupTotals, siteWeekReport, type SiteWeekInput } from "./report";
 import { clampRange, datesBetween, readingLog, recordsSummary, signoffLog, type RawAnswer } from "./records";
 import { managedSites, canManage } from "./access";
@@ -542,5 +543,46 @@ describe("weekly report", () => {
     expect(g).toMatchObject({ sites: 2, expected: 10, onTime: 4, onTimeRate: 40, openAlerts: 2, hours: 47, people: 3 });
     expect(change(40, 30)).toBe(10);
     expect(change(null, 30)).toBeUndefined();
+  });
+});
+
+describe("team notices", () => {
+  const person = (id: string, name: string, access: Person["access"], status: Person["status"] = "active") =>
+    ({ id, name, status, access, staffCode: id, pinFailed: 0 }) as Person;
+  const foh = person("f", "Fay", [{ siteId: "EAS", role: "staff", sections: ["FOH"] }]);
+  const boh = person("b", "Bo", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }]);
+  const mgr = person("m", "Mia", [{ siteId: "EAS", role: "manager", sections: ["FOH"] }]);
+  const wem = person("w", "Wes", [{ siteId: "WEM", role: "staff", sections: ["PROD"] }]);
+  const left = person("l", "Lee", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }], "left");
+  const n = (over: Partial<TeamNotice> = {}): TeamNotice => ({ id: "n1", siteId: "EAS", sections: [], title: "New menu", body: "From Monday", important: false,
+    createdBy: "m", createdByName: "Mia", createdAt: 1, reads: [], ...over });
+  it("is for the right people", () => {
+    expect([foh, boh, mgr, wem, left].map((p) => inAudience(n(), p))).toEqual([true, true, true, false, false]);
+    expect([foh, boh, mgr, wem].map((p) => inAudience(n({ sections: ["BOH"] }), p))).toEqual([false, true, true, false]); // managers always see their site
+    expect([foh, wem].map((p) => inAudience(n({ siteId: undefined }), p))).toEqual([true, true]);
+  });
+  it("shows until taken down or its last day passes", () => {
+    expect(isLive(n(), "2026-10-12")).toBe(true);
+    expect(isLive(n({ showUntil: "2026-10-12" }), "2026-10-12")).toBe(true);
+    expect(isLive(n({ showUntil: "2026-10-11" }), "2026-10-12")).toBe(false);
+    expect(isLive(n({ endedAt: 5 }), "2026-10-12")).toBe(false);
+  });
+  it("lists unread notices, important first, until 'Got it'", () => {
+    const list = [n({ id: "a", createdAt: 1 }), n({ id: "b", createdAt: 2 }), n({ id: "c", createdAt: 0, important: true }), n({ id: "d", reads: [{ personId: "f", readAt: 3 }] })];
+    expect(unreadFor(list, foh, "2026-10-12").map((x) => x.id)).toEqual(["c", "b", "a"]);
+  });
+  it("shows who has and hasn't read it", () => {
+    const st = readStats(n({ reads: [{ personId: "b", readAt: 9 }] }), [foh, boh, mgr, wem, left]);
+    expect(st.audience).toBe(3);
+    expect(st.read.map((r) => r.name)).toEqual(["Bo"]);
+    expect(st.unread.map((r) => r.name)).toEqual(["Fay", "Mia"]);
+  });
+  it("lets managers post to their own sites only", () => {
+    expect(canPostTo(["EAS"], ["EAS", "WEM"], "EAS")).toBe(true);
+    expect(canPostTo(["EAS"], ["EAS", "WEM"], "WEM")).toBe(false);
+    expect(canPostTo(["EAS"], ["EAS", "WEM"], undefined)).toBe(false);
+    expect(canPostTo(["EAS", "WEM"], ["EAS", "WEM"], undefined)).toBe(true);
+    expect(audienceLabel(n({ sections: ["BOH"] }), "Eastcote")).toBe("BOH at Eastcote");
+    expect(audienceLabel(n({ siteId: undefined }), undefined)).toBe("Everyone at all sites");
   });
 });

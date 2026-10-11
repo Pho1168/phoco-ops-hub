@@ -6,6 +6,8 @@ import { addDays, londonDate, shortDay } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { vapidKeys } from "@/lib/push";
 import { RemindersToggle } from "./RemindersToggle";
+import { NoticeBanner } from "@/components/NoticeBanner";
+import { inAudience, isLive, unreadFor } from "@/lib/domain/notices";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -17,7 +19,10 @@ export default async function MyShifts() {
   const db = store();
   const today = londonDate(Date.now());
   const shifts = (await db.shiftsForPerson(ctx.person.id, today, addDays(today, 27))).filter((s) => s.published && !s.cancelled);
-  const notices = await db.notices(ctx.person.id, 15);
+  const notices = (await db.notices(ctx.person.id, 25)).filter((n) => n.kind !== "notice").slice(0, 15);
+  const teamNotices = await db.teamNotices(0);
+  const unread = unreadFor(teamNotices, ctx.person, today);
+  const readLive = teamNotices.filter((n) => isLive(n, today) && inAudience(n, ctx.person) && !unread.includes(n));
   const session = await db.session(ctx.sessionId);
   const onTablet = !!session?.deviceId;
   const publicKey = onTablet ? "" : (await vapidKeys()).publicKey;
@@ -41,6 +46,8 @@ export default async function MyShifts() {
           <Link className="btn ghost small" href="/rota">Team rota</Link>
         </div>
 
+        <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName, when: when(n.createdAt) }))} />
+
         {!onTablet && <RemindersToggle publicKey={publicKey} />}
 
         <section className="stack">
@@ -60,6 +67,20 @@ export default async function MyShifts() {
             </div>
           ))}
         </section>
+
+        {readLive.length > 0 && (
+          <details className="card">
+            <summary className="strong" style={{ cursor: "pointer" }}>Team notices ({readLive.length})</summary>
+            <div className="stack" style={{ marginTop: 10 }}>
+              {readLive.map((n) => (
+                <div key={n.id} className="stack" style={{ gap: 2 }}>
+                  <div className="row"><span className="strong grow">{n.title}</span><span className="muted">{when(n.createdAt)}</span></div>
+                  <div style={{ whiteSpace: "pre-wrap", fontSize: 14 }}>{n.body}</div>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
 
         <section className="stack">
           <h2 className="h-sec">Messages</h2>

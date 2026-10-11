@@ -11,7 +11,10 @@ import { pushToPerson } from "@/lib/push";
 import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
-import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
+import { canFreeze, canSignIn, isPinLocked, managedSites, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
+import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
+import { afterQuietHours, londonDate } from "@/lib/domain/time";
+import { deliverDue } from "@/lib/rota-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
@@ -567,5 +570,69 @@ export async function disableReminders(endpoint: string): Promise<ActionResult> 
   const db = store();
   const mine = await db.pushSubs(ctx.person.id);
   if (mine.some((s) => s.endpoint === endpoint)) await db.dropPushSub(endpoint);
+  return { ok: true };
+}
+
+// ---------- team notices ----------
+const NoticeZ = z.object({
+  siteId: SiteIdZ.nullable(),
+  sections: z.array(z.enum(["FOH", "BOH", "PROD"])).max(3),
+  title: z.string().trim().min(1, "Give the notice a title").max(NOTICE_TITLE_MAX, `Keep the title under ${NOTICE_TITLE_MAX} characters`),
+  body: z.string().trim().min(1, "Write the notice").max(NOTICE_BODY_MAX, `Keep the notice under ${NOTICE_BODY_MAX} characters`),
+  important: z.boolean(),
+  showUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+});
+
+/** An owner or manager posts a notice. Important ones also go to the phones of people it's for. */
+export async function postNotice(input: unknown): Promise<ActionResult & { sentTo?: number }> {
+  const ctx = await requireCtx();
+  const managed = managedSites(ctx.person);
+  if (!managed.length) return { ok: false, error: "Only owners and managers can post notices" };
+  const n = NoticeZ.safeParse(input);
+  if (!n.success) return { ok: false, error: n.error.issues[0]?.message ?? "That notice couldn't be posted" };
+  const db = store();
+  const openSites = (await db.sites()).filter((s) => s.status === "open").map((s) => s.id);
+  const siteId = n.data.siteId ?? undefined;
+  if (!canPostTo(managed, openSites, siteId)) return { ok: false, error: "You can only post to sites you manage" };
+  const now = Date.now();
+  if (n.data.showUntil && n.data.showUntil < londonDate(now)) return { ok: false, error: "The last day to show it is already past" };
+  const id = await db.addTeamNotice({ siteId, sections: n.data.sections, title: n.data.title, body: n.data.body, important: n.data.important, createdBy: ctx.person.id, showUntil: n.data.showUntil ?? undefined });
+  await db.readTeamNotice(id, ctx.person.id); // the person posting it has read it
+  let sentTo = 0;
+  if (n.data.important) {
+    const sendAfter = afterQuietHours(now);
+    for (const p of (await db.people()).filter((p) => p.id !== ctx.person.id && p.status === "active" && inAudience({ siteId, sections: n.data.sections }, p))) {
+      if (!(await db.pushSubs(p.id)).length) continue;
+      if (await db.queueNotice({ personId: p.id, kind: "notice", title: `Notice: ${n.data.title}`, body: n.data.body.slice(0, 180), dedupeKey: `notice|${id}|${p.id}`, sendAfter })) sentTo++;
+    }
+    if (sentTo) await deliverDue(now);
+  }
+  await db.audit({ actorId: ctx.person.id, siteId, action: "notice.post", detail: `${n.data.important ? "Important notice" : "Notice"}: ${n.data.title}` });
+  revalidatePath("/manage/notices"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true, sentTo };
+}
+
+export async function endNotice(id: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const db = store();
+  const n = (await db.teamNotices()).find((x) => x.id === id);
+  if (!n) return { ok: false, error: "That notice isn't there any more" };
+  const openSites = (await db.sites()).filter((s) => s.status === "open").map((s) => s.id);
+  if (!canPostTo(managedSites(ctx.person), openSites, n.siteId)) return { ok: false, error: "Only a manager of that site can take it down" };
+  if (!(await db.endTeamNotice(n.id, ctx.person.id))) return { ok: false, error: "It has already been taken down" };
+  await db.audit({ actorId: ctx.person.id, siteId: n.siteId, action: "notice.end", detail: `Took down notice: ${n.title}` });
+  revalidatePath("/manage/notices"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+/** "Got it": works on the shop tablet and on a staff member's own phone. */
+export async function readNotice(id: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const db = store();
+  const n = (await db.teamNotices()).find((x) => x.id === id);
+  if (!n || !inAudience(n, ctx.person)) return { ok: false, error: "That notice isn't for you" };
+  await db.readTeamNotice(n.id, ctx.person.id);
+  revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/manage/notices");
   return { ok: true };
 }

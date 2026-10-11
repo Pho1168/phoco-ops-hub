@@ -6,6 +6,8 @@ import { currentNotes } from "@/lib/domain/handover";
 import { londonNow, requireCtx } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { Icon } from "@/components/Icon";
+import { NoticeBanner } from "@/components/NoticeBanner";
+import { unreadFor } from "@/lib/domain/notices";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +35,7 @@ export default async function Today() {
   const notesOpen = currentNotes(await db.handover(ctx.site.id), sent, Date.now()).filter((n) => n.needsAction);
   const toDo = [...prepOpen, ...notesOpen];
   const urgent = prepOpen.filter((e) => e.urgent).length + notesOpen.filter((n) => n.category === "Food safety").length;
+  const unread = unreadFor(await db.teamNotices(0), ctx.person, date);
 
   return (
     <>
@@ -49,6 +52,8 @@ export default async function Today() {
           </div>
         </div>
 
+        <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName,
+          when: new Date(n.createdAt).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }) }))} />
         {alerts.map((a) => (
           <div key={a.id} className={`alert ${a.level === "critical" ? "bad" : ""}`} role="status">
             <Icon name="alert" />

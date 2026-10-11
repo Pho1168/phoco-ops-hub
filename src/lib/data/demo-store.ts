@@ -6,6 +6,7 @@ import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHan
 import { latestAnswers } from "@/lib/domain/checklist";
 import { londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
 import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
+import type { TeamNotice } from "@/lib/domain/notices";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -66,6 +67,7 @@ interface State {
   prepItems: PrepItem[]; prepSites: SiteId[];
   prepHandovers: Omit<PrepHandover, "entries" | "createdByName" | "submittedByName">[];
   prepEntries: PrepEntry[];
+  teamNotices: TeamNotice[];
 }
 
 function seed(): State {
@@ -96,7 +98,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [],
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [],
   };
 }
 
@@ -282,6 +284,28 @@ export const demoStore: Store = {
     if (!e || S().prepHandovers.find((h) => h.id === e.handoverId)?.status !== "submitted") return false;
     if (done) { e.status = "completed"; e.completedBy = personId; e.completedAt = Date.now(); }
     else { e.status = "outstanding"; e.completedBy = undefined; e.completedAt = undefined; }
+    return true;
+  },
+
+  async teamNotices(recentEnded = 10) {
+    const all = [...S().teamNotices].sort((a, b) => b.createdAt - a.createdAt);
+    return [...all.filter((n) => !n.endedAt), ...all.filter((n) => n.endedAt).slice(0, recentEnded)]
+      .map((n) => ({ ...n, createdByName: nameOf(n.createdBy) ?? "", reads: [...n.reads] }));
+  },
+  async addTeamNotice(n) {
+    const id = randomUUID();
+    S().teamNotices.push({ ...n, id, createdAt: Date.now(), createdByName: "", reads: [] });
+    return id;
+  },
+  async endTeamNotice(id) {
+    const n = S().teamNotices.find((x) => x.id === id && !x.endedAt);
+    if (!n) return false;
+    n.endedAt = Date.now(); return true;
+  },
+  async readTeamNotice(id, personId) {
+    const n = S().teamNotices.find((x) => x.id === id);
+    if (!n) return false;
+    if (!n.reads.some((r) => r.personId === personId)) n.reads.push({ personId, readAt: Date.now() });
     return true;
   },
 

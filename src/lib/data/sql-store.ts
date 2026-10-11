@@ -2,6 +2,7 @@ import postgres from "postgres";
 import type { Answer, Area, Checklist, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
 import type { RawAnswer } from "@/lib/domain/records";
+import type { TeamNotice } from "@/lib/domain/notices";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -519,6 +520,44 @@ export const sqlStore: Store = {
       : await q`update prep_entries set status = 'outstanding', completed_by = null, completed_at = null
                 where id = ${entryId} and site_id = ${siteId} and status = 'completed' returning id`;
     return rows.length > 0;
+  },
+
+  // ---------- team notices ----------
+  async teamNotices(recentEnded = 10) {
+    const q = sql();
+    const rows = await q<{ id: string; site_id: SiteId | null; sections: Area[]; title: string; body: string; important: boolean; created_by: string; created_by_name: string;
+      created_at: Date; show_until: string | null; ended_at: Date | null; reads: { person_id: string; read_at: string }[] | null }[]>`
+      select a.id, a.site_id, a.sections, a.title, a.body, a.important, a.created_by, p.display_name as created_by_name, a.created_at,
+        to_char(a.show_until, 'YYYY-MM-DD') as show_until, a.ended_at,
+        (select json_agg(json_build_object('person_id', r.person_id, 'read_at', r.read_at)) from announcement_reads r where r.announcement_id = a.id) as reads
+      from announcements a join people p on p.id = a.created_by
+      where a.ended_at is null or a.id in (select id from announcements where ended_at is not null order by created_at desc limit ${recentEnded})
+      order by a.created_at desc`;
+    return rows.map((r): TeamNotice => ({
+      id: r.id, siteId: opt(r.site_id), sections: r.sections, title: r.title, body: r.body, important: r.important,
+      createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(), showUntil: opt(r.show_until), endedAt: ms(r.ended_at),
+      reads: (r.reads ?? []).map((x) => ({ personId: x.person_id, readAt: new Date(x.read_at).getTime() })),
+    }));
+  },
+  async addTeamNotice(n) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into announcements (site_id, sections, title, body, important, created_by, show_until)
+      values (${n.siteId ?? null}, ${n.sections}, ${n.title}, ${n.body}, ${n.important}, ${n.createdBy}, ${n.showUntil ?? null}) returning id`;
+    return r.id;
+  },
+  async endTeamNotice(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update announcements set ended_at = now(), ended_by = ${personId} where id = ${id} and ended_at is null returning id`).length > 0;
+  },
+  async readTeamNotice(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    const [a] = await q`select id from announcements where id = ${id}`;
+    if (!a) return false;
+    await q`insert into announcement_reads (announcement_id, person_id) values (${id}, ${personId}) on conflict do nothing`;
+    return true;
   },
 
   // ---------- rota ----------
