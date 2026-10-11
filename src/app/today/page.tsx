@@ -2,6 +2,7 @@ import Link from "next/link";
 import { store } from "@/lib/data";
 import { progress, runState } from "@/lib/domain/checklist";
 import { canUsePrep } from "@/lib/domain/prep";
+import { currentNotes } from "@/lib/domain/handover";
 import { londonNow, requireCtx } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { Icon } from "@/components/Icon";
@@ -25,10 +26,13 @@ export default async function Today() {
   }));
   const overdue = rows.filter((r) => r.state === "overdue");
   const alerts = (await db.alerts(ctx.site.id)).filter((a) => !a.resolvedAt);
-  const handover = (await db.handover(ctx.site.id)).filter((h) => h.needsAction && !h.closedAt);
   const done = rows.filter((r) => r.state === "done").length;
   const prepOn = canUsePrep(ctx.access) && (await db.prepEnabledSites()).includes(ctx.site.id);
   const prepOpen = prepOn ? await db.prepOutstanding(ctx.site.id) : [];
+  const sent = prepOn ? (await db.prepHandovers(ctx.site.id, 2)).map((h) => h.submittedAt!) : [];
+  const notesOpen = currentNotes(await db.handover(ctx.site.id), sent, Date.now()).filter((n) => n.needsAction);
+  const toDo = [...prepOpen, ...notesOpen];
+  const urgent = prepOpen.filter((e) => e.urgent).length + notesOpen.filter((n) => n.category === "Food safety").length;
 
   return (
     <>
@@ -51,18 +55,12 @@ export default async function Today() {
             <div className="grow"><div className="strong">{a.title}</div><div style={{ fontSize: 13 }}>{a.detail}</div></div>
           </div>
         ))}
-        {handover.length > 0 && (
-          <Link href="/handover" className="alert" style={{ textDecoration: "none" }}>
+        {(toDo.length > 0 || prepOn) && (
+          <Link href={toDo.length || !prepOn ? "/handover" : "/handover/prep"} className={toDo.length ? "alert" : "list-btn"} style={{ textDecoration: "none" }}>
             <Icon name="handover" />
-            <div className="grow"><div className="strong">{handover.length} open handover item{handover.length > 1 ? "s" : ""}</div><div style={{ fontSize: 13 }}>{handover[0].body}</div></div>
-          </Link>
-        )}
-        {prepOn && (
-          <Link href={prepOpen.length ? "/prep/report" : "/prep"} className={prepOpen.length ? "alert" : "list-btn"} style={{ textDecoration: "none" }}>
-            <Icon name="prep" />
             <div className="grow">
-              <div className="strong">{prepOpen.length ? `${prepOpen.length} kitchen prep item${prepOpen.length > 1 ? "s" : ""} outstanding` : "Kitchen prep handover"}</div>
-              <div style={{ fontSize: 13 }}>{prepOpen.length ? `${prepOpen.filter((e) => e.urgent).length ? `${prepOpen.filter((e) => e.urgent).length} urgent · ` : ""}Open the report and tick them off` : "Closing? Tap what the next shift needs to prep"}</div>
+              <div className="strong">{toDo.length ? `${toDo.length} handover item${toDo.length > 1 ? "s" : ""} to do` : "Shift handover"}</div>
+              <div style={{ fontSize: 13 }}>{toDo.length ? (urgent ? `${urgent} urgent · ` : "") + "Open Handover and tick them off" : "Closing? Tap what the next shift needs to prep"}</div>
             </div>
           </Link>
         )}

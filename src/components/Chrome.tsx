@@ -1,6 +1,4 @@
 import Link from "next/link";
-import { store } from "@/lib/data";
-import { canUsePrep } from "@/lib/domain/prep";
 import { signOut } from "@/app/actions";
 import type { Ctx } from "@/lib/session";
 import { Icon } from "./Icon";
@@ -18,15 +16,13 @@ export function TopBar({ ctx }: { ctx: Ctx }) {
   );
 }
 
-export async function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "prep" | "handover" | "owner" }) {
-  const prep = canUsePrep(ctx.access) && (await store().prepEnabledSites()).includes(ctx.site.id);
+export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "owner" }) {
   const item = (href: string, id: typeof current, label: string, icon: string) => (
     <Link href={href} aria-current={current === id ? "page" : undefined}><Icon name={icon} />{label}</Link>
   );
   return (
     <nav className="nav" aria-label="Main">
       {item("/today", "today", "Today", "today")}
-      {prep && item("/prep/report", "prep", "Prep", "prep")}
       {item("/handover", "handover", "Handover", "handover")}
       {ctx.isOwner && item("/owner", "owner", "Owner", "owner")}
     </nav>

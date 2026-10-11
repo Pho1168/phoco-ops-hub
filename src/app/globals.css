@@ -186,3 +186,5 @@ main.wide { max-width: 1100px; }
 .prep-report li.urgent { outline: 2px solid var(--bad); }
 .prep-name { font-weight: 700; font-size: 17px; margin-top: 4px; }
 .prep-note { font-size: 13px; color: var(--ink-2); margin-top: 2px; }
+.prep-report li.info { background: var(--surface-2); }
+.note-body { font-weight: 600; font-size: 16px; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }

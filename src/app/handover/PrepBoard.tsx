@@ -12,7 +12,9 @@ interface Props {
   items: PrepItem[]; shift: PrepShift; picks: Record<string, Pick>;
   /** Still outstanding from the last handover: they carry over by themselves. */
   carried: Record<string, Pick>;
-  draftBy?: string; latestId?: string;
+  draftBy?: string;
+  /** Notes that go on this handover with the prep items. */
+  notesGoing: number;
 }
 
 export function PrepBoard(p: Props) {
@@ -60,14 +62,14 @@ export function PrepBoard(p: Props) {
     setErr("");
     const r = await prepSubmit();
     if (!r.ok) { setErr(r.error); return; }
-    router.push(`/prep/report?id=${r.id}&sent=1`);
+    router.push("/handover?sent=1");
   });
 
   const header = (
     <div ref={topRef} className="stack" style={{ gap: 12, scrollMarginTop: 70 }}>
       <div className="row wrap" style={{ alignItems: "flex-end" }}>
         <div className="grow">
-          <div className="eyebrow"><Link href="/today">Today</Link> · {p.siteName} · kitchen prep handover</div>
+          <div className="eyebrow"><Link href="/handover">Handover</Link> · {p.siteName} · prep</div>
           <h1 className="h-display">{mode === "pick" ? "What's needed?" : "Check and send"}</h1>
         </div>
         {p.sites.length > 1 && (
@@ -112,6 +114,11 @@ export function PrepBoard(p: Props) {
               <div className="card muted">Not done from the last handover. These go on this handover by themselves: {carriedOnly.map((id) => name.get(id)).join(", ")}.</div>
             </section>
           )}
+          {p.notesGoing > 0 && (
+            <div className="card muted">
+              {p.notesGoing} note{p.notesGoing > 1 ? "s go" : " goes"} with this handover. <Link href="/handover">See or add notes</Link>
+            </div>
+          )}
           <div className="card stack confirm-box">
             <div className="strong">The other {stocked} item{stocked === 1 ? " is" : "s are"} stocked</div>
             <div className="muted">Sending this handover records that you checked the rest of the list and nothing else is needed.</div>
@@ -133,10 +140,10 @@ export function PrepBoard(p: Props) {
     <>
       <main>
         {header}
-        {p.latestId && Object.keys(p.carried).length > 0 && (
-          <Link href={`/prep/report?id=${p.latestId}`} className="alert" style={{ textDecoration: "none" }}>
+        {Object.keys(p.carried).length > 0 && (
+          <Link href="/handover" className="alert" style={{ textDecoration: "none" }}>
             <div className="grow"><div className="strong">{Object.keys(p.carried).length} still outstanding from the last handover</div>
-              <div style={{ fontSize: 13 }}>They carry over by themselves. Tap to see the report.</div></div>
+              <div style={{ fontSize: 13 }}>They carry over by themselves. Tap to see them on the Handover tab.</div></div>
           </Link>
         )}
         <div className="prep-tools">
