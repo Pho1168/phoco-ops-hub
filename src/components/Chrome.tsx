@@ -17,6 +17,20 @@ export function TopBar({ ctx }: { ctx: Ctx }) {
   );
 }
 
+/** The header on a staff member's own phone (My shifts scope): back to My shifts, sign out. */
+export function PhoneTopBar({ ctx }: { ctx: Ctx }) {
+  return (
+    <header className="top">
+      <div className="logo">PHO &amp; CO</div>
+      <div className="who">
+        <span>{ctx.person.name}</span>
+        <Link className="pill-btn" href="/me">My shifts</Link>
+        <form action={signOut}><button className="pill-btn" type="submit">Sign out</button></form>
+      </div>
+    </header>
+  );
+}
+
 export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "rota" | "owner" | "manage" }) {
   const item = (href: string, id: typeof current, label: string, icon: string) => (
     <Link href={href} aria-current={current === id ? "page" : undefined}><Icon name={icon} />{label}</Link>

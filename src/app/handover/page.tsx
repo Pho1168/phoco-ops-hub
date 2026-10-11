@@ -2,6 +2,7 @@ import Link from "next/link";
 import { store } from "@/lib/data";
 import { currentNotes, noteOrder } from "@/lib/domain/handover";
 import { reportOrder, shiftLabel } from "@/lib/domain/prep";
+import { faultsOf, sinceText, SEVERITY_LABEL } from "@/lib/domain/equipment";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { HandoverList } from "./HandoverList";
 import { NoteForm } from "./NoteForm";
@@ -20,12 +21,17 @@ export default async function Handover({ searchParams }: { searchParams: { sent?
   const { ctx, prepOn } = await handoverPage();
   const db = store();
   const now = Date.now();
-  const [items, history, draft, notes] = await Promise.all([
+  const [items, history, draft, notes, kit, kitOpen] = await Promise.all([
     prepOn ? db.prepItems() : Promise.resolve([]),
     prepOn ? db.prepHandovers(ctx.site.id, 15) : Promise.resolve([]),
     prepOn ? db.prepDraft(ctx.site.id) : Promise.resolve(undefined),
     db.handover(ctx.site.id),
+    db.equipment(ctx.site.id),
+    db.equipmentEvents({ siteId: ctx.site.id, openFaultsOnly: true }),
   ]);
+  const kitName = new Map(kit.map((e) => [e.id, e.name]));
+  const kitFaults = faultsOf(kitOpen).filter((f) => kitName.has(f.fault.equipmentId))
+    .sort((a, b) => (a.fault.severity === b.fault.severity ? a.fault.createdAt - b.fault.createdAt : a.fault.severity === "down" ? -1 : 1));
   const latest = history[0];
   const byId = new Map(items.map((i) => [i.id, i]));
   const sentTimes = history.map((h) => h.submittedAt!);
@@ -74,6 +80,21 @@ export default async function Handover({ searchParams }: { searchParams: { sent?
         <HandoverList handoverId={latest?.id} open={open} done={done} canAct />
 
         <NoteForm />
+
+        <section className="stack" aria-label="Equipment problems">
+          <div className="row"><h2 className="h-sec grow">Equipment</h2><Link className="btn ghost small" href="/equipment">Report a problem</Link></div>
+          {kitFaults.length === 0
+            ? <div className="muted">No equipment problems open.</div>
+            : kitFaults.map((f) => (
+              <Link key={f.fault.id} href={`/equipment/${f.fault.equipmentId}`} className="list-btn">
+                <span className="grow">
+                  <span className="strong" style={{ display: "block" }}>{kitName.get(f.fault.equipmentId)}: {f.fault.body}</span>
+                  <span className="muted">{f.fault.createdByName} · {sinceText(f.fault.createdAt, now)} ago{f.updates.length ? ` · ${f.updates[f.updates.length - 1].body}` : ""}</span>
+                </span>
+                <span className={`chip ${f.fault.severity === "down" ? "bad" : "warn"}`}>{SEVERITY_LABEL[f.fault.severity!]}</span>
+              </Link>
+            ))}
+        </section>
 
         {prepOn && (
           <Link href="/handover/prep" className="list-btn" style={{ textDecoration: "none" }}>

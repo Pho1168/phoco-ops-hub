@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { pairDevice, staffIdSignIn } from "@/app/actions";
 
-export function SetupScreen({ removed }: { removed: boolean }) {
+export function SetupScreen({ removed, returnTo }: { removed: boolean; returnTo?: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [code, setCode] = useState("");
@@ -43,7 +43,7 @@ export function SetupScreen({ removed }: { removed: boolean }) {
         e.preventDefault();
         start(async () => {
           const r = await staffIdSignIn(staff, pin);
-          if (r.ok) router.replace("/"); else { setOwnerErr(r.error); setPin(""); }
+          if (r.ok) router.replace(returnTo ?? "/"); else { setOwnerErr(r.error); setPin(""); }
         });
       }}>
         <h2 className="h-sec">Sign in with your staff ID</h2>

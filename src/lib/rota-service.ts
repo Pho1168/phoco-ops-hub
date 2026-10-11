@@ -5,6 +5,7 @@ import type { RotaResult, Store } from "@/lib/data/store";
 import type { SiteId } from "@/lib/domain/types";
 import { pushToPerson } from "@/lib/push";
 import { certReminderMessages, CERT_REMINDER_FROM, CERT_REMINDER_UNTIL } from "@/lib/domain/certificates";
+import { serviceReminderMessages } from "@/lib/domain/equipment";
 import { normalizeStaffCode } from "@/lib/domain/staff";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
@@ -69,7 +70,10 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
       if (await db.queueNotice({ personId, kind: "evening", title: n.title, body: n.body, dedupeKey: `evening|${personId}|${tomorrow}`, sendAfter: now })) queued++;
     }
   }
-  if (hm >= CERT_REMINDER_FROM && hm < CERT_REMINDER_UNTIL) queued += await queueCertReminders(now);
+  if (hm >= CERT_REMINDER_FROM && hm < CERT_REMINDER_UNTIL) {
+    queued += await queueCertReminders(now);
+    queued += await queueServiceReminders(now);
+  }
   return { queued, sent: await deliverDue(now) };
 }
 
@@ -92,4 +96,18 @@ export async function deliverDue(now = Date.now()): Promise<number> {
     await db.markNoticeSent(n.id);
   }
   return sent;
+}
+
+/** Equipment services due within two weeks, or overdue: managers of the site are told once per due date. */
+export async function queueServiceReminders(now = Date.now(), db: Store = store()): Promise<number> {
+  const sites = (await db.sites()).filter((s) => s.status === "open");
+  const people = await db.people();
+  let queued = 0;
+  for (const site of sites) {
+    const [kit, events] = await Promise.all([db.equipment(site.id), db.equipmentEvents({ siteId: site.id })]);
+    for (const m of serviceReminderMessages(kit, events, people, { [site.id]: site.name }, londonDate(now))) {
+      if (await db.queueNotice({ personId: m.personId, kind: "service", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now) })) queued++;
+    }
+  }
+  return queued;
 }

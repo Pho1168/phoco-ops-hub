@@ -37,6 +37,8 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
   - **Time off**: staff ask from My shifts (holiday, unpaid, other); managers of the site approve or decline with a note, and see any rota shifts on those days. Approved time off shows as "Off" on the team rota, and shifts that clash are outlined for managers. The rota sheet is never changed by the app.
   - **Certificates**: food hygiene (Level 2 and 3), allergens, first aid, fire marshal and other training per person, with issue and expiry dates (expiry suggested from a 3-year refresher cycle). A matrix of who holds what, what's run out or running out, and whether each site has a first aider, a Level 3 supervisor and a fire marshal. Reminders at 9am, 30 and 7 days before and just after the date, to the person and their managers. **Right to work** checks are for owners only and store dates, not document numbers. Nothing is deleted: a mistake is marked removed. Staff see their own certificates on My shifts.
 
+- **Equipment and maintenance**: each site's register of kit (fridges, freezers, fryers, probes and so on) with where it is, who services it and how often. Anyone working at the site reports a problem from the tablet, their own phone, or by scanning the **QR label** on the kit (Manage → Equipment → Print QR labels); managers are told straight away. "Not working" kit shows at the top of Today and on the Handover tab until someone marks it fixed and says what was done. Managers log services; reminders go two weeks before a service is due and when it's overdue. The weekly report counts problems and hours out of service. The history is append-only and kit is retired, never deleted.
+
 Not built yet: Wembley batch codes, labels, dispatch and receiving, and the remaining MVP features. See the PRD.
 
 ## Try it (demo mode)
@@ -70,7 +72,7 @@ Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, manager and s
 |---|---|
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build / serve |
-| `npm test` | Unit tests for the rules (temperatures, sign-off, access, rota, PINs, prep, records, reports, notices, time off, certificates) and the reminder scheduler on demo data |
+| `npm test` | Unit tests for the rules (temperatures, sign-off, access, rota, PINs, prep, records, reports, notices, time off, certificates, equipment) and the reminder scheduler on demo data |
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
 | `npm run person:add` | Create or update a person, their site access and PIN (see above) |

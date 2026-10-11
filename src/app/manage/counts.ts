@@ -1,6 +1,7 @@
 import { store } from "@/lib/data";
 import { isLive } from "@/lib/domain/notices";
 import { issueCount, peopleInCare } from "@/lib/domain/certificates";
+import { openFaults, serviceState } from "@/lib/domain/equipment";
 import { londonDate } from "@/lib/domain/time";
 import type { Person, SiteId } from "@/lib/domain/types";
 import type { ManageCounts } from "./ManageTiles";
@@ -15,9 +16,18 @@ export async function manageCounts(actor: Pick<Person, "access">): Promise<Manag
     db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(),
   ]);
   const openManaged = sites.filter((s) => s.status === "open" && managed.includes(s.id)).map((s) => s.id);
+  let equipmentIssues = 0;
+  for (const siteId of openManaged) {
+    const [kit, events] = await Promise.all([db.equipment(siteId), db.equipmentEvents({ siteId })]);
+    for (const eq of kit) {
+      const mine = events.filter((e) => e.equipmentId === eq.id);
+      equipmentIssues += openFaults(mine).length + (serviceState(eq, mine, today).status === "overdue" ? 1 : 0);
+    }
+  }
   return {
     timeOffPending: pending.length,
     noticesActive: notices.filter((n) => isLive(n, today) && (!n.siteId || managed.includes(n.siteId))).length,
     certIssues: issueCount(peopleInCare(actor, people), certs, today, isOwner, openManaged),
+    equipmentIssues,
   };
 }

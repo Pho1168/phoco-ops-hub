@@ -1,6 +1,7 @@
 import { store } from "@/lib/data";
 import { datesBetween, readingLog, signoffLog } from "@/lib/domain/records";
 import { siteWeekReport, type SiteWeekReport } from "@/lib/domain/report";
+import { faultsOf } from "@/lib/domain/equipment";
 import { addDays, londonDate, londonToUtc } from "@/lib/domain/time";
 import type { Site } from "@/lib/domain/types";
 
@@ -12,13 +13,17 @@ export async function loadSiteReport(site: Site, week: string, now = Date.now())
   const today = londonDate(now);
   const lastWeek = addDays(week, -7);
   const to = addDays(week, 6) < today ? addDays(week, 6) : today;
-  const [data, notes, prepOn, shifts, lastShifts] = await Promise.all([
+  const [data, notes, prepOn, shifts, lastShifts, kit, kitEvents] = await Promise.all([
     db.recordsData(site.id, lastWeek, to < lastWeek ? lastWeek : to),
     db.handover(site.id, londonToUtc(lastWeek, "00:00")),
     db.prepEnabledSites().then((s) => s.includes(site.id)),
     db.teamShifts(site.id, week),
     db.teamShifts(site.id, lastWeek),
+    db.equipment(site.id, true),
+    db.equipmentEvents({ siteId: site.id }),
   ]);
+  const kitName = new Map(kit.map((e) => [e.id, e.name]));
+  const faults = faultsOf(kitEvents).map((f) => ({ equipment: kitName.get(f.fault.equipmentId) ?? "Equipment", severity: f.fault.severity!, createdAt: f.fault.createdAt, fixedAt: f.fixed?.createdAt }));
   const prep = prepOn ? await db.prepHandovers(site.id, 60) : [];
   const readings = readingLog(data.answers);
 
@@ -34,6 +39,7 @@ export async function loadSiteReport(site: Site, week: string, now = Date.now())
       notes: notes.filter((n) => n.createdAt >= from && n.createdAt < until),
       prep: prep.filter((h) => h.submittedAt && h.submittedAt >= from && h.submittedAt < until).map((h) => ({ submittedAt: h.submittedAt!, entries: h.entries })),
       shifts: weekShifts,
+      faults: faults.filter((f) => f.createdAt < until),
     });
   };
   return { site, week: one(week, shifts), last: one(lastWeek, lastShifts), people: Array.from(new Set(shifts.map((s) => s.personId))) };

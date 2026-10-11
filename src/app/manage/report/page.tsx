@@ -35,7 +35,7 @@ function SiteBlock({ name, id, r, last, week }: { name: string; id: string; r: S
         </ul>
       ) : <div className="alert good"><Icon name="check" /><div className="strong">Nothing needs attention this week.</div></div>}
 
-      {!(!r.started && !r.alerts.raised && !r.handover.notes && !r.prep.sent && !r.rota.shifts) && <div className="kpis">
+      {!(!r.started && !r.alerts.raised && !r.handover.notes && !r.prep.sent && !r.rota.shifts && !r.equipment.reported && !r.equipment.open) && <div className="kpis">
         {r.started && <div className="kpi">
           <div className="muted">Checklists signed on time</div>
           <div className="stat">{r.checks.onTimeRate === null ? "–" : `${r.checks.onTimeRate}%`}</div>
@@ -63,6 +63,11 @@ function SiteBlock({ name, id, r, last, week }: { name: string; id: string; r: S
           <div className="stat">{r.prep.sent}</div>
           <div className="muted">{r.prep.needed} items asked for · {r.prep.carried} not done by the next shift</div>
         </div>
+        {(r.equipment.reported > 0 || r.equipment.open > 0) && <div className="kpi">
+          <div className="muted">Equipment problems</div>
+          <div className="stat" style={{ color: r.equipment.stillDown.length ? "var(--bad)" : undefined }}>{r.equipment.reported}</div>
+          <div className="muted">reported · {r.equipment.fixed} fixed · {r.equipment.open} still open{r.equipment.downHours ? ` · ${fmt(r.equipment.downHours)} h out of service` : ""}</div>
+        </div>}
         <div className="kpi">
           <div className="muted">Planned hours (rota)</div>
           <div className="stat">{r.rota.hours === null ? "–" : fmt(r.rota.hours)}</div>

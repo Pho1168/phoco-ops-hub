@@ -6,13 +6,14 @@ import type { ListInfo, RawAnswer, RunInfo } from "@/lib/domain/records";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
 import type { Certificate } from "@/lib/domain/certificates";
+import type { Equipment, EquipmentEvent, EquipmentInput } from "@/lib/domain/equipment";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
 /** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
-export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report";
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service";
 export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
@@ -139,6 +140,18 @@ export interface Store {
   addCertificate(c: Omit<Certificate, "id" | "createdAt" | "createdByName">): Promise<string>;
   /** Marks a record removed (added by mistake). False if it isn't there or is already removed. */
   removeCertificate(id: string, personId: string): Promise<boolean>;
+
+  // Equipment (retired, never deleted) and its append-only history
+  /** The site's equipment by name; retired kit only when asked. */
+  equipment(siteId: SiteId, includeRetired?: boolean): Promise<Equipment[]>;
+  equipmentItem(id: string): Promise<Equipment | undefined>;
+  addEquipment(e: EquipmentInput & { siteId: SiteId; createdBy: string }): Promise<string>;
+  updateEquipment(id: string, e: EquipmentInput): Promise<boolean>;
+  retireEquipment(id: string, personId: string): Promise<boolean>;
+  /** History, oldest first: for one item or a site, optionally since a time, or only faults still open (with their updates). */
+  equipmentEvents(filter: { equipmentId?: string; siteId?: SiteId; since?: number; openFaultsOnly?: boolean }): Promise<EquipmentEvent[]>;
+  /** Adds to the history. Returns undefined if the fault has already been fixed (a fault is fixed once). */
+  addEquipmentEvent(e: Omit<EquipmentEvent, "id" | "createdAt" | "createdByName">): Promise<string | undefined>;
 
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;

@@ -10,6 +10,7 @@ const PATHS: Record<string, React.ReactNode> = {
   notice: <><path d="M3 11l15-6v14L3 13z" /><path d="M18 9a3 3 0 0 1 0 6" /><path d="M7 13.5V18a2 2 0 0 0 4 0v-3" /></>,
   timeoff: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="M4.9 4.9l1.4 1.4" /><path d="M17.7 17.7l1.4 1.4" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="M4.9 19.1l1.4-1.4" /><path d="M17.7 6.3l1.4-1.4" /></>,
   cert: <><circle cx="12" cy="9" r="6" /><path d="M8.5 13.5L7 22l5-3 5 3-1.5-8.5" /></>,
+  wrench: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   back: <path d="M15 18l-6-6 6-6" />,
   check: <path d="M5 12l5 5 9-10" />,

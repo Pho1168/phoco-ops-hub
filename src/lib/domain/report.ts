@@ -1,5 +1,6 @@
 import type { ReadingEntry, SignoffRow } from "./records";
 import type { TeamShift } from "./rota";
+import { londonToUtc } from "./time";
 
 /**
  * The owner's weekly report for one site: checks, temperatures, alerts, handovers, prep and planned hours,
@@ -9,6 +10,7 @@ import type { TeamShift } from "./rota";
 export interface ReportAlert { createdAt: number; resolvedAt?: number; level: "warning" | "critical" }
 export interface ReportNote { createdAt: number; closedAt?: number; needsAction: boolean; category: string }
 export interface ReportPrep { submittedAt: number; entries: { status: "outstanding" | "completed" | "carried"; carriedFrom?: string }[] }
+export interface ReportFault { equipment: string; severity: "down" | "attention"; createdAt: number; fixedAt?: number }
 
 export interface SiteWeekInput {
   week: string; now: number;
@@ -16,6 +18,8 @@ export interface SiteWeekInput {
   trackingFrom?: string;
   readings: ReadingEntry[]; signoffs: SignoffRow[]; alerts: ReportAlert[];
   notes: ReportNote[]; prep: ReportPrep[]; shifts: TeamShift[];
+  /** Equipment problems at the site (any that were open during the week). */
+  faults?: ReportFault[];
 }
 
 export interface Attention { level: "critical" | "warn" | "info"; text: string }
@@ -28,6 +32,7 @@ export interface SiteWeekReport {
   handover: { notes: number; actions: number; actionsDone: number; slow: number };
   prep: { sent: number; needed: number; carried: number };
   rota: { shifts: number; people: number; hours: number | null; byDay: number[]; bySection: { section: string; hours: number }[] };
+  equipment: { reported: number; fixed: number; open: number; downHours: number; stillDown: { equipment: string; since: number }[] };
   attention: Attention[];
 }
 
@@ -67,6 +72,14 @@ export function siteWeekReport(x: SiteWeekInput): SiteWeekReport {
   const sections = new Map<string, number>();
   for (const s of x.shifts) sections.set(s.section, (sections.get(s.section) ?? 0) + (s.hours ?? 0));
 
+  // Equipment: the week runs Monday 00:00 to the next Monday 00:00 London, or to now for the current week.
+  const from = londonToUtc(x.week, "00:00");
+  const end = Math.min(londonToUtc(addDaysLocal(x.week, 7), "00:00"), x.now);
+  const faults = x.faults ?? [];
+  const openAtEnd = faults.filter((f) => f.createdAt < end && (!f.fixedAt || f.fixedAt > end));
+  const downMs = faults.filter((f) => f.severity === "down")
+    .reduce((t, f) => t + Math.max(0, Math.min(f.fixedAt ?? end, end) - Math.max(f.createdAt, from)), 0);
+
   const report: SiteWeekReport = {
     started: !!x.trackingFrom,
     checks: { expected: counted.length, onTime, late, notSigned: notSigned.length, onTimeRate: pct(onTime, counted.length), worst: worst.slice(0, 5) },
@@ -78,6 +91,13 @@ export function siteWeekReport(x: SiteWeekInput): SiteWeekReport {
       shifts: x.shifts.length, people: new Set(x.shifts.map((s) => s.personId)).size, hours,
       byDay: days.map((d) => round2(x.shifts.filter((s) => s.date === d).reduce((t, s) => t + (s.hours ?? 0), 0))),
       bySection: Array.from(sections.entries()).map(([section, h]) => ({ section, hours: round2(h) })).sort((a, b) => a.section.localeCompare(b.section)),
+    },
+    equipment: {
+      reported: faults.filter((f) => f.createdAt >= from && f.createdAt < end).length,
+      fixed: faults.filter((f) => f.fixedAt && f.fixedAt >= from && f.fixedAt < end).length,
+      open: openAtEnd.length,
+      downHours: round1(downMs / 3_600_000),
+      stillDown: openAtEnd.filter((f) => f.severity === "down").map((f) => ({ equipment: f.equipment, since: f.createdAt })).sort((a, b) => a.since - b.since),
     },
     attention: [],
   };
@@ -92,6 +112,10 @@ function attentionList(r: SiteWeekReport, x: SiteWeekInput): Attention[] {
   const noAction = x.readings.filter((e) => (e.outcome === "warn" || e.outcome === "bad") && !e.action).length;
   if (noAction) a.push({ level: "critical", text: `${s(noAction, "temperature reading")} outside the limits with no corrective action recorded` });
   if (r.alerts.open) a.push({ level: "critical", text: `${s(r.alerts.open, "alert")} still open` });
+  for (const d of r.equipment.stillDown.slice(0, 3)) {
+    const days = Math.floor((x.now - d.since) / DAY);
+    a.push({ level: "critical", text: `${d.equipment} not working${days >= 1 ? ` for ${s(days, "day")}` : ""}` });
+  }
   if (!r.started) a.push({ level: "info", text: "Checklists haven't been used here yet. Set up the shop tablet to start recording" });
   for (const w of r.checks.worst.slice(0, 3)) a.push({ level: "warn", text: `${w.listName} not signed off on ${s(w.missed, "day")}` });
   for (const w of r.temps.worst.filter((w) => w.count >= 2).slice(0, 2)) a.push({ level: "warn", text: `${w.itemText} out of range ${w.count} times: worth checking the unit` });

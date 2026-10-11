@@ -9,6 +9,7 @@ import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff } from "@/lib/domain/timeoff";
 import type { Certificate } from "@/lib/domain/certificates";
+import type { Equipment, EquipmentEvent } from "@/lib/domain/equipment";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -72,6 +73,8 @@ interface State {
   teamNotices: TeamNotice[];
   timeOff: TimeOff[];
   certificates: (Certificate & { removedAt?: number; removedBy?: string })[];
+  equipment: Equipment[];
+  equipmentEvents: EquipmentEvent[];
 }
 
 /** Sample records so the certificates screens have something to show in demo mode. */
@@ -87,6 +90,28 @@ function demoCertificates(): Certificate[] {
     c("DEMO-MGR", "food_hygiene_l2", -500, 595), c("DEMO-MGR", "food_hygiene_l3", -500, 595, "CIEH"), c("DEMO-MGR", "allergen", -100, 995), c("DEMO-MGR", "fire_marshal", -60, 1035), c("DEMO-MGR", "right_to_work", -700),
     c("DEMO-PRD", "food_hygiene_l2", -90, 1005), c("DEMO-PRD", "right_to_work", -340, 20),
   ];
+}
+
+/** Sample kit for demo mode: a fridge with a fault, a fryer that's had its service. */
+function demoEquipment(): { equipment: Equipment[]; equipmentEvents: EquipmentEvent[] } {
+  const now = Date.now();
+  const today = londonDate(now);
+  const eq = (id: string, siteId: SiteId, name: string, kind: Equipment["kind"], location: string, serviceEveryMonths?: number, serviceContact?: string): Equipment =>
+    ({ id, siteId, name, kind, location, serviceEveryMonths, serviceContact, createdAt: now - 30 * 86_400_000 });
+  return {
+    equipment: [
+      eq("demo-eq-1", "EAS", "Walk-in fridge", "fridge", "Kitchen, back wall", 6, "Cold Co Refrigeration (demo)"),
+      eq("demo-eq-2", "EAS", "Fryer 2", "cooking", "Kitchen, hot line", 12, "Fry Fix Ltd (demo)"),
+      eq("demo-eq-3", "EAS", "Glasswasher", "dishwasher", "Bar"),
+      eq("demo-eq-4", "EAS", "Probe thermometer", "probe", "Pass"),
+      eq("demo-eq-5", "WEM", "Blast chiller", "fridge", "Production room", 6, "Cold Co Refrigeration (demo)"),
+    ],
+    equipmentEvents: [
+      { id: "demo-ev-1", equipmentId: "demo-eq-2", siteId: "EAS", kind: "service", body: "Annual service. Thermostat checked", doneOn: addDaysIso(today, -355), createdBy: "DEMO-MGR", createdAt: now - 355 * 86_400_000 },
+      { id: "demo-ev-2", equipmentId: "demo-eq-1", siteId: "EAS", kind: "service", body: "Gaskets replaced", doneOn: addDaysIso(today, -100), createdBy: "DEMO-MGR", createdAt: now - 100 * 86_400_000 },
+      { id: "demo-ev-3", equipmentId: "demo-eq-3", siteId: "EAS", kind: "fault", severity: "attention", body: "Leaking a little from the door", createdBy: "DEMO-FOH", createdAt: now - 26 * 3_600_000 },
+    ],
+  };
 }
 
 function seed(): State {
@@ -117,7 +142,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(),
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(),
   };
 }
 
@@ -373,6 +398,41 @@ export const demoStore: Store = {
     const c = S().certificates.find((x) => x.id === id && !x.removedAt);
     if (!c) return false;
     c.removedAt = Date.now(); c.removedBy = personId; return true;
+  },
+
+  async equipment(siteId, includeRetired = false) {
+    return S().equipment.filter((e) => e.siteId === siteId && (includeRetired || !e.retiredAt)).sort((a, b) => a.name.localeCompare(b.name)).map((e) => ({ ...e }));
+  },
+  async equipmentItem(id) { const e = S().equipment.find((x) => x.id === id); return e && { ...e }; },
+  async addEquipment(e) {
+    const id = randomUUID();
+    S().equipment.push({ id, siteId: e.siteId, name: e.name, kind: e.kind, location: e.location, makeModel: e.makeModel, serial: e.serial,
+      serviceEveryMonths: e.serviceEveryMonths, serviceContact: e.serviceContact, instructions: e.instructions, createdAt: Date.now() });
+    return id;
+  },
+  async updateEquipment(id, e) {
+    const x = S().equipment.find((y) => y.id === id && !y.retiredAt);
+    if (!x) return false;
+    Object.assign(x, { name: e.name, kind: e.kind, location: e.location, makeModel: e.makeModel, serial: e.serial, serviceEveryMonths: e.serviceEveryMonths, serviceContact: e.serviceContact, instructions: e.instructions });
+    return true;
+  },
+  async retireEquipment(id) {
+    const x = S().equipment.find((y) => y.id === id && !y.retiredAt);
+    if (!x) return false;
+    x.retiredAt = Date.now(); return true;
+  },
+  async equipmentEvents(f) {
+    const all = S().equipmentEvents;
+    const fixed = new Set(all.filter((e) => e.kind === "fixed").map((e) => e.faultId));
+    return all.filter((e) => (!f.equipmentId || e.equipmentId === f.equipmentId) && (!f.siteId || e.siteId === f.siteId) && (!f.since || e.createdAt >= f.since)
+      && (!f.openFaultsOnly || (e.kind === "fault" && !fixed.has(e.id)) || (e.kind === "update" && !fixed.has(e.faultId))))
+      .sort((a, b) => a.createdAt - b.createdAt).map((e) => ({ ...e, createdByName: nameOf(e.createdBy) ?? "" }));
+  },
+  async addEquipmentEvent(e) {
+    if (e.kind === "fixed" && S().equipmentEvents.some((x) => x.kind === "fixed" && x.faultId === e.faultId)) return undefined;
+    const id = randomUUID();
+    S().equipmentEvents.push({ ...e, id, createdAt: Date.now() });
+    return id;
   },
 
   async rotaSources() { return S().rotaSources.map((r) => ({ siteId: r.siteId, createdAt: r.createdAt, lastImportAt: r.lastImportAt, lastResult: r.lastResult })); },

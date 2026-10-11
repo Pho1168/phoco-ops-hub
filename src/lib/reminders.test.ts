@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { demoStore, resetDemo } from "@/lib/data/demo-store";
-import { queueCertReminders } from "@/lib/rota-service";
+import { queueCertReminders, queueServiceReminders } from "@/lib/rota-service";
 import { londonDate, londonToUtc } from "@/lib/domain/time";
 
 // Runs against the in-memory demo store only (passed in), never a real database.
@@ -16,6 +16,15 @@ describe("certificate reminders on the scheduler", () => {
     expect(await titles("DEMO-PRD")).toEqual([]); // right to work never goes to the person
     expect(await titles("DEMO-MGR")).toEqual(["BOH staff (demo): Food hygiene Level 2 has run out", "FOH staff (demo): Allergen awareness runs out in 15 days"]);
     expect(await titles("DEMO-OWN")).toHaveLength(3);
+    resetDemo();
+  });
+  it("reminds managers about a service due soon, once", async () => {
+    resetDemo();
+    const now = londonToUtc(londonDate(Date.now()), "09:05");
+    expect(await queueServiceReminders(now, demoStore)).toBe(2); // Fryer 2 at Eastcote: the Eastcote manager and the owner
+    expect(await queueServiceReminders(now, demoStore)).toBe(0);
+    const mgr = (await demoStore.notices("DEMO-MGR", 20)).filter((n) => n.kind === "service");
+    expect(mgr[0]?.title).toMatch(/^Service due in \d+ days: Fryer 2 \(Eastcote\)$/);
     resetDemo();
   });
 });

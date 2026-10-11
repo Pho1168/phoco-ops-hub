@@ -5,6 +5,7 @@ import type { RawAnswer } from "@/lib/domain/records";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
 import type { Certificate, CertKind } from "@/lib/domain/certificates";
+import type { Equipment, EquipmentEvent, EquipmentKind, EventKind, Severity } from "@/lib/domain/equipment";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -34,6 +35,14 @@ const isUuid = (s: string) => UUID.test(s);
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : undefined);
 const num = (v: string | null) => (v === null ? undefined : Number(v));
 const opt = <T,>(v: T | null) => (v === null ? undefined : v);
+
+interface EqRow { id: string; site_id: SiteId; name: string; kind: EquipmentKind; location: string | null; make_model: string | null; serial: string | null;
+  service_every_months: number | null; service_contact: string | null; instructions: string | null; created_at: Date; retired_at: Date | null }
+const eqFrom = (r: EqRow): Equipment => ({
+  id: r.id, siteId: r.site_id, name: r.name, kind: r.kind, location: opt(r.location), makeModel: opt(r.make_model), serial: opt(r.serial),
+  serviceEveryMonths: opt(r.service_every_months), serviceContact: opt(r.service_contact), instructions: opt(r.instructions),
+  createdAt: r.created_at.getTime(), retiredAt: ms(r.retired_at),
+});
 
 interface CertRow { id: string; person_id: string; kind: CertKind; issued_on: string | null; expires_on: string | null; provider: string | null; reference: string | null;
   note: string | null; created_by: string; created_by_name: string; created_at: Date }
@@ -640,6 +649,67 @@ export const sqlStore: Store = {
     if (!isUuid(id)) return false;
     const q = sql();
     return (await q`update staff_certificates set removed_at = now(), removed_by = ${personId} where id = ${id} and removed_at is null returning id`).length > 0;
+  },
+
+  // ---------- equipment ----------
+  async equipment(siteId, includeRetired = false) {
+    const q = sql();
+    const rows = await q<EqRow[]>`select * from equipment where site_id = ${siteId} ${includeRetired ? q`` : q`and retired_at is null`} order by lower(name)`;
+    return rows.map(eqFrom);
+  },
+  async equipmentItem(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<EqRow[]>`select * from equipment where id = ${id}`;
+    return r && eqFrom(r);
+  },
+  async addEquipment(e) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into equipment (site_id, name, kind, location, make_model, serial, service_every_months, service_contact, instructions, created_by)
+      values (${e.siteId}, ${e.name}, ${e.kind}, ${e.location ?? null}, ${e.makeModel ?? null}, ${e.serial ?? null}, ${e.serviceEveryMonths ?? null},
+              ${e.serviceContact ?? null}, ${e.instructions ?? null}, ${e.createdBy}) returning id`;
+    return r.id;
+  },
+  async updateEquipment(id, e) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update equipment set name = ${e.name}, kind = ${e.kind}, location = ${e.location ?? null}, make_model = ${e.makeModel ?? null}, serial = ${e.serial ?? null},
+                      service_every_months = ${e.serviceEveryMonths ?? null}, service_contact = ${e.serviceContact ?? null}, instructions = ${e.instructions ?? null}, updated_at = now()
+                    where id = ${id} and retired_at is null returning id`).length > 0;
+  },
+  async retireEquipment(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update equipment set retired_at = now(), retired_by = ${personId} where id = ${id} and retired_at is null returning id`).length > 0;
+  },
+  async equipmentEvents(f) {
+    if (f.equipmentId && !isUuid(f.equipmentId)) return [];
+    const q = sql();
+    const rows = await q<{ id: string; equipment_id: string; site_id: SiteId; kind: EventKind; fault_id: string | null; severity: Severity | null; body: string;
+      done_on: string | null; created_by: string; created_by_name: string; created_at: Date }[]>`
+      select e.id, e.equipment_id, e.site_id, e.kind, e.fault_id, e.severity, e.body, to_char(e.done_on, 'YYYY-MM-DD') as done_on,
+        e.created_by, p.display_name as created_by_name, e.created_at
+      from equipment_events e join people p on p.id = e.created_by
+      where true
+        ${f.equipmentId ? q`and e.equipment_id = ${f.equipmentId}` : q``}
+        ${f.siteId ? q`and e.site_id = ${f.siteId}` : q``}
+        ${f.since ? q`and e.created_at >= ${new Date(f.since)}` : q``}
+        ${f.openFaultsOnly ? q`and ((e.kind = 'fault' and not exists (select 1 from equipment_events x where x.fault_id = e.id and x.kind = 'fixed'))
+                                 or (e.kind = 'update' and not exists (select 1 from equipment_events x where x.fault_id = e.fault_id and x.kind = 'fixed')))` : q``}
+      order by e.created_at`;
+    return rows.map((r): EquipmentEvent => ({
+      id: r.id, equipmentId: r.equipment_id, siteId: r.site_id, kind: r.kind, faultId: opt(r.fault_id), severity: opt(r.severity), body: r.body,
+      doneOn: opt(r.done_on), createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(),
+    }));
+  },
+  async addEquipmentEvent(e) {
+    const q = sql();
+    const rows = await q<{ id: string }[]>`
+      insert into equipment_events (equipment_id, site_id, kind, fault_id, severity, body, done_on, created_by)
+      values (${e.equipmentId}, ${e.siteId}, ${e.kind}, ${e.faultId ?? null}, ${e.severity ?? null}, ${e.body}, ${e.doneOn ?? null}, ${e.createdBy})
+      on conflict (fault_id) where kind = 'fixed' do nothing returning id`;
+    return rows[0]?.id;
   },
 
   // ---------- rota ----------

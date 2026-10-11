@@ -13,6 +13,8 @@ import { canEditCerts, certReminderMessages, certStatus, expectedKinds, issueCou
 import { canCancel, canDecide, clashes, daysOf, offOn, rangeLabel, validateRequest, type TimeOff } from "./timeoff";
 import { audienceLabel, canPostTo, inAudience, isLive, readStats, unreadFor, type TeamNotice } from "./notices";
 import { change, groupTotals, siteWeekReport, type SiteWeekInput } from "./report";
+import { addMonths, canUseEquipment, downHours, downSince, faultReportedMessages, faultsOf, openFaults, safeNextPath, serviceReminderMessages, serviceState, sinceText,
+  validateEquipment, validateService, EQUIPMENT_KINDS, type Equipment, type EquipmentEvent } from "./equipment";
 import { clampRange, datesBetween, readingLog, recordsSummary, signoffLog, type RawAnswer } from "./records";
 import { managedSites, canManage } from "./access";
 import { currentNotes, noteOrder, notesForHandover, INFO_NOTE_MAX_HOURS } from "./handover";
@@ -730,5 +732,105 @@ describe("staff certificates", () => {
     expect(issueCount([p], [c({ expiresOn: "2027-01-01" })], today, true)).toBe(2);  // allergen + right to work missing
     expect(issueCount([p], [c({ expiresOn: "2027-01-01" })], today, false)).toBe(1); // managers don't see right to work
     expect(issueCount([p], [c({ expiresOn: "2027-01-01" })], today, false, ["EAS"])).toBe(4); // + no first aider, Level 3 or fire marshal
+  });
+});
+
+describe("equipment and maintenance", () => {
+  const H = 3_600_000;
+  const t0 = Date.UTC(2026, 9, 12, 9); // Mon 12 Oct 2026, 10:00 London
+  const ev = (over: Partial<EquipmentEvent>): EquipmentEvent => ({ id: "e", equipmentId: "fr", siteId: "EAS", kind: "fault", severity: "down", body: "Not cooling", createdBy: "p", createdAt: t0, ...over });
+  const fridge: Equipment = { id: "fr", siteId: "EAS", name: "Walk-in fridge", kind: "fridge", serviceEveryMonths: 6, createdAt: 0 };
+  it("works out open problems, fixes and when it went down", () => {
+    const events = [ev({ id: "f1" }), ev({ id: "u1", kind: "update", faultId: "f1", severity: undefined, body: "Engineer booked", createdAt: t0 + H }),
+      ev({ id: "f2", severity: "attention", body: "Door seal torn", createdAt: t0 + 2 * H }), ev({ id: "x1", kind: "fixed", faultId: "f2", severity: undefined, body: "New seal", createdAt: t0 + 3 * H })];
+    const faults = faultsOf(events);
+    expect(faults.map((f) => f.fault.id)).toEqual(["f2", "f1"]); // newest first
+    expect(faults.find((f) => f.fault.id === "f1")?.updates.map((u) => u.body)).toEqual(["Engineer booked"]);
+    expect(openFaults(events).map((f) => f.fault.id)).toEqual(["f1"]);
+    expect(downSince(events)).toBe(t0);
+    expect(downSince([ev({ severity: "attention" })])).toBeUndefined(); // needs attention isn't "out of service"
+  });
+  it("counts hours out of service in a window, open problems up to the end", () => {
+    const events = [ev({ id: "f1", createdAt: t0 }), ev({ id: "x", kind: "fixed", faultId: "f1", severity: undefined, createdAt: t0 + 5 * H }), ev({ id: "f2", createdAt: t0 + 10 * H })];
+    expect(downHours(events, t0, t0 + 12 * H)).toBe(7); // 5 h fixed + 2 h still open
+    expect(downHours(events, t0 + 4 * H, t0 + 6 * H)).toBe(1);
+    expect(sinceText(t0, t0 + 30 * 60_000)).toBe("30 min");
+    expect(sinceText(t0, t0 + 5 * H)).toBe("5 h");
+    expect(sinceText(t0, t0 + 75 * H)).toBe("3 days");
+  });
+  it("adds months for service dates, keeping to the end of shorter months", () => {
+    expect(addMonths("2026-01-31", 1)).toBe("2026-02-28");
+    expect(addMonths("2026-08-15", 6)).toBe("2027-02-15");
+    expect(addMonths("2024-02-29", 12)).toBe("2025-02-28");
+  });
+  it("tracks when a service is due", () => {
+    const svc = (doneOn: string) => ev({ id: doneOn, kind: "service", severity: undefined, doneOn, body: "Serviced" });
+    expect(serviceState(fridge, [], "2026-10-12").status).toBe("unknown");
+    expect(serviceState({}, [svc("2026-01-01")], "2026-10-12").status).toBe("none");
+    expect(serviceState(fridge, [svc("2026-06-01")], "2026-10-12")).toEqual({ status: "ok", last: "2026-06-01", due: "2026-12-01" });
+    expect(serviceState(fridge, [svc("2026-04-20")], "2026-10-12").status).toBe("soon"); // due 20 Oct
+    expect(serviceState(fridge, [svc("2026-01-01"), svc("2026-04-01")], "2026-10-12").status).toBe("overdue"); // latest counts: due 1 Oct
+  });
+  it("checks the register and service dates", () => {
+    expect(validateEquipment({ name: "Fryer 2", kind: "cooking" }).ok).toBe(true);
+    expect(validateEquipment({ name: " ", kind: "cooking" }).ok).toBe(false);
+    expect(validateEquipment({ name: "Fryer", kind: "cooking", serviceEveryMonths: 0 }).ok).toBe(false);
+    expect(validateEquipment({ name: "Fryer", kind: "spaceship" as never }).ok).toBe(false);
+    expect(validateService("2026-10-12", "2026-10-12").ok).toBe(true);
+    expect(validateService("2026-10-13", "2026-10-12").ok).toBe(false);
+  });
+  it("tells the site's managers about a problem, not the person who reported it or other sites", () => {
+    const people = [
+      { id: "cook", status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: [] }] },
+      { id: "mgr", status: "active" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] },
+      { id: "wem", status: "active" as const, access: [{ siteId: "WEM" as const, role: "manager" as const, sections: [] }] },
+      { id: "own", status: "active" as const, access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }] },
+    ];
+    const m = faultReportedMessages(fridge, { id: "f1", severity: "down", body: "Not cooling" }, "cook", "Cook", people);
+    expect(m.map((x) => x.personId)).toEqual(["mgr", "own"]);
+    expect(m[0].title).toBe("Not working: Walk-in fridge");
+    expect(faultReportedMessages(fridge, { id: "f1", severity: "attention", body: "x" }, "mgr", "Mo", people).map((x) => x.personId)).toEqual(["own"]);
+    expect(canUseEquipment(people[0], "EAS")).toBe(true);
+    expect(canUseEquipment(people[0], "WEM")).toBe(false);
+    expect(canUseEquipment({ ...people[0], status: "frozen" }, "EAS")).toBe(false);
+  });
+  it("reminds managers two weeks before a service and once it's overdue", () => {
+    const people = [{ id: "mgr", status: "active" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] }];
+    const svc = (doneOn: string) => ev({ id: doneOn, kind: "service", severity: undefined, doneOn, body: "Serviced" });
+    const soon = serviceReminderMessages([fridge], [svc("2026-04-20")], people, { EAS: "Eastcote" }, "2026-10-12");
+    expect(soon).toHaveLength(1);
+    expect(soon[0].title).toBe("Service due in 8 days: Walk-in fridge (Eastcote)");
+    expect(soon[0].dedupeKey).toBe("service|fr|2026-10-20|soon|mgr");
+    expect(serviceReminderMessages([fridge], [svc("2026-06-01")], people, {}, "2026-10-12")).toEqual([]);
+    expect(serviceReminderMessages([{ ...fridge, retiredAt: 1 }], [svc("2026-01-01")], people, {}, "2026-10-12")).toEqual([]);
+    expect(serviceReminderMessages([fridge], [svc("2026-01-01")], people, {}, "2026-10-12")[0].dedupeKey).toBe("service|fr|2026-07-01|overdue|mgr");
+  });
+  it("only sends people back to equipment pages after signing in", () => {
+    expect(safeNextPath("/equipment/7c0f1f0e-4b1d-4c43-9d55-3f0a3c1b2d4e")).toBe("/equipment/7c0f1f0e-4b1d-4c43-9d55-3f0a3c1b2d4e");
+    expect(safeNextPath("//evil.example.com")).toBeUndefined();
+    expect(safeNextPath("https://evil.example.com/equipment/x")).toBeUndefined();
+    expect(safeNextPath("/equipment/../owner")).toBeUndefined();
+    expect(safeNextPath("/owner")).toBeUndefined();
+    expect(safeNextPath(undefined)).toBeUndefined();
+  });
+  it("keeps the kinds list and the database check in step", () => {
+    const sqlText = readFileSync("supabase/migrations/0011_equipment.sql", "utf8");
+    for (const k of EQUIPMENT_KINDS) expect(sqlText).toContain(`'${k.id}'`);
+    for (const kind of ["notice", "leave", "cert", "report", "fault", "service"]) expect(sqlText).toContain(`'${kind}'`);
+  });
+  it("puts equipment problems and downtime in the weekly report", () => {
+    const week = "2026-10-05";
+    const mon = Date.UTC(2026, 9, 4, 23); // Mon 5 Oct 00:00 London
+    const base = { week, now: mon + 8 * 24 * H, trackingFrom: "2026-10-01", readings: [], signoffs: [], alerts: [], notes: [], prep: [], shifts: [] };
+    const r = siteWeekReport({ ...base, faults: [
+      { equipment: "Fryer 2", severity: "down", createdAt: mon + 24 * H, fixedAt: mon + 30 * H },
+      { equipment: "Walk-in fridge", severity: "down", createdAt: mon + 5 * 24 * H },
+      { equipment: "Glasswasher", severity: "attention", createdAt: mon - 24 * H },
+    ] });
+    expect(r.equipment.reported).toBe(2);
+    expect(r.equipment.fixed).toBe(1);
+    expect(r.equipment.open).toBe(2); // fridge and glasswasher at the end of the week
+    expect(r.equipment.downHours).toBe(6 + 48);
+    expect(r.attention.some((a) => a.level === "critical" && a.text === "Walk-in fridge not working for 3 days")).toBe(true);
   });
 });

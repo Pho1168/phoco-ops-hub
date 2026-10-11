@@ -7,7 +7,7 @@ import { signIn } from "@/app/actions";
 interface P { id: string; name: string; frozen: boolean; sites: string[]; label: string }
 interface S { id: string; name: string; closed: boolean; reason?: string }
 
-export function LoginForm({ sites, people, deviceLabel }: { sites: S[]; people: P[]; deviceLabel?: string }) {
+export function LoginForm({ sites, people, deviceLabel, returnTo }: { sites: S[]; people: P[]; deviceLabel?: string; returnTo?: string }) {
   const router = useRouter();
   const [siteId, setSiteId] = useState(sites[0]?.id ?? "EAS");
   const [pick, setPick] = useState<string | null>(null);
@@ -26,7 +26,7 @@ export function LoginForm({ sites, people, deviceLabel }: { sites: S[]; people: 
     if (next.length === 4 && pick) {
       start(async () => {
         const r = await signIn(siteId, pick, next);
-        if (r.ok) router.replace("/");
+        if (r.ok) router.replace(returnTo ?? "/");
         else { setErr(r.error); setPin(""); }
       });
     }

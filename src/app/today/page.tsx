@@ -2,6 +2,7 @@ import Link from "next/link";
 import { store } from "@/lib/data";
 import { progress, runState } from "@/lib/domain/checklist";
 import { canUsePrep } from "@/lib/domain/prep";
+import { faultsOf, sinceText } from "@/lib/domain/equipment";
 import { currentNotes } from "@/lib/domain/handover";
 import { londonNow, requireCtx } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
@@ -36,6 +37,10 @@ export default async function Today() {
   const toDo = [...prepOpen, ...notesOpen];
   const urgent = prepOpen.filter((e) => e.urgent).length + notesOpen.filter((n) => n.category === "Food safety").length;
   const unread = unreadFor(await db.teamNotices(0), ctx.person, date);
+  const [kit, kitOpen] = await Promise.all([db.equipment(ctx.site.id), db.equipmentEvents({ siteId: ctx.site.id, openFaultsOnly: true })]);
+  const now = Date.now();
+  const down = kit.map((eq) => ({ eq, f: faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down") }))
+    .filter((x) => x.f.length).map(({ eq, f }) => ({ eq, since: Math.min(...f.map((x) => x.fault.createdAt)), body: f[f.length - 1].fault.body }));
 
   return (
     <>
@@ -59,6 +64,12 @@ export default async function Today() {
             <Icon name="alert" />
             <div className="grow"><div className="strong">{a.title}</div><div style={{ fontSize: 13 }}>{a.detail}</div></div>
           </div>
+        ))}
+        {down.map(({ eq, since, body }) => (
+          <Link key={eq.id} href={`/equipment/${eq.id}`} className="alert bad" style={{ textDecoration: "none" }}>
+            <Icon name="wrench" />
+            <div className="grow"><div className="strong">Not working: {eq.name}</div><div style={{ fontSize: 13 }}>{body} · reported {sinceText(since, now)} ago</div></div>
+          </Link>
         ))}
         {(toDo.length > 0 || prepOn) && (
           <Link href={toDo.length || !prepOn ? "/handover" : "/handover/prep"} className={toDo.length ? "alert" : "list-btn"} style={{ textDecoration: "none" }}>
@@ -96,6 +107,10 @@ export default async function Today() {
             </section>
           );
         })}
+        <Link href="/equipment" className="list-btn" style={{ textDecoration: "none" }}>
+          <Icon name="wrench" />
+          <span className="grow"><span className="strong" style={{ display: "block" }}>Equipment</span><span className="muted">Something not working? Report it here</span></span>
+        </Link>
         <div className="foot-links"><Link href="/me">My shifts</Link><Link href="/pin">Change my PIN</Link></div>
       </main>
       <BottomNav ctx={ctx} current="today" />

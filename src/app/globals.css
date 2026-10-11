@@ -280,3 +280,15 @@ table.matrix td { white-space: nowrap; vertical-align: middle; }
 table.matrix thead th:first-child { position: sticky; left: 0; z-index: 2; background: var(--surface); }
 .cert-rec { border-top: 1px solid var(--line); padding-top: 8px; display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
 .cert-rec.old { opacity: 0.6; }
+
+/* Equipment QR labels */
+.labels { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.label { display: flex; gap: 10px; align-items: center; background: #fff; border: 1px dashed var(--line); border-radius: 12px; padding: 10px; break-inside: avoid; }
+.label-qr { width: 110px; height: 110px; flex-shrink: 0; }
+.label-qr svg { width: 100%; height: 100%; display: block; }
+.label-text { display: flex; flex-direction: column; gap: 2px; color: #1d2b22; }
+@media print {
+  .labels-page { padding: 0; }
+  .labels { grid-template-columns: repeat(3, 1fr); gap: 6mm; }
+  .label { border: 1px dashed #999; }
+}
