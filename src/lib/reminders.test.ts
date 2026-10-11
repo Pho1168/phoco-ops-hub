@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { demoStore, resetDemo } from "@/lib/data/demo-store";
-import { queueCertReminders, queueServiceReminders } from "@/lib/rota-service";
-import { londonDate, londonToUtc } from "@/lib/domain/time";
+import { queueCertReminders, queueServiceReminders, queueWeeklyReport } from "@/lib/rota-service";
+import { addDays, londonDate, londonToUtc } from "@/lib/domain/time";
+import { weekStartOf } from "@/lib/domain/rota";
 
 // Runs against the in-memory demo store only (passed in), never a real database.
 describe("certificate reminders on the scheduler", () => {
@@ -25,6 +26,21 @@ describe("certificate reminders on the scheduler", () => {
     expect(await queueServiceReminders(now, demoStore)).toBe(0);
     const mgr = (await demoStore.notices("DEMO-MGR", 20)).filter((n) => n.kind === "service");
     expect(mgr[0]?.title).toMatch(/^Service due in \d+ days: Fryer 2 \(Eastcote\)$/);
+    resetDemo();
+  });
+  it("sends owners and managers last week's report on Monday morning, once", async () => {
+    resetDemo();
+    const monday = weekStartOf(londonDate(Date.now()));
+    expect(await queueWeeklyReport(londonToUtc(addDays(monday, 1), "09:05"), demoStore)).toBe(0); // not on a Tuesday
+    const at = londonToUtc(monday, "09:05");
+    expect(await queueWeeklyReport(at, demoStore)).toBe(2); // the owner (Eastcote and Wembley) and the Eastcote manager
+    expect(await queueWeeklyReport(at + 600_000, demoStore)).toBe(0);
+    const [own] = (await demoStore.notices("DEMO-OWN", 20)).filter((n) => n.kind === "report");
+    expect(own.title).toMatch(/^Weekly report: Mon \d+ \w+ to Sun \d+ \w+$/);
+    expect(own.body).toContain("Eastcote:");
+    expect(own.body).toContain("Wembley:");
+    const [mgr] = (await demoStore.notices("DEMO-MGR", 20)).filter((n) => n.kind === "report");
+    expect(mgr.body).not.toContain("Wembley");
     resetDemo();
   });
 });

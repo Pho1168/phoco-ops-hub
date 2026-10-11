@@ -6,7 +6,7 @@ import { addDays, londonDate, shortDay } from "@/lib/domain/time";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { Icon } from "@/components/Icon";
 import { requireManager } from "@/lib/session";
-import { loadSiteReport } from "./data";
+import { loadSiteReport } from "@/lib/report-service";
 
 export const dynamic = "force-dynamic";
 

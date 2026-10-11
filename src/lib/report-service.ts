@@ -1,4 +1,5 @@
 import { store } from "@/lib/data";
+import type { Store } from "@/lib/data/store";
 import { datesBetween, readingLog, signoffLog } from "@/lib/domain/records";
 import { siteWeekReport, type SiteWeekReport } from "@/lib/domain/report";
 import { faultsOf } from "@/lib/domain/equipment";
@@ -8,8 +9,7 @@ import type { Site } from "@/lib/domain/types";
 export interface SiteReport { site: Site; week: SiteWeekReport; last: SiteWeekReport; people: string[] }
 
 /** This week's and last week's report for one site. */
-export async function loadSiteReport(site: Site, week: string, now = Date.now()): Promise<SiteReport> {
-  const db = store();
+export async function loadSiteReport(site: Site, week: string, now = Date.now(), db: Store = store()): Promise<SiteReport> {
   const today = londonDate(now);
   const lastWeek = addDays(week, -7);
   const to = addDays(week, 6) < today ? addDays(week, 6) : today;

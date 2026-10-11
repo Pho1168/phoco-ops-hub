@@ -1,6 +1,6 @@
 import type { ReadingEntry, SignoffRow } from "./records";
 import type { TeamShift } from "./rota";
-import { londonToUtc } from "./time";
+import { addDays, londonToUtc, shortDay } from "./time";
 
 /**
  * The owner's weekly report for one site: checks, temperatures, alerts, handovers, prep and planned hours,
@@ -150,5 +150,27 @@ export function groupTotals(reports: SiteWeekReport[], people: number): GroupTot
     outOfRange: reports.reduce((t, r) => t + r.temps.outOfRange, 0), openAlerts: reports.reduce((t, r) => t + r.alerts.open, 0),
     hours: hoursKnown.length ? round2(hoursKnown.reduce((t, r) => t + (r.rota.hours ?? 0), 0)) : null, people,
     attention: reports.reduce((t, r) => t + r.attention.filter((x) => x.level !== "info").length, 0),
+  };
+}
+
+const hoursText = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
+
+/** The Monday message for owners and managers: one line per site and how much needs attention. */
+export function weeklyDigest(week: string, sites: { name: string; r: SiteWeekReport }[]): { title: string; body: string } {
+  const s = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const lines = sites.map(({ name, r }) => {
+    const bits: string[] = [];
+    if (r.checks.onTimeRate !== null) bits.push(`${r.checks.onTimeRate}% of checks on time`);
+    else if (!r.started) bits.push("checklists not in use yet");
+    if (r.temps.outOfRange) bits.push(`${s(r.temps.outOfRange, "temperature")} out of range`);
+    if (r.alerts.open) bits.push(`${s(r.alerts.open, "alert")} open`);
+    if (r.equipment.stillDown.length) bits.push(`${s(r.equipment.stillDown.length, "piece", "pieces")} of kit not working`);
+    if (r.rota.hours !== null) bits.push(`${hoursText(r.rota.hours)} h planned`);
+    return `${name}: ${bits.join(" · ") || "a quiet week"}`;
+  });
+  const attention = sites.reduce((t, x) => t + x.r.attention.filter((a) => a.level !== "info").length, 0);
+  return {
+    title: `Weekly report: ${shortDay(week)} to ${shortDay(addDays(week, 6))}`,
+    body: `${lines.join("\n")}\n${attention ? `${s(attention, "thing")} to look at.` : "Nothing needs attention."} Full report: Manage → Weekly report.`,
   };
 }

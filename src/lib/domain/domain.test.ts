@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { canEditCerts, certReminderMessages, certStatus, expectedKinds, issueCount, peopleInCare, reminderDue, siteCover, statusText, suggestExpiry, validateCert, CERT_KINDS, CERT_TYPES, type Certificate } from "./certificates";
 import { canCancel, canDecide, clashes, daysOf, offOn, rangeLabel, validateRequest, type TimeOff } from "./timeoff";
 import { audienceLabel, canPostTo, inAudience, isLive, readStats, unreadFor, type TeamNotice } from "./notices";
-import { change, groupTotals, siteWeekReport, type SiteWeekInput } from "./report";
+import { change, groupTotals, siteWeekReport, weeklyDigest, type SiteWeekInput } from "./report";
 import { addMonths, canUseEquipment, downHours, downSince, faultReportedMessages, faultsOf, openFaults, safeNextPath, serviceReminderMessages, serviceState, sinceText,
   validateEquipment, validateService, EQUIPMENT_KINDS, type Equipment, type EquipmentEvent } from "./equipment";
 import { clampRange, datesBetween, readingLog, recordsSummary, signoffLog, type RawAnswer } from "./records";
@@ -833,5 +833,20 @@ describe("equipment and maintenance", () => {
     expect(r.equipment.open).toBe(2); // fridge and glasswasher at the end of the week
     expect(r.equipment.downHours).toBe(6 + 48);
     expect(r.attention.some((a) => a.level === "critical" && a.text === "Walk-in fridge not working for 3 days")).toBe(true);
+  });
+});
+
+describe("Monday report message", () => {
+  it("sums each site up in a line and counts what needs attention", () => {
+    const week = "2026-10-05";
+    const base = { week, now: Date.UTC(2026, 9, 12, 8), readings: [], signoffs: [], alerts: [], notes: [], prep: [], shifts: [] };
+    const eas = siteWeekReport({ ...base, trackingFrom: "2026-10-01", alerts: [{ createdAt: Date.UTC(2026, 9, 6, 10), level: "critical" as const }],
+      signoffs: [{ date: "2026-10-05", listId: "a", listName: "Opening", area: "FOH" as const, due: "11:00", answered: 5, total: 5, status: "on_time" as const }, { date: "2026-10-06", listId: "a", listName: "Opening", area: "FOH" as const, due: "11:00", answered: 0, total: 5, status: "not_signed" as const }] });
+    const wem = siteWeekReport({ ...base });
+    const d = weeklyDigest(week, [{ name: "Eastcote", r: eas }, { name: "Wembley", r: wem }]);
+    expect(d.title).toBe("Weekly report: Mon 5 Oct to Sun 11 Oct");
+    expect(d.body.split("\n")[0]).toBe("Eastcote: 50% of checks on time · 1 alert open");
+    expect(d.body.split("\n")[1]).toBe("Wembley: checklists not in use yet");
+    expect(d.body).toContain("things to look at.");
   });
 });

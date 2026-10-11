@@ -6,6 +6,10 @@ import type { SiteId } from "@/lib/domain/types";
 import { pushToPerson } from "@/lib/push";
 import { certReminderMessages, CERT_REMINDER_FROM, CERT_REMINDER_UNTIL } from "@/lib/domain/certificates";
 import { serviceReminderMessages } from "@/lib/domain/equipment";
+import { canManage } from "@/lib/domain/access";
+import { weeklyDigest, type SiteWeekReport } from "@/lib/domain/report";
+import { weekStartOf } from "@/lib/domain/rota";
+import { loadSiteReport } from "@/lib/report-service";
 import { normalizeStaffCode } from "@/lib/domain/staff";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
@@ -72,7 +76,7 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
   }
   if (hm >= CERT_REMINDER_FROM && hm < CERT_REMINDER_UNTIL) {
     // Each morning job on its own: one failing mustn't stop the others or the sending below.
-    for (const job of [queueCertReminders, queueServiceReminders]) {
+    for (const job of [queueCertReminders, queueServiceReminders, queueWeeklyReport]) {
       try { queued += await job(now); } catch (e) { console.error(`tick: ${job.name} failed`, e); }
     }
   }
@@ -110,6 +114,24 @@ export async function queueServiceReminders(now = Date.now(), db: Store = store(
     for (const m of serviceReminderMessages(kit, events, people, { [site.id]: site.name }, londonDate(now))) {
       if (await db.queueNotice({ personId: m.personId, kind: "service", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now) })) queued++;
     }
+  }
+  return queued;
+}
+
+/** Mondays: last week's report in a few lines for each owner and manager, about the open sites they run. */
+export async function queueWeeklyReport(now = Date.now(), db: Store = store()): Promise<number> {
+  const today = londonDate(now);
+  if (weekStartOf(today) !== today) return 0;
+  const week = addDays(today, -7);
+  const sites = (await db.sites()).filter((s) => s.status === "open");
+  const reports = new Map<SiteId, SiteWeekReport>();
+  let queued = 0;
+  for (const p of (await db.people()).filter((x) => x.status === "active")) {
+    const mine = sites.filter((s) => canManage(p, s.id));
+    if (!mine.length) continue;
+    for (const s of mine) if (!reports.has(s.id)) reports.set(s.id, (await loadSiteReport(s, week, now, db)).week);
+    const d = weeklyDigest(week, mine.map((s) => ({ name: s.name, r: reports.get(s.id)! })));
+    if (await db.queueNotice({ personId: p.id, kind: "report", title: d.title, body: d.body, dedupeKey: `report|${week}|${p.id}`, sendAfter: afterQuietHours(now) })) queued++;
   }
   return queued;
 }
