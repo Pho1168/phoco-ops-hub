@@ -39,14 +39,8 @@ create index if not exists equipment_events_equipment on equipment_events (equip
 create index if not exists equipment_events_site on equipment_events (site_id, created_at);
 -- A fault is fixed once.
 create unique index if not exists equipment_events_one_fix on equipment_events (fault_id) where kind = 'fixed';
-drop trigger if exists equipment_events_append_only on equipment_events;
 create trigger equipment_events_append_only before update or delete on equipment_events
   for each row execute function refuse_change();
 
 alter table equipment enable row level security;
 alter table equipment_events enable row level security;
-
--- Phone messages: equipment faults and service reminders.
-alter table notifications drop constraint if exists notifications_kind_check;
-alter table notifications add constraint notifications_kind_check
-  check (kind in ('published', 'changed', 'evening', 'notice', 'leave', 'cert', 'report', 'fault', 'service'));

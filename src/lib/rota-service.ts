@@ -71,8 +71,10 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
     }
   }
   if (hm >= CERT_REMINDER_FROM && hm < CERT_REMINDER_UNTIL) {
-    queued += await queueCertReminders(now);
-    queued += await queueServiceReminders(now);
+    // Each morning job on its own: one failing mustn't stop the others or the sending below.
+    for (const job of [queueCertReminders, queueServiceReminders]) {
+      try { queued += await job(now); } catch (e) { console.error(`tick: ${job.name} failed`, e); }
+    }
   }
   return { queued, sent: await deliverDue(now) };
 }

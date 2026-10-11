@@ -816,7 +816,8 @@ describe("equipment and maintenance", () => {
   it("keeps the kinds list and the database check in step", () => {
     const sqlText = readFileSync("supabase/migrations/0011_equipment.sql", "utf8");
     for (const k of EQUIPMENT_KINDS) expect(sqlText).toContain(`'${k.id}'`);
-    for (const kind of ["notice", "leave", "cert", "report", "fault", "service"]) expect(sqlText).toContain(`'${kind}'`);
+    const kinds = readFileSync("supabase/migrations/0012_equipment_messages.sql", "utf8");
+    for (const kind of ["published", "changed", "evening", "notice", "leave", "cert", "report", "fault", "service"]) expect(kinds).toContain(`'${kind}'`);
   });
   it("puts equipment problems and downtime in the weekly report", () => {
     const week = "2026-10-05";
