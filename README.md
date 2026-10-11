@@ -30,6 +30,13 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
 
 - **Team rota** (Rota tab, and "Team rota" on My shifts): the site's week laid out like the Schedule tab in the rota sheet, a grid on a computer and day by day on a phone. Everyone at the site can see published weeks; owners and managers also see paid hours, daily and weekly totals, and draft weeks (marked Draft). Paid hours come from the sheet's Export tab with each hourly sync.
 
+- **Manager tools** (Manage tab for managers; tiles at the top of the Owner screen for owners). Managers use them on the shop tablet; staff phones stay limited to My shifts and the team rota.
+  - **Inspection records**: for a site and date range, the temperature log (with limits, out-of-range readings and corrective actions), checklist sign-offs (on time, late, not signed), alerts with how they were resolved, and food-safety handover notes. Printable, with CSV downloads. Days before a site's first recorded checklist aren't counted as missed.
+  - **Weekly report**: per site and for the group, Monday to Sunday: checklists on time, temperatures out of range, alerts, handover actions, prep carried over and planned hours, with a change on the week before and a short "needs attention" list in plain words.
+  - **Team notices**: post to a site (or every site, for someone who manages them all), optionally only FOH, BOH or PROD, with an end date. Everyone it's for sees it on Today or My shifts until they tap "Got it"; the poster sees who has and hasn't. Important notices also go to phones with notifications on.
+  - **Time off**: staff ask from My shifts (holiday, unpaid, other); managers of the site approve or decline with a note, and see any rota shifts on those days. Approved time off shows as "Off" on the team rota, and shifts that clash are outlined for managers. The rota sheet is never changed by the app.
+  - **Certificates**: food hygiene (Level 2 and 3), allergens, first aid, fire marshal and other training per person, with issue and expiry dates (expiry suggested from a 3-year refresher cycle). A matrix of who holds what, what's run out or running out, and whether each site has a first aider, a Level 3 supervisor and a fire marshal. Reminders at 9am, 30 and 7 days before and just after the date, to the person and their managers. **Right to work** checks are for owners only and store dates, not document numbers. Nothing is deleted: a mistake is marked removed. Staff see their own certificates on My shifts.
+
 Not built yet: Wembley batch codes, labels, dispatch and receiving, and the remaining MVP features. See the PRD.
 
 ## Try it (demo mode)
@@ -63,7 +70,7 @@ Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, manager and s
 |---|---|
 | `npm run dev` | Development server |
 | `npm run build` / `npm start` | Production build / serve |
-| `npm test` | Unit tests for the rules (temperatures, sign-off, access, rota, PINs) |
+| `npm test` | Unit tests for the rules (temperatures, sign-off, access, rota, PINs, prep, records, reports, notices, time off, certificates) and the reminder scheduler on demo data |
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
 | `npm run person:add` | Create or update a person, their site access and PIN (see above) |
@@ -74,7 +81,7 @@ Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, manager and s
 - **Next.js 14 (App Router) + TypeScript.** Pages render on the server, and buttons call *server actions* (functions that run on the server, never in the browser).
 - **`src/lib/domain/`** holds the business rules as plain functions with no database. This is the part the tests cover.
 - **`src/lib/data/`** has a `Store` interface with two implementations: `DemoStore` (in memory) and `SqlStore` (Postgres/Supabase). The app uses `SqlStore` whenever `DATABASE_URL` is set.
-- **`supabase/migrations/0001_core.sql`** is the database schema. Row Level Security is on for every table with no policies, so the public Supabase API can read nothing; only the app server, connecting with the database connection string, can read or write. Checklist answers, corrective actions and the audit log are **append-only**: a database trigger refuses edits and deletes.
+- **`supabase/migrations/`** holds the database schema, one numbered file per change (`0001_core.sql` first). Row Level Security is on for every table with no policies, so the public Supabase API can read nothing; only the app server, connecting with the database connection string, can read or write. Checklist answers, corrective actions and the audit log are **append-only**: a database trigger refuses edits and deletes.
 - **Sessions** are an httpOnly cookie checked on every request, so freezing someone or closing a site takes effect immediately.
 
 ## Security notes
