@@ -14,7 +14,8 @@ import { randomInt } from "node:crypto";
 import { canFreeze, canManage, canSignIn, isPinLocked, managedSites, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canCancel, canDecide, clashes, kindLabel, rangeLabel, validateRequest } from "@/lib/domain/timeoff";
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
-import { afterQuietHours, londonDate } from "@/lib/domain/time";
+import { afterQuietHours, dayMonthYear, londonDate } from "@/lib/domain/time";
+import { canEditCerts, certType, validateCert, CERT_KINDS, type CertKind } from "@/lib/domain/certificates";
 import { deliverDue } from "@/lib/rota-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
@@ -708,5 +709,56 @@ export async function cancelTimeOff(id: string): Promise<ActionResult> {
   if (t.status === "approved") await tellManagers(t.siteId, ctx.person.id, `Time off withdrawn: ${ctx.person.name}`, `${rangeLabel(t)} is no longer needed`, `timeoff-withdrawn|${t.id}`);
   await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "timeoff.cancel", detail: `Withdrew ${rangeLabel(t)}` });
   revalidatePath("/me"); revalidatePath("/manage/time-off"); revalidatePath("/rota");
+  return { ok: true };
+}
+
+// ---------- staff certificates ----------
+const CertZ = z.object({
+  personId: z.string().min(1).max(64),
+  kind: z.enum(CERT_KINDS as [CertKind, ...CertKind[]]),
+  issuedOn: IsoDateZ,
+  expiresOn: z.union([IsoDateZ, z.literal("")]).optional(),
+  provider: z.string().trim().max(120, "Keep the provider under 120 characters").optional(),
+  reference: z.string().trim().max(120, "Keep the certificate number under 120 characters").optional(),
+  note: z.string().trim().max(300, "Keep the note under 300 characters").optional(),
+});
+
+/** An owner or a manager of the person's site records a certificate or check. Right to work: owners only. */
+export async function addCertificate(input: unknown): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const c = CertZ.safeParse(input);
+  if (!c.success) return { ok: false, error: c.error.issues[0]?.message ?? "That record couldn't be saved" };
+  const db = store();
+  const target = await db.person(c.data.personId);
+  if (!target) return { ok: false, error: "That person isn't there any more" };
+  const can = canEditCerts(ctx.person, target, c.data.kind);
+  if (!can.ok) return can;
+  const t = certType(c.data.kind);
+  const rec = {
+    personId: target.id, kind: c.data.kind, issuedOn: c.data.issuedOn, expiresOn: c.data.expiresOn || undefined,
+    provider: c.data.provider || undefined, reference: t.noReference ? undefined : c.data.reference || undefined, note: c.data.note || undefined,
+  };
+  const check = validateCert(rec, londonDate(Date.now()));
+  if (!check.ok) return check;
+  await db.addCertificate({ ...rec, createdBy: ctx.person.id });
+  await db.audit({ actorId: ctx.person.id, siteId: target.access[0]?.siteId, action: "cert.add",
+    detail: `${t.label} recorded for ${target.name}${rec.expiresOn && !t.ownerOnly ? ` (runs out ${dayMonthYear(rec.expiresOn)})` : ""}` });
+  revalidatePath("/manage/certificates"); revalidatePath(`/manage/certificates/${target.id}`); revalidatePath("/me");
+  return { ok: true };
+}
+
+/** Takes off a record added by mistake. It stays in the database, marked removed. */
+export async function removeCertificate(id: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const db = store();
+  const cert = await db.certificate(String(id ?? "").slice(0, 64));
+  if (!cert) return { ok: false, error: "That record isn't there any more" };
+  const target = await db.person(cert.personId);
+  if (!target) return { ok: false, error: "That person isn't there any more" };
+  const can = canEditCerts(ctx.person, target, cert.kind);
+  if (!can.ok) return can;
+  if (!(await db.removeCertificate(cert.id, ctx.person.id))) return { ok: false, error: "It has already been removed" };
+  await db.audit({ actorId: ctx.person.id, siteId: target.access[0]?.siteId, action: "cert.remove", detail: `Removed a ${certType(cert.kind).label} record for ${target.name}` });
+  revalidatePath("/manage/certificates"); revalidatePath(`/manage/certificates/${target.id}`); revalidatePath("/me");
   return { ok: true };
 }

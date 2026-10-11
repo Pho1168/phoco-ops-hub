@@ -1,16 +1,23 @@
 import { store } from "@/lib/data";
 import { isLive } from "@/lib/domain/notices";
+import { issueCount, peopleInCare } from "@/lib/domain/certificates";
 import { londonDate } from "@/lib/domain/time";
-import type { SiteId } from "@/lib/domain/types";
+import type { Person, SiteId } from "@/lib/domain/types";
 import type { ManageCounts } from "./ManageTiles";
 
 /** Numbers shown on the manager tiles. */
-export async function manageCounts(managed: SiteId[]): Promise<ManageCounts> {
+export async function manageCounts(actor: Pick<Person, "access">): Promise<ManageCounts> {
   const db = store();
   const today = londonDate(Date.now());
-  const [notices, pending] = await Promise.all([db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] })]);
+  const managed: SiteId[] = actor.access.filter((a) => a.role === "owner" || a.role === "manager").map((a) => a.siteId);
+  const isOwner = actor.access.some((a) => a.role === "owner");
+  const [notices, pending, people, certs, sites] = await Promise.all([
+    db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(),
+  ]);
+  const openManaged = sites.filter((s) => s.status === "open" && managed.includes(s.id)).map((s) => s.id);
   return {
     timeOffPending: pending.length,
     noticesActive: notices.filter((n) => isLive(n, today) && (!n.siteId || managed.includes(n.siteId))).length,
+    certIssues: issueCount(peopleInCare(actor, people), certs, today, isOwner, openManaged),
   };
 }

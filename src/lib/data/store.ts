@@ -5,6 +5,7 @@ import type { PrepEntry, PrepItem, PrepShift, SubmitPlan } from "@/lib/domain/pr
 import type { ListInfo, RawAnswer, RunInfo } from "@/lib/domain/records";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
+import type { Certificate } from "@/lib/domain/certificates";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
@@ -130,6 +131,14 @@ export interface Store {
   decideTimeOff(id: string, decision: "approved" | "declined", personId: string, note?: string): Promise<boolean>;
   /** Withdraw a pending or approved request. False if it can't be. */
   cancelTimeOff(id: string): Promise<boolean>;
+
+  // Staff certificates (removed records are kept in the database but never returned)
+  /** Current records, oldest first; for some people or everyone. */
+  certificates(filter?: { personIds?: string[] }): Promise<Certificate[]>;
+  certificate(id: string): Promise<Certificate | undefined>;
+  addCertificate(c: Omit<Certificate, "id" | "createdAt" | "createdByName">): Promise<string>;
+  /** Marks a record removed (added by mistake). False if it isn't there or is already removed. */
+  removeCertificate(id: string, personId: string): Promise<boolean>;
 
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;

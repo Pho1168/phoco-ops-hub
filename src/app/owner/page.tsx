@@ -10,7 +10,6 @@ import { BottomNav, TopBar } from "@/components/Chrome";
 import { OwnerClient, type SiteSummary, type PersonRow } from "./OwnerClient";
 import { ManageTiles } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
-import { managedSites } from "@/lib/domain/access";
 
 export const dynamic = "force-dynamic";
 
@@ -62,7 +61,7 @@ export default async function Owner() {
   return (
     <>
       <TopBar ctx={ctx} />
-      <OwnerClient tools={<ManageTiles counts={await manageCounts(managedSites(ctx.person))} />} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
+      <OwnerClient tools={<ManageTiles counts={await manageCounts(ctx.person)} />} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
         rota={<RotaCard rows={rota} />}
         devices={<DevicesCard devices={devices} demo={DEMO_MODE} sites={sites.filter((s) => s.status === "open").map((s) => ({ id: s.id, name: s.name }))} />} />
       <BottomNav ctx={ctx} current="owner" />

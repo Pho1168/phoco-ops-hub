@@ -272,3 +272,11 @@ table.rec tr.warn td { background: color-mix(in srgb, var(--accent) 6%, transpar
 .slot.clash { outline: 2px solid var(--bad); }
 .rota-line.clash { outline: 2px solid var(--bad); border-radius: 8px; }
 .timeoff-row { border-top: 1px solid var(--line); padding-top: 10px; }
+
+/* Certificates */
+table.matrix th[scope="row"] { position: sticky; left: 0; z-index: 1; background: var(--surface); min-width: 130px; font-size: 14px; }
+table.matrix th[scope="row"] a { color: var(--brand); text-decoration: none; font-weight: 700; }
+table.matrix td { white-space: nowrap; vertical-align: middle; }
+table.matrix thead th:first-child { position: sticky; left: 0; z-index: 2; background: var(--surface); }
+.cert-rec { border-top: 1px solid var(--line); padding-top: 8px; display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+.cert-rec.old { opacity: 0.6; }

@@ -39,6 +39,16 @@ export function shortDay(iso: string): string {
   return new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 }
 
+/** "10 Nov 2026" */
+export function dayMonthYear(iso: string): string {
+  return new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+/** Whole days from `from` to `to` (London dates): negative when `to` is earlier. */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(to + "T12:00:00Z") - Date.parse(from + "T12:00:00Z")) / 86_400_000);
+}
+
 export const QUIET_START = "22:00";
 export const QUIET_END = "08:00";
 

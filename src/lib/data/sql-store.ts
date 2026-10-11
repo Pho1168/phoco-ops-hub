@@ -4,6 +4,7 @@ import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHan
 import type { RawAnswer } from "@/lib/domain/records";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
+import type { Certificate, CertKind } from "@/lib/domain/certificates";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -33,6 +34,17 @@ const isUuid = (s: string) => UUID.test(s);
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : undefined);
 const num = (v: string | null) => (v === null ? undefined : Number(v));
 const opt = <T,>(v: T | null) => (v === null ? undefined : v);
+
+interface CertRow { id: string; person_id: string; kind: CertKind; issued_on: string | null; expires_on: string | null; provider: string | null; reference: string | null;
+  note: string | null; created_by: string; created_by_name: string; created_at: Date }
+const certSelect = (q: postgres.Sql) => q`
+  select c.id, c.person_id, c.kind, to_char(c.issued_on, 'YYYY-MM-DD') as issued_on, to_char(c.expires_on, 'YYYY-MM-DD') as expires_on,
+    c.provider, c.reference, c.note, c.created_by, p.display_name as created_by_name, c.created_at
+  from staff_certificates c join people p on p.id = c.created_by`;
+const certFrom = (r: CertRow): Certificate => ({
+  id: r.id, personId: r.person_id, kind: r.kind, issuedOn: opt(r.issued_on), expiresOn: opt(r.expires_on), provider: opt(r.provider), reference: opt(r.reference),
+  note: opt(r.note), createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(),
+});
 // The database stores an un-ticked item as 'cleared'; the app calls it 'todo'.
 const toDbOutcome = (o: Outcome) => (o === "todo" ? "cleared" : o);
 const fromDbOutcome = (o: string): Outcome => (o === "cleared" ? "todo" : (o as Outcome));
@@ -599,6 +611,35 @@ export const sqlStore: Store = {
     if (!isUuid(id)) return false;
     const q = sql();
     return (await q`update time_off set status = 'cancelled', cancelled_at = now() where id = ${id} and status in ('pending', 'approved') returning id`).length > 0;
+  },
+
+  // ---------- staff certificates ----------
+  async certificates(f = {}) {
+    if (f.personIds && !f.personIds.every(isUuid)) return [];
+    const q = sql();
+    const rows = await q<CertRow[]>`
+      ${certSelect(q)} where c.removed_at is null ${f.personIds ? q`and c.person_id = any(${f.personIds}::uuid[])` : q``}
+      order by c.created_at`;
+    return rows.map(certFrom);
+  },
+  async certificate(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<CertRow[]>`${certSelect(q)} where c.id = ${id} and c.removed_at is null`;
+    return r && certFrom(r);
+  },
+  async addCertificate(c) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into staff_certificates (person_id, kind, issued_on, expires_on, provider, reference, note, created_by)
+      values (${c.personId}, ${c.kind}, ${c.issuedOn ?? null}, ${c.expiresOn ?? null}, ${c.provider ?? null}, ${c.reference ?? null}, ${c.note ?? null}, ${c.createdBy})
+      returning id`;
+    return r.id;
+  },
+  async removeCertificate(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update staff_certificates set removed_at = now(), removed_by = ${personId} where id = ${id} and removed_at is null returning id`).length > 0;
   },
 
   // ---------- rota ----------

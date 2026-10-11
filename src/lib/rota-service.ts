@@ -1,9 +1,10 @@
 import { store } from "@/lib/data";
 import { buildEveningNotices, buildImportNotices, EVENING_REMINDER_AT, parseExport, parseStaffTab, parseWeekTable, planSync } from "@/lib/domain/rota";
 import { addDays, afterQuietHours, londonDate, londonHM, QUIET_START } from "@/lib/domain/time";
-import type { RotaResult } from "@/lib/data/store";
+import type { RotaResult, Store } from "@/lib/data/store";
 import type { SiteId } from "@/lib/domain/types";
 import { pushToPerson } from "@/lib/push";
+import { certReminderMessages, CERT_REMINDER_FROM, CERT_REMINDER_UNTIL } from "@/lib/domain/certificates";
 import { normalizeStaffCode } from "@/lib/domain/staff";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
@@ -54,7 +55,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   return result;
 }
 
-/** Runs every few minutes (Supabase schedule). Queues the evening-before reminders, then sends anything due. */
+/** Runs every 10 minutes (Supabase schedule). Queues the evening-before shift reminders and, in the morning, certificate reminders; then sends anything due. */
 export async function tick(now = Date.now()): Promise<{ queued: number; sent: number }> {
   const db = store();
   let queued = 0;
@@ -68,7 +69,18 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
       if (await db.queueNotice({ personId, kind: "evening", title: n.title, body: n.body, dedupeKey: `evening|${personId}|${tomorrow}`, sendAfter: now })) queued++;
     }
   }
+  if (hm >= CERT_REMINDER_FROM && hm < CERT_REMINDER_UNTIL) queued += await queueCertReminders(now);
   return { queued, sent: await deliverDue(now) };
+}
+
+/** Certificates running out (30 and 7 days before) or just run out. Each message has a key, so it's only queued once. */
+export async function queueCertReminders(now = Date.now(), db: Store = store()): Promise<number> {
+  const [people, certs] = await Promise.all([db.people(), db.certificates()]);
+  let queued = 0;
+  for (const m of certReminderMessages(people, certs, londonDate(now))) {
+    if (await db.queueNotice({ personId: m.personId, kind: "cert", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now) })) queued++;
+  }
+  return queued;
 }
 
 /** Sends queued messages as push notifications. They stay visible under My shifts either way. */

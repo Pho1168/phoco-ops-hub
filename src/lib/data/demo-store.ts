@@ -4,10 +4,11 @@ import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
 import { latestAnswers } from "@/lib/domain/checklist";
-import { londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
+import { londonDate, londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
 import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff } from "@/lib/domain/timeoff";
+import type { Certificate } from "@/lib/domain/certificates";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -70,6 +71,22 @@ interface State {
   prepEntries: PrepEntry[];
   teamNotices: TeamNotice[];
   timeOff: TimeOff[];
+  certificates: (Certificate & { removedAt?: number; removedBy?: string })[];
+}
+
+/** Sample records so the certificates screens have something to show in demo mode. */
+function demoCertificates(): Certificate[] {
+  const today = londonDate(Date.now());
+  const d = (n: number) => addDaysIso(today, n);
+  let i = 0;
+  const c = (personId: string, kind: Certificate["kind"], issued: number, expires?: number, provider?: string): Certificate =>
+    ({ id: `demo-cert-${++i}`, personId, kind, issuedOn: d(issued), expiresOn: expires === undefined ? undefined : d(expires), provider, createdBy: "DEMO-OWN", createdAt: Date.now() - 86_400_000 + i });
+  return [
+    c("DEMO-FOH", "food_hygiene_l2", -400, 695, "Highfield e-learning"), c("DEMO-FOH", "allergen", -1080, 15, "Food Standards Agency"),
+    c("DEMO-BOH", "food_hygiene_l2", -1100, -5, "Highfield e-learning"), c("DEMO-BOH", "allergen", -200, 895, "Food Standards Agency"), c("DEMO-BOH", "first_aid", -300, 795, "St John Ambulance"),
+    c("DEMO-MGR", "food_hygiene_l2", -500, 595), c("DEMO-MGR", "food_hygiene_l3", -500, 595, "CIEH"), c("DEMO-MGR", "allergen", -100, 995), c("DEMO-MGR", "fire_marshal", -60, 1035), c("DEMO-MGR", "right_to_work", -700),
+    c("DEMO-PRD", "food_hygiene_l2", -90, 1005), c("DEMO-PRD", "right_to_work", -340, 20),
+  ];
 }
 
 function seed(): State {
@@ -100,7 +117,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [],
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(),
   };
 }
 
@@ -117,6 +134,11 @@ function prepFull(id: string): PrepHandover | undefined {
 }
 const prepOpen = (siteId: SiteId) => S().prepEntries.filter((e) => e.siteId === siteId && e.status === "outstanding"
   && S().prepHandovers.find((h) => h.id === e.handoverId)?.status === "submitted");
+
+const certView = (c: State["certificates"][number]): Certificate => ({
+  id: c.id, personId: c.personId, kind: c.kind, issuedOn: c.issuedOn, expiresOn: c.expiresOn, provider: c.provider, reference: c.reference,
+  note: c.note, createdBy: c.createdBy, createdByName: nameOf(c.createdBy) ?? "", createdAt: c.createdAt,
+});
 
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
@@ -332,6 +354,25 @@ export const demoStore: Store = {
     const t = S().timeOff.find((x) => x.id === id && (x.status === "pending" || x.status === "approved"));
     if (!t) return false;
     t.status = "cancelled"; return true;
+  },
+
+  async certificates(f = {}) {
+    return S().certificates.filter((c) => !c.removedAt && (!f.personIds || f.personIds.includes(c.personId)))
+      .sort((a, b) => a.createdAt - b.createdAt).map(certView);
+  },
+  async certificate(id) {
+    const c = S().certificates.find((x) => x.id === id && !x.removedAt);
+    return c && certView(c);
+  },
+  async addCertificate(c) {
+    const id = randomUUID();
+    S().certificates.push({ ...c, id, createdAt: Date.now() });
+    return id;
+  },
+  async removeCertificate(id, personId) {
+    const c = S().certificates.find((x) => x.id === id && !x.removedAt);
+    if (!c) return false;
+    c.removedAt = Date.now(); c.removedBy = personId; return true;
   },
 
   async rotaSources() { return S().rotaSources.map((r) => ({ siteId: r.siteId, createdAt: r.createdAt, lastImportAt: r.lastImportAt, lastResult: r.lastResult })); },

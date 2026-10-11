@@ -3,12 +3,13 @@ import { classifyReading, parseReading } from "./temperature";
 import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
 import { buildEveningNotices, buildImportNotices, buildTeamWeek, parseExport, parseStaffTab, parseWeekTable, planSync, weekStartOf, type StoredShift, type TeamShift } from "./rota";
-import { afterQuietHours, londonToUtc } from "./time";
+import { afterQuietHours, dayMonthYear, daysBetween, londonToUtc } from "./time";
 import { hashPin, isValidPin, verifyPin } from "./pin";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
 import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
 import { readFileSync } from "node:fs";
+import { canEditCerts, certReminderMessages, certStatus, expectedKinds, issueCount, peopleInCare, reminderDue, siteCover, statusText, suggestExpiry, validateCert, CERT_KINDS, CERT_TYPES, type Certificate } from "./certificates";
 import { canCancel, canDecide, clashes, daysOf, offOn, rangeLabel, validateRequest, type TimeOff } from "./timeoff";
 import { audienceLabel, canPostTo, inAudience, isLive, readStats, unreadFor, type TeamNotice } from "./notices";
 import { change, groupTotals, siteWeekReport, type SiteWeekInput } from "./report";
@@ -625,5 +626,109 @@ describe("time off", () => {
     expect(offOn([t({ status: "approved" }), t({ id: "x" })], "2026-10-21").map((x) => x.id)).toEqual(["t"]);
     expect(rangeLabel(t())).toBe("Tue 20 Oct to Thu 22 Oct (3 days)");
     expect(rangeLabel(t({ endsOn: "2026-10-20" }))).toBe("Tue 20 Oct");
+  });
+});
+
+describe("staff certificates", () => {
+  const today = "2026-10-12";
+  const c = (over: Partial<Certificate>): Certificate => ({ id: "c", personId: "p", kind: "food_hygiene_l2", createdBy: "o", createdAt: 1, ...over });
+  it("works out valid, running out, expired and missing", () => {
+    expect(certStatus([c({ expiresOn: "2027-01-01" })], "food_hygiene_l2", true, today).status).toBe("valid");
+    expect(certStatus([c({ expiresOn: "2026-11-05" })], "food_hygiene_l2", true, today).status).toBe("expiring");
+    expect(certStatus([c({ expiresOn: "2026-10-11" })], "food_hygiene_l2", true, today).status).toBe("expired");
+    expect(certStatus([], "food_hygiene_l2", true, today).status).toBe("missing");
+    expect(certStatus([], "first_aid", false, today).status).toBe("none");
+    expect(certStatus([c({ kind: "right_to_work" })], "right_to_work", true, today).status).toBe("valid"); // no expiry
+    // a renewal counts over the old one
+    expect(certStatus([c({ expiresOn: "2026-10-01" }), c({ id: "n", expiresOn: "2029-10-01" })], "food_hygiene_l2", true, today).cert?.id).toBe("n");
+  });
+  it("expects hygiene, allergens and right to work from everyone, Level 3 from managers, nothing from owners", () => {
+    const staff = { status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: ["BOH" as const] }] };
+    expect(expectedKinds(staff)).toEqual(["food_hygiene_l2", "allergen", "right_to_work"]);
+    expect(expectedKinds({ ...staff, access: [{ siteId: "EAS", role: "manager", sections: [] }] })).toContain("food_hygiene_l3");
+    expect(expectedKinds({ ...staff, access: [{ siteId: "EAS", role: "owner", sections: [] }] })).toEqual([]);
+    expect(expectedKinds({ ...staff, status: "left" })).toEqual([]);
+  });
+  it("checks each site has a first aider, a Level 3 and a fire marshal", () => {
+    const people = [
+      { id: "a", name: "Ana", status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: [] }] },
+      { id: "b", name: "Ben", status: "active" as const, access: [{ siteId: "WEM" as const, role: "staff" as const, sections: [] }] },
+    ];
+    const cover = siteCover("EAS", people, [c({ personId: "a", kind: "first_aid", expiresOn: "2027-05-01" }), c({ personId: "b", kind: "fire_marshal" })], today);
+    expect(cover.find((x) => x.kind === "first_aid")?.holders).toEqual(["Ana"]);
+    expect(cover.find((x) => x.kind === "fire_marshal")?.holders).toEqual([]);
+  });
+  it("suggests an expiry date and sends reminders 30 days, 7 days and on expiry", () => {
+    expect(suggestExpiry("first_aid", "2026-10-12")).toBe("2029-10-12");
+    expect(suggestExpiry("personal_licence", "2026-10-12")).toBeUndefined();
+    expect(reminderDue({ expiresOn: "2026-12-01" }, today)).toBeUndefined();
+    expect(reminderDue({ expiresOn: "2026-11-10" }, today)).toBe("30");
+    expect(reminderDue({ expiresOn: "2026-10-18" }, today)).toBe("7");
+    expect(reminderDue({ expiresOn: "2026-10-11" }, today)).toBe("expired");
+    expect(reminderDue({ expiresOn: "2026-10-12" }, today)).toBe("7"); // the expiry date is the last valid day
+    expect(reminderDue({ expiresOn: "2026-09-01" }, today)).toBeUndefined(); // long gone: no message when back-filling
+  });
+  it("words the status for people", () => {
+    expect(statusText("allergen", { status: "expiring", cert: { expiresOn: "2026-10-13" } }, today)).toBe("Runs out tomorrow");
+    expect(statusText("allergen", { status: "expiring", cert: { expiresOn: "2026-10-22" } }, today)).toBe("Runs out in 10 days");
+    expect(statusText("allergen", { status: "expired", cert: { expiresOn: "2026-10-01" } }, today)).toBe("Ran out 1 Oct 2026");
+    expect(statusText("right_to_work", { status: "valid", cert: {} }, today)).toBe("Checked");
+    expect(statusText("right_to_work", { status: "expiring", cert: { expiresOn: "2026-10-12" } }, today)).toBe("Follow-up check due today");
+    expect(statusText("first_aid", { status: "none" }, today)).toBe("Not held");
+    expect(dayMonthYear("2029-03-05")).toBe("5 Mar 2029");
+    expect(daysBetween("2026-10-12", "2026-11-11")).toBe(30);
+    expect(daysBetween("2026-03-28", "2026-03-30")).toBe(2); // across the clocks going forward
+  });
+  it("sends reminders to the holder and their managers, once per stage, and stops when renewed", () => {
+    const people = [
+      { id: "ana", name: "Ana", status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: ["BOH" as const] }] },
+      { id: "mgr", name: "Mo", status: "active" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] },
+      { id: "wem", name: "Wes", status: "active" as const, access: [{ siteId: "WEM" as const, role: "manager" as const, sections: [] }] },
+      { id: "own", name: "Olu", status: "active" as const, access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }, { siteId: "WEM" as const, role: "owner" as const, sections: [] }] },
+      { id: "old", name: "Gone", status: "left" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] },
+    ];
+    const msgs = certReminderMessages(people, [c({ id: "h1", personId: "ana", expiresOn: "2026-10-20" })], today);
+    expect(msgs.map((m) => m.personId).sort()).toEqual(["ana", "mgr", "own"]); // not the Wembley manager, not someone who has left
+    expect(msgs.find((m) => m.personId === "ana")?.title).toBe("Your Food hygiene Level 2 runs out in 8 days");
+    expect(msgs.find((m) => m.personId === "mgr")?.title).toBe("Ana: Food hygiene Level 2 runs out in 8 days");
+    expect(new Set(msgs.map((m) => m.dedupeKey)).size).toBe(3);
+    expect(msgs[0].dedupeKey).toMatch(/^cert\|h1\|30\|/); // 8 days out: the 30-day reminder
+    // renewed: the old record no longer counts
+    expect(certReminderMessages(people, [c({ id: "h1", personId: "ana", expiresOn: "2026-10-20" }), c({ id: "h2", personId: "ana", expiresOn: "2029-10-10" })], today)).toEqual([]);
+    // right to work: owners only, never the person or a manager
+    const rtw = certReminderMessages(people, [c({ id: "r", personId: "ana", kind: "right_to_work", expiresOn: "2026-11-01" })], today);
+    expect(rtw.map((m) => m.personId)).toEqual(["own"]);
+    expect(rtw[0].title).toBe("Ana: right to work follow-up due in 20 days");
+    // nothing for people who have left
+    expect(certReminderMessages([{ ...people[0], status: "left" }, people[1]], [c({ personId: "ana", expiresOn: "2026-10-20" })], today)).toEqual([]);
+  });
+  it("lets managers update people at their sites, and only owners record right to work", () => {
+    const mgr = { id: "m", access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] };
+    const own = { id: "o", access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }] };
+    const easStaff = { status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: [] }] };
+    const wemStaff = { status: "active" as const, access: [{ siteId: "WEM" as const, role: "staff" as const, sections: [] }] };
+    expect(canEditCerts(mgr, easStaff, "food_hygiene_l2").ok).toBe(true);
+    expect(canEditCerts(mgr, wemStaff, "food_hygiene_l2").ok).toBe(false);
+    expect(canEditCerts(mgr, easStaff, "right_to_work").ok).toBe(false);
+    expect(canEditCerts(own, wemStaff, "right_to_work").ok).toBe(true);
+    expect(peopleInCare(mgr, [{ ...easStaff, id: "a" }, { ...wemStaff, id: "b" }, { ...easStaff, id: "c", status: "left" as const }]).map((p) => p.id)).toEqual(["a"]);
+  });
+  it("checks the dates on a new record", () => {
+    expect(validateCert({ kind: "first_aid", issuedOn: "2026-10-01", expiresOn: "2029-10-01" }, today).ok).toBe(true);
+    expect(validateCert({ kind: "first_aid", issuedOn: "2026-10-13" }, today).ok).toBe(false); // future
+    expect(validateCert({ kind: "first_aid", issuedOn: "2026-10-01", expiresOn: "2026-09-01" }, today).ok).toBe(false);
+    expect(validateCert({ kind: "first_aid", issuedOn: "", expiresOn: "2029-10-01" }, today).ok).toBe(false);
+    expect(validateCert({ kind: "first_aid", issuedOn: "2026-10-01", expiresOn: "2060-01-01" }, today).ok).toBe(false);
+  });
+  it("keeps the kinds list and the database check in step", () => {
+    expect(CERT_TYPES.map((t) => t.id).sort()).toEqual([...CERT_KINDS].sort());
+    const sqlText = readFileSync("supabase/migrations/0010_certificates.sql", "utf8");
+    for (const k of CERT_KINDS) expect(sqlText).toContain(`'${k}'`);
+  });
+  it("counts issues for the manager tile", () => {
+    const p = { id: "p", name: "P", status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: [] }] };
+    expect(issueCount([p], [c({ expiresOn: "2027-01-01" })], today, true)).toBe(2);  // allergen + right to work missing
+    expect(issueCount([p], [c({ expiresOn: "2027-01-01" })], today, false)).toBe(1); // managers don't see right to work
+    expect(issueCount([p], [c({ expiresOn: "2027-01-01" })], today, false, ["EAS"])).toBe(4); // + no first aider, Level 3 or fire marshal
   });
 });
