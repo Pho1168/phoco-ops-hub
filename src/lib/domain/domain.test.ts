@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { classifyReading, parseReading } from "./temperature";
 import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
-import { buildEveningNotices, buildImportNotices, parseExport, parseStaffTab, parseWeekTable, planSync, type StoredShift } from "./rota";
+import { buildEveningNotices, buildImportNotices, buildTeamWeek, parseExport, parseStaffTab, parseWeekTable, planSync, weekStartOf, type StoredShift, type TeamShift } from "./rota";
 import { afterQuietHours, londonToUtc } from "./time";
 import { hashPin, isValidPin, verifyPin } from "./pin";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
@@ -375,5 +375,54 @@ describe("handover notes", () => {
   it("orders food safety first, then needs action, then newest", () => {
     const list = [note(1, false), note(2, true), note(3, false, { category: "Food safety" }), note(4, true)];
     expect(noteOrder(list).map((n) => n.createdAt)).toEqual([3, 4, 2, 1]);
+  });
+});
+
+describe("team rota", () => {
+  const staff = [{ name: "Anthony", section: "FOH", staffCode: "001", active: true }];
+  const row = (hrsMon: string, start: string, end: string) => {
+    const r = Array(31).fill("");
+    r[0] = "12/10/2026"; r[4] = "Anthony"; r[5] = "FOH"; r[6] = hrsMon; r[14] = "0"; r[15] = start; r[16] = end;
+    return r;
+  };
+  it("keeps the paid hours from the sheet", () => {
+    const { shifts } = parseExport("EAS", [row("9.75", "11:00", "22:15")], staff);
+    expect(shifts[0]).toMatchObject({ date: "2026-10-12", start: "11:00", end: "22:15", hours: 9.75 });
+  });
+  it("updates stored hours without messaging staff when only the break changes", () => {
+    const old: StoredShift = { ...parseExport("EAS", [row("9.75", "11:00", "22:15")], staff).shifts[0], cancelled: false, hours: undefined };
+    const now = parseExport("EAS", [row("10.75", "11:00", "22:15")], staff).shifts;
+    const plan = planSync([old], now, new Set(["2026-10-12"]));
+    expect(plan.changed).toHaveLength(1);
+    const pub = new Map([["2026-10-12", "published" as const]]);
+    expect(buildImportNotices({ siteName: "Eastcote", today: "2026-10-11", plan, imported: now, before: pub, after: pub })).toHaveLength(0);
+  });
+  it("finds the Monday of a week", () => {
+    expect(weekStartOf("2026-10-12")).toBe("2026-10-12");
+    expect(weekStartOf("2026-10-18")).toBe("2026-10-12");
+    expect(weekStartOf("2026-10-14")).toBe("2026-10-12");
+  });
+  const t = (personId: string, name: string, section: string, date: string, start: string, end: string, hours: number): TeamShift => ({ personId, name, section, date, start, end, hours });
+  const shifts = [
+    t("v", "Vishal", "BOH", "2026-10-12", "09:00", "22:15", 11.75),
+    t("p", "Priyanshi", "FOH", "2026-10-12", "11:00", "22:15", 9.75),
+    t("a", "Anthony", "FOH", "2026-10-13", "11:00", "22:15", 9.75),
+    t("a", "Anthony", "BOH", "2026-10-14", "11:00", "21:30", 9),
+    t("x", "Old", "BOH", "2026-10-19", "11:00", "22:15", 9.75),
+  ];
+  it("lays the week out FOH first, one row per person per section, with totals for managers", () => {
+    const w = buildTeamWeek("2026-10-12", shifts, true);
+    expect(w.rows.map((r) => `${r.name} ${r.section}`)).toEqual(["Priyanshi FOH", "Anthony FOH", "Vishal BOH", "Anthony BOH"]);
+    expect(w.dayHours).toEqual([21.5, 9.75, 9, 0, 0, 0, 0]);
+    expect(w.weekHours).toBe(40.25);
+    expect(w.onShift).toEqual([2, 1, 1, 0, 0, 0, 0]);
+    expect(w.people).toBe(3);
+    expect(w.byDay[0].shifts.map((s) => s.name)).toEqual(["Vishal", "Priyanshi"]);
+  });
+  it("hides hours from staff", () => {
+    const w = buildTeamWeek("2026-10-12", shifts, false);
+    expect(w.dayHours).toBeUndefined();
+    expect(w.weekHours).toBeUndefined();
+    expect(w.rows.flatMap((r) => r.days.flat()).every((s) => s!.hours === undefined)).toBe(true);
   });
 });

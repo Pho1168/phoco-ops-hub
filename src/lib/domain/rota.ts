@@ -21,12 +21,15 @@ export interface ImportedShift {
   start: string; // HH:MM
   end: string; // HH:MM
   endsNextDay: boolean;
+  /** Paid hours from the sheet (shift length minus break). Shown to owners and managers only. */
+  hours?: number;
 }
 export interface StoredShift extends ImportedShift { cancelled: boolean }
 export interface ImportIssue { row: number; message: string }
 export type WeekStatus = "draft" | "published";
 
 const DAY_START_COL = 15; // MON start
+const HOURS_START_COL = 6; // Mon hrs
 const TIME = /^([01]?\d|2[0-3]):[0-5]\d$/;
 const pad = (t: string) => (t.length === 4 ? `0${t}` : t);
 
@@ -93,7 +96,9 @@ export function parseExport(siteId: string, rows: string[][], staff: StaffRow[])
       if (!start && !end) continue;
       const date = addDays(week, d);
       if (!TIME.test(start) || !TIME.test(end)) { issues.push({ row: rowNo, message: `${name}, ${shortDay(date)}: times "${start}–${end}" aren't valid` }); continue; }
-      shifts.push({ sourceKey: `${siteId}|${week}|${staffCode}|${section}|${d}`, staffCode, section, week, date, start: pad(start), end: pad(end), endsNextDay: pad(end) <= pad(start) });
+      const hrs = Number(r[HOURS_START_COL + d]);
+      shifts.push({ sourceKey: `${siteId}|${week}|${staffCode}|${section}|${d}`, staffCode, section, week, date, start: pad(start), end: pad(end), endsNextDay: pad(end) <= pad(start),
+        hours: Number.isFinite(hrs) && hrs > 0 ? hrs : undefined });
     }
   });
   return { shifts, issues };
@@ -114,7 +119,7 @@ export function planSync(existing: StoredShift[], imported: ImportedShift[], wee
   for (const s of imported) {
     const old = byKey.get(s.sourceKey);
     if (!old || old.cancelled) plan.added.push(s);
-    else if (old.start !== s.start || old.end !== s.end) plan.changed.push({ before: old, after: s });
+    else if (old.start !== s.start || old.end !== s.end || (s.hours !== undefined && old.hours !== s.hours)) plan.changed.push({ before: old, after: s });
   }
   for (const old of existing) if (!old.cancelled && weeks.has(old.week) && !incoming.has(old.sourceKey)) plan.cancelled.push(old);
   return plan;
@@ -155,7 +160,8 @@ export function buildImportNotices(args: {
   const changes = new Map<string, string[]>();
   const push = (code: string, text: string) => changes.set(code, [...(changes.get(code) ?? []), text]);
   for (const s of plan.added) if (stillPublished(s.week) && upcoming(s.date)) push(s.staffCode, `New shift: ${line(s)}`);
-  for (const c of plan.changed) if (stillPublished(c.after.week) && upcoming(c.after.date))
+  // Only a change of time is news to staff; a change of break/paid hours alone isn't messaged.
+  for (const c of plan.changed) if (stillPublished(c.after.week) && upcoming(c.after.date) && (c.before.start !== c.after.start || c.before.end !== c.after.end))
     push(c.after.staffCode, `${shortDay(c.after.date)} is now ${c.after.start}–${c.after.end} (was ${c.before.start}–${c.before.end})`);
   for (const s of plan.cancelled) if (stillPublished(s.week) && upcoming(s.date)) push(s.staffCode, `Cancelled: ${line(s)}`);
   for (const [staffCode, lines] of Array.from(changes.entries())) out.push({ staffCode, kind: "changed", title: `Rota change at ${siteName}`, body: lines.join("\n") });
@@ -173,3 +179,51 @@ export function buildEveningNotices(tomorrow: string, shifts: { staffCode: strin
 }
 
 export const EVENING_REMINDER_AT = "18:00";
+
+/** The Monday of the week a London date falls in. */
+export function weekStartOf(date: string): string {
+  const dow = (new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7; // Mon = 0
+  return addDays(date, -dow);
+}
+
+export interface TeamShift { personId: string; name: string; section: string; date: string; start: string; end: string; hours?: number }
+export interface TeamRow { personId: string; name: string; section: string; days: (TeamShift | undefined)[][]; hours: number }
+export interface TeamWeek {
+  week: string; days: string[];
+  /** One row per person per section, FOH first, then by first start in the week. */
+  rows: TeamRow[];
+  /** Day by day for small screens: who's on, earliest start first. */
+  byDay: { date: string; shifts: TeamShift[] }[];
+  /** Totals, only filled when hours are shown. */
+  dayHours?: number[]; onShift: number[]; weekHours?: number; people: number;
+}
+
+const SECTION_ORDER = ["FOH", "BOH", "PROD"];
+
+/** Lays a site's week out like the Schedule tab. Hours are left out unless `showHours` (owners and managers). */
+export function buildTeamWeek(week: string, shifts: TeamShift[], showHours: boolean): TeamWeek {
+  const days = Array.from({ length: 7 }, (_, i) => addDays(week, i));
+  const inWeek = shifts.filter((s) => days.includes(s.date)).map((s) => (showHours ? s : { ...s, hours: undefined }));
+  const key = (s: TeamShift) => `${s.personId}|${s.section}`;
+  const rowsMap = new Map<string, TeamRow>();
+  for (const s of inWeek) {
+    const row = rowsMap.get(key(s)) ?? { personId: s.personId, name: s.name, section: s.section, days: days.map(() => []), hours: 0 };
+    row.days[days.indexOf(s.date)].push(s);
+    row.hours += s.hours ?? 0;
+    rowsMap.set(key(s), row);
+  }
+  const firstStart = (r: TeamRow) => r.days.flat().map((s) => `${s!.date}${s!.start}`).sort()[0] ?? "";
+  const sec = (x: string) => { const i = SECTION_ORDER.indexOf(x); return i < 0 ? 99 : i; };
+  const rows = Array.from(rowsMap.values())
+    .map((r) => ({ ...r, days: r.days.map((d) => [...d].sort((a, b) => a!.start.localeCompare(b!.start))) }))
+    .sort((a, b) => sec(a.section) - sec(b.section) || firstStart(a).localeCompare(firstStart(b)) || a.name.localeCompare(b.name));
+  const byDay = days.map((date) => ({ date, shifts: inWeek.filter((s) => s.date === date).sort((a, b) => a.start.localeCompare(b.start) || sec(a.section) - sec(b.section) || a.name.localeCompare(b.name)) }));
+  const round = (n: number) => Math.round(n * 100) / 100;
+  return {
+    week, days, rows, byDay,
+    onShift: byDay.map((d) => new Set(d.shifts.map((s) => s.personId)).size),
+    people: new Set(inWeek.map((s) => s.personId)).size,
+    dayHours: showHours ? byDay.map((d) => round(d.shifts.reduce((t, s) => t + (s.hours ?? 0), 0))) : undefined,
+    weekHours: showHours ? round(inWeek.reduce((t, s) => t + (s.hours ?? 0), 0)) : undefined,
+  };
+}

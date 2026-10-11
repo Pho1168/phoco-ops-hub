@@ -36,7 +36,10 @@ export default async function MyShifts() {
         </div>
       </header>
       <main style={{ paddingBottom: 40 }}>
-        <div><div className="eyebrow">Next 4 weeks · published rotas only</div><h1 className="h-display">My shifts</h1></div>
+        <div className="row wrap" style={{ alignItems: "flex-end" }}>
+          <div className="grow"><div className="eyebrow">Next 4 weeks · published rotas only</div><h1 className="h-display">My shifts</h1></div>
+          <Link className="btn ghost small" href="/rota">Team rota</Link>
+        </div>
 
         {!onTablet && <RemindersToggle publicKey={publicKey} />}
 

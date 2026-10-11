@@ -188,3 +188,28 @@ main.wide { max-width: 1100px; }
 .prep-note { font-size: 13px; color: var(--ink-2); margin-top: 2px; }
 .prep-report li.info { background: var(--surface-2); }
 .note-body { font-weight: 600; font-size: 16px; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Team rota */
+.rota-grid-wrap { overflow-x: auto; background: var(--surface); border-radius: 16px; }
+.rota-grid { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 760px; table-layout: fixed; }
+.rota-grid col.name { width: 150px; }
+main.rota-page { max-width: 1240px; }
+.rota-grid th, .rota-grid td { padding: 6px 5px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.rota-grid thead th { font-weight: 600; font-size: 13px; }
+.rota-grid tbody th { white-space: nowrap; }
+.rota-grid .today { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.rota-grid tr.me th, .rota-grid tr.me td { box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+.rota-grid tfoot th, .rota-grid tfoot td { color: var(--ink-2); font-size: 13px; border-bottom: 0; }
+.num-cell { text-align: right !important; font-variant-numeric: tabular-nums; }
+.slot { border-radius: 8px; padding: 4px 6px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.slot-hrs { display: block; font-weight: 500; font-size: 12px; opacity: .85; }
+.slot + .slot { margin-top: 4px; }
+.slot.FOH { background: var(--accent-soft); color: var(--accent-soft-ink); }
+.slot.BOH, .slot.PROD { background: var(--sage); color: var(--sage-ink); }
+.sec { font-size: 11px; font-weight: 700; padding: 3px 7px; border-radius: 999px; letter-spacing: .5px; flex-shrink: 0; }
+.sec.FOH { background: var(--accent-soft); color: var(--accent-soft-ink); }
+.sec.BOH, .sec.PROD { background: var(--sage); color: var(--sage-ink); }
+.rota-days { display: none; flex-direction: column; gap: 10px; }
+.rota-day.today { outline: 2px solid var(--accent); }
+.rota-line.me .grow { font-weight: 700; }
+@media (max-width: 719px) { .rota-grid-wrap { display: none; } .rota-days { display: flex; } }

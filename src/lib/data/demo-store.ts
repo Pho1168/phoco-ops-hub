@@ -268,7 +268,7 @@ export const demoStore: Store = {
   },
   async setWeekStatuses(siteId, statuses) { for (const [w, st] of Array.from(statuses.entries())) S().weeks.set(`${siteId}|${w}`, st); },
   async siteShifts(siteId) {
-    return S().shifts.filter((s) => s.siteId === siteId).map((s): StoredShift => ({ sourceKey: s.sourceKey, staffCode: s.staffCode, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end, endsNextDay: s.endsNextDay, cancelled: s.cancelled }));
+    return S().shifts.filter((s) => s.siteId === siteId).map((s): StoredShift => ({ sourceKey: s.sourceKey, staffCode: s.staffCode, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end, endsNextDay: s.endsNextDay, hours: s.hours, cancelled: s.cancelled }));
   },
   async applyShiftSync(siteId, plan, personIdByCode) {
     for (const s of [...plan.added, ...plan.changed.map((c) => c.after)]) {
@@ -286,6 +286,10 @@ export const demoStore: Store = {
       .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
       .map((s): ShiftView => ({ id: s.id, siteId: s.siteId, siteName: names.get(s.siteId) ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
         published: S().weeks.get(`${s.siteId}|${s.week}`) === "published", cancelled: s.cancelled }));
+  },
+  async teamShifts(siteId, week) {
+    return S().shifts.filter((s) => s.siteId === siteId && s.week === week && !s.cancelled)
+      .map((s) => ({ personId: s.personId, name: S().people.find((p) => p.id === s.personId)?.name ?? s.staffCode, section: s.section, date: s.date, start: s.start, end: s.end, hours: s.hours }));
   },
   async shiftsOnDate(date) {
     const names = new Map(S().sites.map((s) => [s.id, s.name]));

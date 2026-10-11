@@ -28,6 +28,8 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
 
 - **Handover tab** (prep and notes in one place): everything outstanding for the shift on one list, prep items from the last handover and notes together, each ticked Done (who and when are kept; undo within 10 minutes). Notes can be added at any time and show straight away: **Needs action** notes stay until ticked, **For info** notes show for that shift and the next, then drop off. Food-safety notes go to the top. At Eastcote the closing shift also does the **prep handover** from the same tab: one master list of 63 items, tap only what's needed (saved as a shared draft), Next shift / Tomorrow morning / Tomorrow evening, then "everything else is stocked". Anything not done carries into the next handover once, and the manager gets an alert.
 
+- **Team rota** (Rota tab, and "Team rota" on My shifts): the site's week laid out like the Schedule tab in the rota sheet, a grid on a computer and day by day on a phone. Everyone at the site can see published weeks; owners and managers also see paid hours, daily and weekly totals, and draft weeks (marked Draft). Paid hours come from the sheet's Export tab with each hourly sync.
+
 Not built yet: Wembley batch codes, labels, dispatch and receiving, and the remaining MVP features. See the PRD.
 
 ## Try it (demo mode)

@@ -513,13 +513,13 @@ export const sqlStore: Store = {
   },
   async siteShifts(siteId) {
     const q = sql();
-    const rows = await q<{ source_key: string; staff_code: string; section: string; week: string; starts_at: Date; ends_at: Date; cancelled_at: Date | null }[]>`
-      select s.source_key, p.staff_code, s.section, to_char(s.week_start, 'YYYY-MM-DD') as week, s.starts_at, s.ends_at, s.cancelled_at
+    const rows = await q<{ source_key: string; staff_code: string; section: string; week: string; starts_at: Date; ends_at: Date; cancelled_at: Date | null; paid_hours: string | null }[]>`
+      select s.source_key, p.staff_code, s.section, to_char(s.week_start, 'YYYY-MM-DD') as week, s.starts_at, s.ends_at, s.cancelled_at, s.paid_hours
       from shifts s join people p on p.id = s.person_id where s.site_id = ${siteId}`;
     return rows.map((r): StoredShift => {
       const date = londonDate(r.starts_at.getTime());
       const start = londonHM(r.starts_at.getTime()), end = londonHM(r.ends_at.getTime());
-      return { sourceKey: r.source_key, staffCode: r.staff_code, section: r.section, week: r.week, date, start, end, endsNextDay: end <= start, cancelled: !!r.cancelled_at };
+      return { sourceKey: r.source_key, staffCode: r.staff_code, section: r.section, week: r.week, date, start, end, endsNextDay: end <= start, hours: num(r.paid_hours), cancelled: !!r.cancelled_at };
     });
   },
   async applyShiftSync(siteId, plan, personIdByCode) {
@@ -533,16 +533,27 @@ export const sqlStore: Store = {
         if (!personId) continue;
         const t = times(s);
         await tx`
-          insert into shifts (site_id, person_id, section, starts_at, ends_at, source_key, week_start)
-          values (${siteId}, ${personId}, ${s.section}, ${t.starts}, ${t.ends}, ${s.sourceKey}, ${s.week})
+          insert into shifts (site_id, person_id, section, starts_at, ends_at, source_key, week_start, paid_hours)
+          values (${siteId}, ${personId}, ${s.section}, ${t.starts}, ${t.ends}, ${s.sourceKey}, ${s.week}, ${s.hours ?? null})
           on conflict (source_key) do update set person_id = excluded.person_id, section = excluded.section,
             starts_at = excluded.starts_at, ends_at = excluded.ends_at, week_start = excluded.week_start,
-            changed_at = now(), cancelled_at = null`;
+            paid_hours = coalesce(excluded.paid_hours, shifts.paid_hours), changed_at = now(), cancelled_at = null`;
       }
       for (const s of plan.cancelled) {
         await tx`update shifts set cancelled_at = now(), changed_at = now() where source_key = ${s.sourceKey} and cancelled_at is null`;
       }
     });
+  },
+  async teamShifts(siteId, week) {
+    const q = sql();
+    const rows = await q<{ person_id: string; name: string; section: string; starts_at: Date; ends_at: Date; paid_hours: string | null }[]>`
+      select s.person_id, p.display_name as name, s.section, s.starts_at, s.ends_at, s.paid_hours
+      from shifts s join people p on p.id = s.person_id
+      where s.site_id = ${siteId} and s.week_start = ${week} and s.cancelled_at is null`;
+    return rows.map((r) => ({
+      personId: r.person_id, name: r.name, section: r.section, date: londonDate(r.starts_at.getTime()),
+      start: londonHM(r.starts_at.getTime()), end: londonHM(r.ends_at.getTime()), hours: num(r.paid_hours),
+    }));
   },
   async shiftsForPerson(personId, fromDate, toDate) {
     if (!isUuid(personId)) return [];
