@@ -1,6 +1,6 @@
 import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Device } from "@/lib/domain/devices";
-import type { Notice, StoredShift, SyncPlan, WeekStatus } from "@/lib/domain/rota";
+import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib/domain/rota";
 import type { PrepEntry, PrepItem, PrepShift, SubmitPlan } from "@/lib/domain/prep";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
@@ -107,6 +107,8 @@ export interface Store {
   siteShifts(siteId: SiteId): Promise<StoredShift[]>;
   applyShiftSync(siteId: SiteId, plan: SyncPlan, personIdByCode: Map<string, string>): Promise<void>;
   shiftsForPerson(personId: string, fromDate: string, toDate: string): Promise<ShiftView[]>;
+  /** The site's shifts in one week (Monday, YYYY-MM-DD), not cancelled, with names. Published or not: the caller decides. */
+  teamShifts(siteId: SiteId, week: string): Promise<TeamShift[]>;
   /** Published, not-cancelled shifts on a London date, with the person's staff ID. */
   shiftsOnDate(date: string): Promise<(ShiftView & { personId: string; staffCode: string })[]>;
 

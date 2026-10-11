@@ -15,3 +15,4 @@
 - Secrets the server generates (VAPID push keys, scheduler token) live in `app_secrets`; the Supabase cron job `ops-hub-reminders` reads the `cron` token from there.
 - Kitchen prep: master list in `PREP_MASTER` (`src/lib/domain/prep.ts`) and `prep_items`; a test keeps them in step. Never delete or renumber an item: retire it with `active = false`. Submitted handovers and their entries are kept (database guards).
 - Handover tab (`src/app/handover/`) = notes (`handover_items`) + prep handover. Note rules (which notes show, which go on a report) are in `src/lib/domain/handover.ts`. Old `/prep` links redirect there.
+- Team rota (`/rota`): `buildTeamWeek` in `src/lib/domain/rota.ts`. Staff see published weeks with times only; paid hours (`shifts.paid_hours`, from the Export tab) and draft weeks are for owners and managers. Works for both session scopes (tablet and own phone).

@@ -16,7 +16,7 @@ export function TopBar({ ctx }: { ctx: Ctx }) {
   );
 }
 
-export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "owner" }) {
+export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "rota" | "owner" }) {
   const item = (href: string, id: typeof current, label: string, icon: string) => (
     <Link href={href} aria-current={current === id ? "page" : undefined}><Icon name={icon} />{label}</Link>
   );
@@ -24,6 +24,7 @@ export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "hand
     <nav className="nav" aria-label="Main">
       {item("/today", "today", "Today", "today")}
       {item("/handover", "handover", "Handover", "handover")}
+      {item("/rota", "rota", "Rota", "rota")}
       {ctx.isOwner && item("/owner", "owner", "Owner", "owner")}
     </nav>
   );
