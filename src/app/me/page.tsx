@@ -6,6 +6,8 @@ import { addDays, londonDate, shortDay } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { vapidKeys } from "@/lib/push";
 import { RemindersToggle } from "./RemindersToggle";
+import { TimeOffCard } from "./TimeOffCard";
+import { canCancel, kindLabel, rangeLabel } from "@/lib/domain/timeoff";
 import { NoticeBanner } from "@/components/NoticeBanner";
 import { inAudience, isLive, unreadFor } from "@/lib/domain/notices";
 
@@ -22,6 +24,7 @@ export default async function MyShifts() {
   const notices = (await db.notices(ctx.person.id, 25)).filter((n) => n.kind !== "notice").slice(0, 15);
   const teamNotices = await db.teamNotices(0);
   const unread = unreadFor(teamNotices, ctx.person, today);
+  const myTimeOff = (await db.timeOff({ personId: ctx.person.id, from: addDays(today, -60) })).filter((t) => t.status !== "cancelled" || t.endsOn >= today);
   const readLive = teamNotices.filter((n) => isLive(n, today) && inAudience(n, ctx.person) && !unread.includes(n));
   const session = await db.session(ctx.sessionId);
   const onTablet = !!session?.deviceId;
@@ -68,6 +71,11 @@ export default async function MyShifts() {
           ))}
         </section>
 
+        <TimeOffCard today={today} shiftDays={shifts.map((s) => s.date)} requests={myTimeOff.map((t) => ({
+          id: t.id, range: rangeLabel(t), kind: kindLabel(t.kind), status: t.status, note: t.note, canCancel: canCancel(t, today),
+          decision: t.decidedByName ? `${t.status === "approved" ? "approved" : "declined"} by ${t.decidedByName}${t.decisionNote ? `: "${t.decisionNote}"` : ""}` : undefined,
+        }))} />
+
         {readLive.length > 0 && (
           <details className="card">
             <summary className="strong" style={{ cursor: "pointer" }}>Team notices ({readLive.length})</summary>
@@ -87,7 +95,7 @@ export default async function MyShifts() {
           {notices.length === 0 && <div className="card muted">Rota messages appear here too, even if notifications are off.</div>}
           {notices.map((n) => (
             <div key={n.id} className="card stack" style={{ gap: 4 }}>
-              <div className="row"><span className="strong grow">{n.title}</span><span className="muted">{when(n.sendAfter)}</span></div>
+              <div className="row"><span className="strong grow">{n.title}</span><span className="muted">{when(n.createdAt)}</span></div>
               <div style={{ whiteSpace: "pre-line", fontSize: 14 }}>{n.body}</div>
             </div>
           ))}

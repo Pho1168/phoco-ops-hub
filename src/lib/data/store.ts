@@ -4,6 +4,7 @@ import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib
 import type { PrepEntry, PrepItem, PrepShift, SubmitPlan } from "@/lib/domain/prep";
 import type { ListInfo, RawAnswer, RunInfo } from "@/lib/domain/records";
 import type { TeamNotice } from "@/lib/domain/notices";
+import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
@@ -121,6 +122,15 @@ export interface Store {
   /** Records "Got it". Returns false if the notice doesn't exist. */
   readTeamNotice(id: string, personId: string): Promise<boolean>;
 
+  // Time off
+  /** Requests matching the filter (dates: any overlap with from..to), newest first. */
+  timeOff(filter: { personId?: string; siteIds?: SiteId[]; from?: string; to?: string; statuses?: TimeOffStatus[] }): Promise<TimeOff[]>;
+  requestTimeOff(t: { personId: string; siteId: SiteId; startsOn: string; endsOn: string; kind: TimeOffKind; note?: string }): Promise<string>;
+  /** Approve or decline a pending request. False if it isn't pending any more. */
+  decideTimeOff(id: string, decision: "approved" | "declined", personId: string, note?: string): Promise<boolean>;
+  /** Withdraw a pending or approved request. False if it can't be. */
+  cancelTimeOff(id: string): Promise<boolean>;
+
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;
   rotaSourceByToken(tokenHash: string): Promise<SiteId | undefined>;
@@ -141,6 +151,7 @@ export interface Store {
   queueNotice(n: { personId: string; kind: MessageKind; title: string; body: string; dedupeKey?: string; sendAfter: number }): Promise<boolean>;
   dueNotices(now: number, limit: number): Promise<NoticeRow[]>;
   markNoticeSent(id: string): Promise<void>;
+  /** A person's messages, newest first. They show in the app at once; quiet hours only hold back the phone alert. */
   notices(personId: string, limit: number): Promise<NoticeRow[]>;
   savePushSub(sub: PushSub): Promise<void>;
   pushSubs(personId: string): Promise<PushSub[]>;

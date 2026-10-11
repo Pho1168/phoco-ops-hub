@@ -9,6 +9,7 @@ import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, s
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
 import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
 import { readFileSync } from "node:fs";
+import { canCancel, canDecide, clashes, daysOf, offOn, rangeLabel, validateRequest, type TimeOff } from "./timeoff";
 import { audienceLabel, canPostTo, inAudience, isLive, readStats, unreadFor, type TeamNotice } from "./notices";
 import { change, groupTotals, siteWeekReport, type SiteWeekInput } from "./report";
 import { clampRange, datesBetween, readingLog, recordsSummary, signoffLog, type RawAnswer } from "./records";
@@ -584,5 +585,45 @@ describe("team notices", () => {
     expect(canPostTo(["EAS", "WEM"], ["EAS", "WEM"], undefined)).toBe(true);
     expect(audienceLabel(n({ sections: ["BOH"] }), "Eastcote")).toBe("BOH at Eastcote");
     expect(audienceLabel(n({ siteId: undefined }), undefined)).toBe("Everyone at all sites");
+  });
+});
+
+describe("time off", () => {
+  const today = "2026-10-12";
+  const t = (over: Partial<TimeOff> = {}): TimeOff => ({ id: "t", personId: "p", personName: "Anthony", siteId: "EAS", startsOn: "2026-10-20", endsOn: "2026-10-22",
+    kind: "holiday", status: "pending", createdAt: 1, ...over });
+  it("checks the dates", () => {
+    expect(validateRequest({ startsOn: "2026-10-20", endsOn: "2026-10-22" }, today, [])).toEqual({ ok: true });
+    expect(validateRequest({ startsOn: "2026-10-22", endsOn: "2026-10-20" }, today, [])).toMatchObject({ ok: false, error: "The last day is before the first day" });
+    expect(validateRequest({ startsOn: "2026-10-11", endsOn: "2026-10-12" }, today, [])).toMatchObject({ ok: false });
+    expect(validateRequest({ startsOn: "2026-11-01", endsOn: "2026-12-15" }, today, [])).toMatchObject({ ok: false, error: "Ask for at most 31 days at a time" });
+    expect(validateRequest({ startsOn: "", endsOn: "" }, today, [])).toMatchObject({ ok: false });
+  });
+  it("won't double-book days already asked for, unless that request was declined or withdrawn", () => {
+    expect(validateRequest({ startsOn: "2026-10-22", endsOn: "2026-10-23" }, today, [t()])).toMatchObject({ ok: false, error: "You've already asked for Tue 20 Oct to Thu 22 Oct" });
+    expect(validateRequest({ startsOn: "2026-10-22", endsOn: "2026-10-23" }, today, [t({ status: "declined" })])).toEqual({ ok: true });
+  });
+  it("lets a manager of the site decide, but not their own request", () => {
+    const mgr = { id: "m", access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] };
+    const owner = { id: "o", access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }] };
+    expect(canDecide(mgr, t())).toEqual({ ok: true });
+    expect(canDecide(mgr, t({ siteId: "WEM" }))).toMatchObject({ ok: false });
+    expect(canDecide(mgr, t({ personId: "m" }))).toMatchObject({ ok: false, error: "Another manager needs to decide your own request" });
+    expect(canDecide(owner, t({ personId: "o" }))).toEqual({ ok: true });
+    expect(canDecide(mgr, t({ status: "approved" }))).toMatchObject({ ok: false });
+  });
+  it("can be withdrawn while waiting, or before approved time off starts", () => {
+    expect(canCancel(t(), today)).toBe(true);
+    expect(canCancel(t({ status: "approved" }), today)).toBe(true);
+    expect(canCancel(t({ status: "approved", startsOn: today }), today)).toBe(false);
+    expect(canCancel(t({ status: "declined" }), today)).toBe(false);
+  });
+  it("finds rota clashes and who's off on a day", () => {
+    const shifts = [{ date: "2026-10-19" }, { date: "2026-10-21" }, { date: "2026-10-20" }];
+    expect(clashes(t(), shifts).map((s) => s.date)).toEqual(["2026-10-20", "2026-10-21"]);
+    expect(daysOf(t())).toEqual(["2026-10-20", "2026-10-21", "2026-10-22"]);
+    expect(offOn([t({ status: "approved" }), t({ id: "x" })], "2026-10-21").map((x) => x.id)).toEqual(["t"]);
+    expect(rangeLabel(t())).toBe("Tue 20 Oct to Thu 22 Oct (3 days)");
+    expect(rangeLabel(t({ endsOn: "2026-10-20" }))).toBe("Tue 20 Oct");
   });
 });

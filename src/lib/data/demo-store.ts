@@ -7,6 +7,7 @@ import { latestAnswers } from "@/lib/domain/checklist";
 import { londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
 import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
 import type { TeamNotice } from "@/lib/domain/notices";
+import type { TimeOff } from "@/lib/domain/timeoff";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -68,6 +69,7 @@ interface State {
   prepHandovers: Omit<PrepHandover, "entries" | "createdByName" | "submittedByName">[];
   prepEntries: PrepEntry[];
   teamNotices: TeamNotice[];
+  timeOff: TimeOff[];
 }
 
 function seed(): State {
@@ -98,7 +100,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [],
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [],
   };
 }
 
@@ -309,6 +311,29 @@ export const demoStore: Store = {
     return true;
   },
 
+  async timeOff(f) {
+    return S().timeOff.filter((t) => (!f.personId || t.personId === f.personId) && (!f.siteIds || f.siteIds.includes(t.siteId))
+      && (!f.from || t.endsOn >= f.from) && (!f.to || t.startsOn <= f.to) && (!f.statuses || f.statuses.includes(t.status)))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((t) => ({ ...t, personName: nameOf(t.personId) ?? "", decidedByName: nameOf(t.decidedBy) }));
+  },
+  async requestTimeOff(t) {
+    const id = randomUUID();
+    S().timeOff.push({ ...t, id, personName: "", status: "pending", createdAt: Date.now() });
+    return id;
+  },
+  async decideTimeOff(id, decision, personId, note) {
+    const t = S().timeOff.find((x) => x.id === id && x.status === "pending");
+    if (!t) return false;
+    Object.assign(t, { status: decision, decidedBy: personId, decidedAt: Date.now(), decisionNote: note });
+    return true;
+  },
+  async cancelTimeOff(id) {
+    const t = S().timeOff.find((x) => x.id === id && (x.status === "pending" || x.status === "approved"));
+    if (!t) return false;
+    t.status = "cancelled"; return true;
+  },
+
   async rotaSources() { return S().rotaSources.map((r) => ({ siteId: r.siteId, createdAt: r.createdAt, lastImportAt: r.lastImportAt, lastResult: r.lastResult })); },
   async rotaSourceByToken(tokenHash) { return S().rotaSources.find((r) => r.tokenHash === tokenHash)?.siteId; },
   async setRotaToken(siteId, tokenHash) {
@@ -359,7 +384,7 @@ export const demoStore: Store = {
   async dueNotices(now, limit) { return S().notices.filter((n) => !n.sentAt && n.sendAfter <= now).slice(0, limit); },
   async markNoticeSent(id) { const n = S().notices.find((x) => x.id === id); if (n) n.sentAt = Date.now(); },
   async notices(personId, limit) {
-    return S().notices.filter((n) => n.personId === personId && n.sendAfter <= Date.now()).sort((a, b) => b.sendAfter - a.sendAfter).slice(0, limit);
+    return S().notices.filter((n) => n.personId === personId).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
   },
   async savePushSub(sub) { S().pushSubs = [...S().pushSubs.filter((p) => p.endpoint !== sub.endpoint), sub]; },
   async pushSubs(personId) { return S().pushSubs.filter((p) => p.personId === personId); },

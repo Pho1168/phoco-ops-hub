@@ -7,6 +7,7 @@ import { addDays, londonDate, shortDay } from "@/lib/domain/time";
 import type { SiteId } from "@/lib/domain/types";
 import { current } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
+import { offOn } from "@/lib/domain/timeoff";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,11 @@ export default async function TeamRota({ searchParams }: { searchParams: { week?
   const published = status === "published";
   const visible = published || isManager;
   const team = buildTeamWeek(week, visible ? await db.teamShifts(site.id as SiteId, week) : [], isManager);
+  // Approved time off this week for people who work at this site.
+  const atSite = new Set((await db.people()).filter((p) => p.access.some((a) => a.siteId === site.id)).map((p) => p.id));
+  const leave = visible ? (await db.timeOff({ from: week, to: addDays(week, 6), statuses: ["approved"] })).filter((t) => atSite.has(t.personId)) : [];
+  const offNames = (date: string) => offOn(leave, date).map((t) => t.personName);
+  const isOff = (personId: string, date: string) => offOn(leave, date).some((t) => t.personId === personId);
   const href = (w: string) => `/rota?week=${w}${site.id !== ctx.site.id ? `&site=${site.id}` : ""}`;
   const me = ctx.person.id;
 
@@ -72,9 +78,9 @@ export default async function TeamRota({ searchParams }: { searchParams: { week?
         </div>
 
         {!visible && <div className="card muted">This week&apos;s rota isn&apos;t published yet. It shows here as soon as it is.</div>}
-        {visible && team.rows.length === 0 && <div className="card muted">No shifts on the rota for this week{status ? "" : " yet"}.</div>}
+        {visible && team.rows.length === 0 && leave.length === 0 && <div className="card muted">No shifts on the rota for this week{status ? "" : " yet"}.</div>}
 
-        {visible && team.rows.length > 0 && (
+        {visible && (team.rows.length > 0 || leave.length > 0) && (
           <>
             {isManager && (
               <div className="row wrap" style={{ gap: 10 }}>
@@ -100,8 +106,9 @@ export default async function TeamRota({ searchParams }: { searchParams: { week?
                       <th scope="row"><span className="strong" style={{ fontSize: 15 }}>{r.name}</span> <span className={`sec ${r.section}`}>{r.section}</span></th>
                       {r.days.map((cell, i) => (
                         <td key={i} className={team.days[i] === today ? "today" : ""}>
+                          {cell.length === 0 && isOff(r.personId, team.days[i]) && <div className="slot off">Off</div>}
                           {cell.map((s) => (
-                            <div key={s!.start} className={`slot ${s!.section}`}>
+                            <div key={s!.start} className={`slot ${s!.section}${isManager && isOff(s!.personId, s!.date) ? " clash" : ""}`} title={isManager && isOff(s!.personId, s!.date) ? "On approved time off" : undefined}>
                               {s!.start}–{s!.end}
                               {s!.hours !== undefined && <span className="slot-hrs">{fmtHours(s!.hours)}h paid</span>}
                             </div>
@@ -111,6 +118,13 @@ export default async function TeamRota({ searchParams }: { searchParams: { week?
                       {isManager && <td className="num-cell">{fmtHours(r.hours)}</td>}
                     </tr>
                   ))}
+                  {leave.length > 0 && (
+                    <tr className="off-row">
+                      <th scope="row">Time off</th>
+                      {team.days.map((d) => <td key={d}>{offNames(d).map((n) => <div key={n} className="slot off">{n}</div>)}</td>)}
+                      {isManager && <td />}
+                    </tr>
+                  )}
                 </tbody>
                 <tfoot>
                   <tr><th scope="row">On shift</th>{team.onShift.map((n, i) => <td key={i} className="num-cell">{n}</td>)}{isManager && <td className="num-cell">{team.people}</td>}</tr>
@@ -127,8 +141,9 @@ export default async function TeamRota({ searchParams }: { searchParams: { week?
                     <span className="strong grow">{d.date === today ? "Today" : dayName(d.date)} {shortDay(d.date).split(" ").slice(1).join(" ")}</span>
                     <span className="muted">{d.shifts.length ? `${new Set(d.shifts.map((s) => s.personId)).size} on` : "Nobody on"}{isManager && team.dayHours ? ` · ${fmtHours(team.dayHours[team.days.indexOf(d.date)])}h` : ""}</span>
                   </div>
+                  {offNames(d.date).length > 0 && <div className="muted">Off: {offNames(d.date).join(", ")}</div>}
                   {d.shifts.map((s) => (
-                    <div key={`${s.personId}|${s.section}|${s.start}`} className={`row rota-line${s.personId === me ? " me" : ""}`} style={{ gap: 10 }}>
+                    <div key={`${s.personId}|${s.section}|${s.start}`} className={`row rota-line${s.personId === me ? " me" : ""}${isManager && isOff(s.personId, s.date) ? " clash" : ""}`} style={{ gap: 10 }}>
                       <span className={`sec ${s.section}`}>{s.section}</span>
                       <span className="grow">{s.name}{s.personId === me ? " (you)" : ""}</span>
                       <span className="strong" style={{ fontSize: 15, fontVariantNumeric: "tabular-nums" }}>{s.start}–{s.end}</span>

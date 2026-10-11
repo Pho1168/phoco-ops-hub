@@ -11,7 +11,8 @@ import { pushToPerson } from "@/lib/push";
 import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
-import { canFreeze, canSignIn, isPinLocked, managedSites, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
+import { canFreeze, canManage, canSignIn, isPinLocked, managedSites, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
+import { canCancel, canDecide, clashes, kindLabel, rangeLabel, validateRequest } from "@/lib/domain/timeoff";
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
 import { afterQuietHours, londonDate } from "@/lib/domain/time";
 import { deliverDue } from "@/lib/rota-service";
@@ -634,5 +635,78 @@ export async function readNotice(id: string): Promise<ActionResult> {
   if (!n || !inAudience(n, ctx.person)) return { ok: false, error: "That notice isn't for you" };
   await db.readTeamNotice(n.id, ctx.person.id);
   revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/manage/notices");
+  return { ok: true };
+}
+
+// ---------- time off ----------
+const IsoDateZ = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date");
+const TimeOffZ = z.object({
+  startsOn: IsoDateZ, endsOn: IsoDateZ,
+  kind: z.enum(["holiday", "unpaid", "other"]),
+  note: z.string().trim().max(300, "Keep the note under 300 characters").optional(),
+});
+
+/** Messages the managers of a site (not the person themself) about time off. Pushed if they have notifications on. */
+async function tellManagers(siteId: SiteId, exceptId: string, title: string, body: string, dedupeKey: string) {
+  const db = store();
+  const now = Date.now();
+  let n = 0;
+  for (const p of (await db.people()).filter((p) => p.status === "active" && p.id !== exceptId && canManage(p, siteId))) {
+    if (await db.queueNotice({ personId: p.id, kind: "leave", title, body, dedupeKey: `${dedupeKey}|${p.id}`, sendAfter: afterQuietHours(now) })) n++;
+  }
+  if (n) await deliverDue(now);
+}
+
+/** Staff ask for time off, from their own phone or the shop tablet. */
+export async function requestTimeOff(input: unknown): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const t = TimeOffZ.safeParse(input);
+  if (!t.success) return { ok: false, error: t.error.issues[0]?.message ?? "That request couldn't be sent" };
+  const db = store();
+  const today = londonDate(Date.now());
+  const check = validateRequest(t.data, today, await db.timeOff({ personId: ctx.person.id }));
+  if (!check.ok) return check;
+  const id = await db.requestTimeOff({ personId: ctx.person.id, siteId: ctx.site.id, ...t.data, note: t.data.note || undefined });
+  const onRota = clashes(t.data, (await db.shiftsForPerson(ctx.person.id, t.data.startsOn, t.data.endsOn)).filter((s) => !s.cancelled));
+  await tellManagers(ctx.site.id, ctx.person.id, `Time off request: ${ctx.person.name}`,
+    `${rangeLabel(t.data)} · ${kindLabel(t.data.kind)}${onRota.length ? ` · ${onRota.length} rota shift${onRota.length > 1 ? "s" : ""} on those days` : ""}${t.data.note ? `\n"${t.data.note}"` : ""}`, `timeoff|${id}`);
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "timeoff.request", detail: `Asked for ${rangeLabel(t.data)} (${kindLabel(t.data.kind)})` });
+  revalidatePath("/me"); revalidatePath("/manage/time-off");
+  return { ok: true };
+}
+
+/** A manager approves or declines. The person is told either way. */
+export async function decideTimeOff(id: string, decision: "approved" | "declined", note: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const db = store();
+  const t = (await db.timeOff({ siteIds: managedSites(ctx.person) })).find((x) => x.id === id);
+  if (!t) return { ok: false, error: "That request isn't there any more" };
+  const ok = canDecide(ctx.person, t);
+  if (!ok.ok) return ok;
+  const d = z.enum(["approved", "declined"]).parse(decision);
+  const why = z.string().trim().max(300).parse(note ?? "");
+  if (!(await db.decideTimeOff(t.id, d, ctx.person.id, why || undefined))) return { ok: false, error: "Someone else has just decided this one" };
+  const now = Date.now();
+  await db.queueNotice({ personId: t.personId, kind: "leave", title: `Time off ${d === "approved" ? "approved" : "declined"}`,
+    body: `${rangeLabel(t)} · ${kindLabel(t.kind)}${why ? `\n${ctx.person.name}: "${why}"` : `\nDecided by ${ctx.person.name}`}`, dedupeKey: `timeoff-decided|${t.id}`, sendAfter: afterQuietHours(now) });
+  await deliverDue(now);
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: `timeoff.${d === "approved" ? "approve" : "decline"}`, detail: `${d === "approved" ? "Approved" : "Declined"} ${t.personName}: ${rangeLabel(t)}${why ? ` (${why})` : ""}` });
+  revalidatePath("/manage/time-off"); revalidatePath("/rota"); revalidatePath("/me");
+  return { ok: true };
+}
+
+/** Staff withdraw a request that's waiting, or approved time off that hasn't started. */
+export async function cancelTimeOff(id: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  const db = store();
+  const t = (await db.timeOff({ personId: ctx.person.id })).find((x) => x.id === id);
+  if (!t) return { ok: false, error: "That request isn't there any more" };
+  if (!canCancel(t, londonDate(Date.now()))) return { ok: false, error: "This can't be withdrawn now. Speak to your manager" };
+  if (!(await db.cancelTimeOff(t.id))) return { ok: false, error: "It has already changed" };
+  if (t.status === "approved") await tellManagers(t.siteId, ctx.person.id, `Time off withdrawn: ${ctx.person.name}`, `${rangeLabel(t)} is no longer needed`, `timeoff-withdrawn|${t.id}`);
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "timeoff.cancel", detail: `Withdrew ${rangeLabel(t)}` });
+  revalidatePath("/me"); revalidatePath("/manage/time-off"); revalidatePath("/rota");
   return { ok: true };
 }

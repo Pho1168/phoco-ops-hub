@@ -8,8 +8,9 @@ import type { ManageCounts } from "./ManageTiles";
 export async function manageCounts(managed: SiteId[]): Promise<ManageCounts> {
   const db = store();
   const today = londonDate(Date.now());
-  const notices = await db.teamNotices(0);
+  const [notices, pending] = await Promise.all([db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] })]);
   return {
+    timeOffPending: pending.length,
     noticesActive: notices.filter((n) => isLive(n, today) && (!n.siteId || managed.includes(n.siteId))).length,
   };
 }

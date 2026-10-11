@@ -268,3 +268,7 @@ table.rec tr.warn td { background: color-mix(in srgb, var(--accent) 6%, transpar
 .read-bar > i { display: block; height: 100%; background: var(--brand); border-radius: 999px; }
 .choice.pick { color: var(--brand); }
 .choice.pick[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.slot.off { background: var(--surface-2); color: var(--ink-2); font-weight: 600; }
+.slot.clash { outline: 2px solid var(--bad); }
+.rota-line.clash { outline: 2px solid var(--bad); border-radius: 8px; }
+.timeoff-row { border-top: 1px solid var(--line); padding-top: 10px; }

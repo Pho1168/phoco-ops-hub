@@ -3,6 +3,7 @@ import type { Answer, Area, Checklist, Outcome, Person, Role, Site, SiteId, Temp
 import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
 import type { RawAnswer } from "@/lib/domain/records";
 import type { TeamNotice } from "@/lib/domain/notices";
+import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -560,6 +561,46 @@ export const sqlStore: Store = {
     return true;
   },
 
+  // ---------- time off ----------
+  async timeOff(f) {
+    const q = sql();
+    if (f.personId && !isUuid(f.personId)) return [];
+    const rows = await q<{ id: string; person_id: string; person_name: string; site_id: SiteId; starts_on: string; ends_on: string; kind: TimeOffKind; note: string | null;
+      status: TimeOffStatus; created_at: Date; decided_by: string | null; decided_by_name: string | null; decided_at: Date | null; decision_note: string | null }[]>`
+      select t.id, t.person_id, p.display_name as person_name, t.site_id, to_char(t.starts_on, 'YYYY-MM-DD') as starts_on, to_char(t.ends_on, 'YYYY-MM-DD') as ends_on,
+        t.kind, t.note, t.status, t.created_at, t.decided_by, d.display_name as decided_by_name, t.decided_at, t.decision_note
+      from time_off t join people p on p.id = t.person_id left join people d on d.id = t.decided_by
+      where true
+        ${f.personId ? q`and t.person_id = ${f.personId}` : q``}
+        ${f.siteIds ? q`and t.site_id = any(${f.siteIds}::text[])` : q``}
+        ${f.from ? q`and t.ends_on >= ${f.from}` : q``}
+        ${f.to ? q`and t.starts_on <= ${f.to}` : q``}
+        ${f.statuses ? q`and t.status = any(${f.statuses}::text[])` : q``}
+      order by t.created_at desc limit 300`;
+    return rows.map((r): TimeOff => ({
+      id: r.id, personId: r.person_id, personName: r.person_name, siteId: r.site_id, startsOn: r.starts_on, endsOn: r.ends_on, kind: r.kind, note: opt(r.note),
+      status: r.status, createdAt: r.created_at.getTime(), decidedBy: opt(r.decided_by), decidedByName: opt(r.decided_by_name), decidedAt: ms(r.decided_at), decisionNote: opt(r.decision_note),
+    }));
+  },
+  async requestTimeOff(t) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into time_off (person_id, site_id, starts_on, ends_on, kind, note)
+      values (${t.personId}, ${t.siteId}, ${t.startsOn}, ${t.endsOn}, ${t.kind}, ${t.note ?? null}) returning id`;
+    return r.id;
+  },
+  async decideTimeOff(id, decision, personId, note) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update time_off set status = ${decision}, decided_by = ${personId}, decided_at = now(), decision_note = ${note ?? null}
+                    where id = ${id} and status = 'pending' returning id`).length > 0;
+  },
+  async cancelTimeOff(id) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update time_off set status = 'cancelled', cancelled_at = now() where id = ${id} and status in ('pending', 'approved') returning id`).length > 0;
+  },
+
   // ---------- rota ----------
   async rotaSources() {
     const q = sql();
@@ -695,7 +736,7 @@ export const sqlStore: Store = {
     const q = sql();
     const rows = await q<NoticeDbRow[]>`
       select id, person_id, kind, title, body, send_after, sent_at, created_at from notifications
-      where person_id = ${personId} and send_after <= now() order by send_after desc limit ${limit}`;
+      where person_id = ${personId} order by created_at desc limit ${limit}`;
     return rows.map(toNotice);
   },
   async savePushSub(sub) {
