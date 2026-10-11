@@ -196,9 +196,21 @@ export const demoStore: Store = {
     if (a && !a.resolvedAt) { a.resolvedAt = Date.now(); a.resolvedBy = personId; a.resolutionNote = note; }
   },
 
-  async handover(siteId) { return S().handover.filter((h) => h.siteId === siteId); },
+  async handover(siteId, createdSince = Date.now() - 7 * 86_400_000) {
+    return S().handover.filter((h) => h.siteId === siteId && (!h.closedAt || h.createdAt >= createdSince))
+      .map((h) => ({ ...h, closedByName: h.closedBy ? nameOf(h.closedBy) : undefined }));
+  },
   async addHandover(h) { S().handover.unshift({ ...h, createdByName: S().people.find((p) => p.id === h.createdBy)?.name ?? "", id: randomUUID(), createdAt: Date.now() }); },
-  async closeHandover(id, personId) { const h = S().handover.find((x) => x.id === id); if (h && !h.closedAt) { h.closedAt = Date.now(); h.closedBy = personId; } },
+  async closeHandover(id, siteId, personId) {
+    const h = S().handover.find((x) => x.id === id && x.siteId === siteId && !x.closedAt);
+    if (!h) return false;
+    h.closedAt = Date.now(); h.closedBy = personId; return true;
+  },
+  async reopenHandover(id, siteId) {
+    const h = S().handover.find((x) => x.id === id && x.siteId === siteId && x.closedAt);
+    if (!h) return false;
+    h.closedAt = undefined; h.closedBy = undefined; return true;
+  },
 
   async prepItems() { return S().prepItems; },
   async prepEnabledSites() { return S().prepSites; },

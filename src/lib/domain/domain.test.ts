@@ -9,6 +9,7 @@ import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, s
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
 import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
 import { readFileSync } from "node:fs";
+import { currentNotes, noteOrder, notesForHandover, INFO_NOTE_MAX_HOURS } from "./handover";
 import type { Answer, Checklist, Person, Site, TempRule } from "./types";
 
 const FRIDGE: TempRule = { code: "F", label: "Fridge", targetMax: 5, legalMax: 8 };
@@ -343,5 +344,36 @@ describe("kitchen prep", () => {
     expect(canUndo(1_000, 1_000 + 9 * 60_000)).toBe(true);
     expect(canUndo(1_000, 1_000 + 11 * 60_000)).toBe(false);
     expect(canUndo(undefined, 1_000)).toBe(false);
+  });
+});
+
+describe("handover notes", () => {
+  const H = 3_600_000;
+  const now = 100 * H;
+  const note = (createdAt: number, needsAction: boolean, extra: { closedAt?: number; category?: string } = {}) => ({ createdAt, needsAction, category: "Equipment", ...extra });
+
+  it("keeps needs-action notes until they're ticked, however old", () => {
+    const old = note(now - 30 * 24 * H, true);
+    expect(currentNotes([old], [now - 2 * H, now - 26 * H], now)).toEqual([old]);
+    expect(currentNotes([{ ...old, closedAt: now - H }], [], now)).toEqual([]);
+  });
+  it("shows a for-info note until a second handover is sent after it", () => {
+    const info = note(now - 20 * H, false);
+    expect(currentNotes([info], [], now)).toHaveLength(1);                       // nothing sent yet
+    expect(currentNotes([info], [now - 10 * H], now)).toHaveLength(1);          // its own handover sent: next shift sees it
+    expect(currentNotes([info], [now - H, now - 10 * H], now)).toHaveLength(0); // another handover since: gone
+  });
+  it(`drops for-info notes after ${INFO_NOTE_MAX_HOURS} hours where no handover is sent`, () => {
+    expect(currentNotes([note(now - (INFO_NOTE_MAX_HOURS - 1) * H, false)], [], now)).toHaveLength(1);
+    expect(currentNotes([note(now - (INFO_NOTE_MAX_HOURS + 1) * H, false)], [], now)).toHaveLength(0);
+  });
+  it("puts the notes written since the previous handover on a report", () => {
+    const a = note(5 * H, false), b = note(15 * H, true), c = note(25 * H, false);
+    expect(notesForHandover([a, b, c], 20 * H, 10 * H)).toEqual([b]);
+    expect(notesForHandover([a, b, c], 20 * H, undefined)).toEqual([a, b]);
+  });
+  it("orders food safety first, then needs action, then newest", () => {
+    const list = [note(1, false), note(2, true), note(3, false, { category: "Food safety" }), note(4, true)];
+    expect(noteOrder(list).map((n) => n.createdAt)).toEqual([3, 4, 2, 1]);
   });
 });

@@ -356,18 +356,18 @@ export const sqlStore: Store = {
             where id = ${id} and resolved_at is null`;
   },
 
-  async handover(siteId) {
+  async handover(siteId, createdSince = Date.now() - 7 * 86_400_000) {
     const q = sql();
-    const rows = await q<{ id: string; site_id: SiteId; category: string; body: string; needs_action: boolean; created_by: string; created_by_name: string | null; created_at: Date; closed_at: Date | null; closed_by: string | null }[]>`
+    const rows = await q<{ id: string; site_id: SiteId; category: string; body: string; needs_action: boolean; created_by: string; created_by_name: string | null; created_at: Date; closed_at: Date | null; closed_by: string | null; closed_by_name: string | null }[]>`
       select h.id, h.site_id, h.category, h.body, h.needs_action, h.created_by, p.display_name as created_by_name,
-             h.created_at, h.closed_at, h.closed_by
-      from handover_items h left join people p on p.id = h.created_by
-      where h.site_id = ${siteId} and (h.closed_at is null or h.closed_at > now() - interval '7 days')
+             h.created_at, h.closed_at, h.closed_by, c.display_name as closed_by_name
+      from handover_items h left join people p on p.id = h.created_by left join people c on c.id = h.closed_by
+      where h.site_id = ${siteId} and (h.closed_at is null or h.created_at >= ${new Date(createdSince)})
       order by h.created_at desc`;
     return rows.map((r): HandoverItem => ({
       id: r.id, siteId: r.site_id, category: r.category, body: r.body, needsAction: r.needs_action,
       createdBy: r.created_by, createdByName: r.created_by_name ?? "", createdAt: r.created_at.getTime(),
-      closedAt: ms(r.closed_at), closedBy: opt(r.closed_by),
+      closedAt: ms(r.closed_at), closedBy: opt(r.closed_by), closedByName: opt(r.closed_by_name),
     }));
   },
   async addHandover(h) {
@@ -375,10 +375,19 @@ export const sqlStore: Store = {
     await q`insert into handover_items (site_id, category, body, needs_action, created_by)
             values (${h.siteId}, ${h.category}, ${h.body}, ${h.needsAction}, ${h.createdBy})`;
   },
-  async closeHandover(id, personId) {
-    if (!isUuid(id)) return;
+  async closeHandover(id, siteId, personId) {
+    if (!isUuid(id)) return false;
     const q = sql();
-    await q`update handover_items set closed_at = now(), closed_by = ${personId} where id = ${id} and closed_at is null`;
+    const r = await q`update handover_items set closed_at = now(), closed_by = ${personId}
+                      where id = ${id} and site_id = ${siteId} and closed_at is null returning id`;
+    return r.length > 0;
+  },
+  async reopenHandover(id, siteId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    const r = await q`update handover_items set closed_at = null, closed_by = null
+                      where id = ${id} and site_id = ${siteId} and closed_at is not null returning id`;
+    return r.length > 0;
   },
 
   async prepItems() {

@@ -14,7 +14,7 @@ export interface RotaSource { siteId: SiteId; createdAt: number; lastImportAt?: 
 export interface Run { listId: string; date: string; answers: Answer[]; signedBy?: string; signedAt?: number }
 export interface Alert { id: string; siteId: SiteId; level: "warning" | "critical"; title: string; detail: string; dedupeKey: string; createdAt: number; resolvedAt?: number; resolvedBy?: string; resolutionNote?: string }
 /** createdBy/closedBy are person ids; createdByName is filled in by the store for display. */
-export interface HandoverItem { id: string; siteId: SiteId; category: string; body: string; needsAction: boolean; createdBy: string; createdByName: string; createdAt: number; closedAt?: number; closedBy?: string }
+export interface HandoverItem { id: string; siteId: SiteId; category: string; body: string; needsAction: boolean; createdBy: string; createdByName: string; createdAt: number; closedAt?: number; closedBy?: string; closedByName?: string }
 /** A prep entry with display names filled in by the store. */
 export interface PrepEntryView extends PrepEntry { createdByName: string; completedByName?: string }
 export interface PrepHandover {
@@ -67,9 +67,13 @@ export interface Store {
   raiseAlert(a: Omit<Alert, "id" | "createdAt">): Promise<void>;
   resolveAlert(id: string, personId: string, note: string): Promise<void>;
 
-  handover(siteId: SiteId): Promise<HandoverItem[]>;
+  /** The site's open notes, plus every note written since `createdSince` (default: the last 7 days). */
+  handover(siteId: SiteId, createdSince?: number): Promise<HandoverItem[]>;
   addHandover(h: Omit<HandoverItem, "id" | "createdAt" | "createdByName">): Promise<void>;
-  closeHandover(id: string, personId: string): Promise<void>;
+  /** Ticks a note done. Returns false if it isn't at that site or is already done. */
+  closeHandover(id: string, siteId: SiteId, personId: string): Promise<boolean>;
+  /** Puts a done note back (for a mis-tap). Returns false if it isn't at that site or isn't done. */
+  reopenHandover(id: string, siteId: SiteId): Promise<boolean>;
 
   // Kitchen prep (one master list for every restaurant; handovers per site)
   prepItems(): Promise<PrepItem[]>;

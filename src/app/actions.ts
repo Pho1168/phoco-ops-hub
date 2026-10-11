@@ -15,6 +15,7 @@ import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure 
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
+import { NOTE_CATEGORIES } from "@/lib/domain/handover";
 import { canChangeAccess, canMarkLeft, normalizeStaffCode, validatePersonInput } from "@/lib/domain/staff";
 import type { SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
@@ -185,19 +186,40 @@ export async function signOffRun(listId: string, pin: string): Promise<ActionRes
   return { ok: true };
 }
 
-export async function addHandover(form: FormData): Promise<void> {
+// ---------- handover notes ----------
+const NoteZ = z.object({
+  category: z.enum(NOTE_CATEGORIES),
+  body: z.string().trim().min(1, "Write the note first").max(1000, "Keep the note under 1000 characters"),
+  needsAction: z.boolean(),
+});
+
+/** A note for the next shift. Shows straight away on the Handover tab and goes on the next handover report. */
+export async function addNote(input: unknown): Promise<ActionResult> {
   const ctx = await requireCtx();
-  const body = String(form.get("body") || "").trim().slice(0, 1000);
-  if (!body) return;
-  await store().addHandover({ siteId: ctx.site.id, category: String(form.get("category") || "Note"), body, needsAction: form.get("needsAction") === "on", createdBy: ctx.person.id });
-  await store().audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "handover.add", detail: body });
-  revalidatePath("/handover");
+  const n = NoteZ.safeParse(input);
+  if (!n.success) return { ok: false, error: n.error.issues[0]?.message ?? "That note couldn't be saved" };
+  await store().addHandover({ siteId: ctx.site.id, createdBy: ctx.person.id, ...n.data });
+  await store().audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "handover.add",
+    detail: `${n.data.needsAction ? "Needs action" : "For info"} · ${n.data.category}: ${n.data.body}` });
+  revalidatePath("/handover"); revalidatePath("/today");
+  return { ok: true };
 }
 
-export async function closeHandover(id: string): Promise<void> {
+/** Ticks a note done, or puts it back within a few minutes if it was a mis-tap. */
+export async function setNoteDone(id: string, done: boolean): Promise<ActionResult> {
   const ctx = await requireCtx();
-  await store().closeHandover(z.string().max(64).parse(id), ctx.person.id);
-  revalidatePath("/handover");
+  const noteId = z.string().uuid().safeParse(id);
+  if (!noteId.success) return { ok: false, error: "That note isn't on this site's handover" };
+  const db = store();
+  const note = (await db.handover(ctx.site.id)).find((h) => h.id === noteId.data);
+  if (!note) return { ok: false, error: "That note isn't on this site's handover" };
+  if (!z.boolean().parse(done) && !canUndo(note.closedAt, Date.now())) return { ok: false, error: "It's too late to undo this one" };
+  const changed = done ? await db.closeHandover(note.id, ctx.site.id, ctx.person.id) : await db.reopenHandover(note.id, ctx.site.id);
+  if (!changed) return { ok: false, error: done ? "Someone has already done this one" : "This note has already changed" };
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: done ? "handover.close" : "handover.reopen",
+    detail: `${done ? "Done" : "Put back"}: ${note.category}: ${note.body.slice(0, 120)}` });
+  revalidatePath("/handover"); revalidatePath("/today");
+  return { ok: true };
 }
 
 // ---------- kitchen prep ----------
@@ -249,7 +271,7 @@ export async function prepSubmit(): Promise<ActionResult & { id?: string }> {
   }
   await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "prep.submit",
     detail: `Kitchen prep handover for ${shiftLabel(draft.shift).toLowerCase()}: ${needed} needed (${plan.carryIn.length + plan.merge.length} carried over), ${plan.stockedCount} confirmed stocked` });
-  revalidatePath("/prep"); revalidatePath("/today");
+  revalidatePath("/handover"); revalidatePath("/today");
   return { ok: true, id: handoverId };
 }
 
@@ -267,7 +289,7 @@ export async function prepSetDone(handoverId: string, entryId: string, done: boo
     const name = (await db.prepItems()).find((i) => i.id === e.itemId)?.name ?? e.itemId;
     await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "prep.undo", detail: `Put "${name}" back to outstanding` });
   }
-  revalidatePath("/prep"); revalidatePath("/today");
+  revalidatePath("/handover"); revalidatePath("/today");
   return { ok: true };
 }
 
