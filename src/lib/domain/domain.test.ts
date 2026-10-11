@@ -9,6 +9,7 @@ import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, s
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
 import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
 import { readFileSync } from "node:fs";
+import { change, groupTotals, siteWeekReport, type SiteWeekInput } from "./report";
 import { clampRange, datesBetween, readingLog, recordsSummary, signoffLog, type RawAnswer } from "./records";
 import { managedSites, canManage } from "./access";
 import { currentNotes, noteOrder, notesForHandover, INFO_NOTE_MAX_HOURS } from "./handover";
@@ -481,5 +482,65 @@ describe("inspection records", () => {
     const mgr = { access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }, { siteId: "WEM" as const, role: "staff" as const, sections: [] }] };
     expect(managedSites(mgr)).toEqual(["EAS"]);
     expect(canManage(mgr, "WEM")).toBe(false);
+  });
+});
+
+describe("weekly report", () => {
+  const H = 3_600_000;
+  const week = "2026-10-05";
+  const now = londonToUtc("2026-10-12", "09:00");
+  const reading = (itemText: string, outcome: "ok" | "warn" | "bad", action?: string) =>
+    ({ date: "2026-10-06", at: now - 100 * H, listId: "L", listName: "Temps", itemId: itemText, itemText, value: "1", outcome, byName: "A", ...(action ? { action } : {}) });
+  const signoff = (listName: string, status: "on_time" | "late" | "not_signed" | "open") => ({ date: "2026-10-06", listId: listName, listName, area: "BOH" as const, status, answered: 1, total: 1 });
+  const input: SiteWeekInput = {
+    week, now, trackingFrom: "2026-10-01",
+    readings: [reading("Fridge 2", "bad", "Moved stock"), reading("Fridge 2", "warn"), reading("Fridge 1", "ok")],
+    signoffs: [signoff("Opening", "on_time"), signoff("Opening", "on_time"), signoff("Closing", "late"), signoff("Clean", "not_signed"), signoff("Clean", "not_signed"), signoff("Toilets", "open")],
+    alerts: [{ createdAt: now - 50 * H, resolvedAt: now - 47 * H, level: "critical" }, { createdAt: now - 5 * H, level: "warning" }],
+    notes: [{ createdAt: now - 72 * H, closedAt: now - 20 * H, needsAction: true, category: "Equipment" }, { createdAt: now - 10 * H, needsAction: true, category: "Stock shortage" }, { createdAt: now - 10 * H, needsAction: false, category: "Other" }],
+    prep: [{ submittedAt: now - 30 * H, entries: [{ status: "completed" }, { status: "carried" }, { status: "outstanding", carriedFrom: "x" }] }],
+    shifts: [
+      { personId: "a", name: "A", section: "FOH", date: "2026-10-05", start: "11:00", end: "22:15", hours: 9.75 },
+      { personId: "b", name: "B", section: "BOH", date: "2026-10-05", start: "11:00", end: "22:15", hours: 9.75 },
+      { personId: "b", name: "B", section: "BOH", date: "2026-10-06", start: "11:00", end: "15:00", hours: 4 },
+    ],
+  };
+  const r = siteWeekReport(input);
+  it("counts checks without the ones still open today", () => {
+    expect(r.checks).toMatchObject({ expected: 5, onTime: 2, late: 1, notSigned: 2, onTimeRate: 40 });
+    expect(r.checks.worst[0]).toEqual({ listName: "Clean", missed: 2 });
+  });
+  it("counts temperatures, alerts, handover and prep", () => {
+    expect(r.temps).toMatchObject({ readings: 3, outOfRange: 2, critical: 1, withAction: 1 });
+    expect(r.alerts).toMatchObject({ raised: 2, resolved: 1, open: 1, avgHoursToResolve: 3 });
+    expect(r.handover).toMatchObject({ notes: 3, actions: 2, actionsDone: 1, slow: 1 });
+    expect(r.prep).toEqual({ sent: 1, needed: 2, carried: 1 });
+  });
+  it("adds up planned hours by day and section", () => {
+    expect(r.rota.hours).toBe(23.5);
+    expect(r.rota.people).toBe(2);
+    expect(r.rota.byDay.slice(0, 2)).toEqual([19.5, 4]);
+    expect(r.rota.bySection).toEqual([{ section: "BOH", hours: 13.75 }, { section: "FOH", hours: 9.75 }]);
+  });
+  it("lists what needs attention, most serious first", () => {
+    const texts = r.attention.map((a) => a.text);
+    expect(r.attention[0].level).toBe("critical");
+    expect(texts[0]).toBe("1 temperature reading outside the limits with no corrective action recorded");
+    expect(texts).toContain("1 alert still open");
+    expect(texts).toContain("Clean not signed off on 2 days");
+    expect(texts).toContain("Fridge 2 out of range 2 times: worth checking the unit");
+    expect(texts).toContain("1 prep item not done by the next shift");
+  });
+  it("says when a site hasn't started using checklists", () => {
+    const empty = siteWeekReport({ ...input, trackingFrom: undefined, readings: [], signoffs: [], alerts: [], notes: [], prep: [], shifts: [] });
+    expect(empty.started).toBe(false);
+    expect(empty.rota.hours).toBeNull();
+    expect(empty.attention.map((a) => a.level)).toEqual(["info"]);
+  });
+  it("totals the group and compares weeks", () => {
+    const g = groupTotals([r, r], 3);
+    expect(g).toMatchObject({ sites: 2, expected: 10, onTime: 4, onTimeRate: 40, openAlerts: 2, hours: 47, people: 3 });
+    expect(change(40, 30)).toBe(10);
+    expect(change(null, 30)).toBeUndefined();
   });
 });
