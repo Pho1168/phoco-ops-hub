@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  dailyDigest, dayLine, gasConfirmedMessages, gasDay, gasMessages, gasState, notReadyMessages, openGasDay, readyHeadline, readyToOpen,
+  dailyDigest, dayLine, gasConfirmedMessages, gasDay, gasMessages, gasState, lastCloseDay, notReadyMessages, openGasDay, readyHeadline, readyShownUntil, readyToOpen,
   type DayFacts, type ReadyInput,
 } from "./daily";
 import { londonToUtc } from "./time";
@@ -56,6 +56,20 @@ describe("ready to open", () => {
     expect(r.light).toBe("amber");
     expect(r.reasons.map((x) => x.text)).toEqual(["Not working: Glasswasher", "Open alert: Freezer at -15°C", "Anh can't make it (11:00)", "Bo about 15 min late (11:30)"]);
   });
+  it("judged as at the ready time: kit, alerts and replies that came later don't count", () => {
+    const signed = base().lists.map((l) => ({ ...l, signed: true }));
+    const asOf = at("2026-10-14", "12:00");
+    const r = readyToOpen(base({ now: at("2026-10-14", "12:25"), asOf, lists: signed,
+      kitDown: [{ name: "Walk-in fridge", foodSafety: true, since: at("2026-10-14", "12:20") }, { name: "Glasswasher", foodSafety: false, since: at("2026-10-14", "09:00") }],
+      alerts: [{ title: "Fridge 2 at 9.2°C", critical: true, createdAt: at("2026-10-14", "12:10") }],
+      team: [{ name: "Anh", start: "11:00", reply: { kind: "cant_make_it", createdAt: at("2026-10-14", "12:01") } }] }));
+    expect(r.light).toBe("amber");
+    expect(r.reasons.map((x) => x.text)).toEqual(["Not working: Glasswasher"]);
+    expect(readyHeadline(r)).toBe("Ready, with things to sort");
+  });
+  it("is shown until an hour after the ready time", () => {
+    expect(readyShownUntil("2026-10-14", "12:00")).toBe(at("2026-10-14", "13:00"));
+  });
   it("red reasons come first", () => {
     const r = readyToOpen(base({ now: at("2026-10-14", "12:30"), kitDown: [{ name: "Glasswasher", foodSafety: false }, { name: "Probe", foodSafety: true }] }));
     expect(r.reasons.map((x) => x.level)).toEqual(["red", "red", "amber"]);
@@ -82,6 +96,18 @@ describe("gas off at close", () => {
     expect(d.closeAt).toBe(at("2026-10-14", "22:15"));
     expect(d.closers.sort()).toEqual(["a", "b"]);
     expect(gasDay("EAS", "2026-10-15", shifts)).toBeUndefined(); // no rota that day: nothing expected
+  });
+  it("someone who said they can't make the closing shift isn't asked", () => {
+    const withIds = shifts.map((x, i) => ({ ...x, id: `s${i}` }));
+    expect(gasDay("EAS", "2026-10-14", withIds, new Set(["s1"]))!.closers).toEqual(["a"]);
+  });
+  it("the last close is the latest one whose window is over", () => {
+    const d13 = gasDay("EAS", "2026-10-13", [sh("a", "11:00", "22:15", "2026-10-13")])!;
+    const d14 = gasDay("EAS", "2026-10-14", [sh("a", "09:00", "15:00")])!;
+    expect(lastCloseDay([d13, d14], at("2026-10-14", "20:59"))?.date).toBe("2026-10-13"); // today's window open until 21:00
+    expect(lastCloseDay([d13, d14], at("2026-10-14", "21:00"))?.date).toBe("2026-10-14");
+    const late = gasDay("EAS", "2026-10-14", [sh("a", "18:00", "00:30")])!;
+    expect(lastCloseDay([d13, late], at("2026-10-15", "00:10"))?.date).toBe("2026-10-13"); // tonight's close hasn't happened
   });
   it("a close after midnight belongs to the day the shift started", () => {
     const d = gasDay("EAS", "2026-10-14", [sh("a", "18:00", "00:30")])!;

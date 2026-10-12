@@ -12,7 +12,8 @@ import { ManageTiles } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { teamRowsView, teamToday } from "@/lib/team-today";
-import { gasFor, lastClose, readyFor } from "@/lib/daily-service";
+import { gasFor, lastClose, readyFor, shiftsAround } from "@/lib/daily-service";
+import { readyShownUntil } from "@/lib/domain/daily";
 import { londonHM } from "@/lib/domain/time";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ export default async function Owner() {
   const db = store();
   const { date, hm } = londonNow();
   const now = Date.now();
+  const [all, around] = await Promise.all([db.people(), shiftsAround(now, db)]);
   const sites = (await db.sites()).filter((s) => s.id !== "SYD" || s.status === "open");
   const summaries: SiteSummary[] = await Promise.all(sites.map(async (s) => {
     const lists = await db.checklists(s.id);
@@ -35,8 +37,14 @@ export default async function Owner() {
       if (st === "overdue") overdue++;
       states.push({ name: l.name, due: l.due, signed: !!run.signedAt });
     }
-    const alerts = (await db.alerts(s.id)).filter((a) => !a.resolvedAt).map((a) => ({ id: a.id, title: a.title, detail: a.detail, critical: a.level === "critical" }));
-    const [ready, gas, last] = await Promise.all([readyFor(s, now, db, states), gasFor(s, now), lastClose(s, now)]);
+    const open = (await db.alerts(s.id)).filter((a) => !a.resolvedAt);
+    const alerts = open.map((a) => ({ id: a.id, title: a.title, detail: a.detail, critical: a.level === "critical" }));
+    // The light shows until an hour after the ready time, as on Today.
+    const showReady = !!s.readyBy && now < readyShownUntil(date, s.readyBy);
+    const [ready, gas, last] = await Promise.all([
+      showReady ? readyFor(s, now, db, { shifts: around, lists: states, alerts: open, people: all }) : undefined,
+      gasFor(s, now, db, { shifts: around }), lastClose(s, now, db, { shifts: around }),
+    ]);
     const by = (c: { personName: string; createdAt: number; onTablet: boolean }) => `${c.personName} at ${londonHM(c.createdAt)}${c.onTablet ? " on the tablet" : " on their phone"}`;
     const gasLine = gas && gas.state !== "later" && gas.state !== "missed"
       ? gas.check ? { text: `Gas off: checked by ${by(gas.check)}`, tone: "good" as const }
@@ -46,7 +54,6 @@ export default async function Owner() {
       : undefined;
     return { id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason, lists: lists.length, signed, overdue, alerts, ready, gas: gasLine };
   }));
-  const all = await db.people();
   const names = new Map(all.map((p) => [p.id, p.name]));
   const order = { active: 0, frozen: 1, left: 2 } as const;
   const people: PersonRow[] = [...all].sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name)).map((p) => ({

@@ -59,7 +59,7 @@ export default async function MyShifts() {
     const site = allSites.find((x) => x.id === id);
     const g = site ? await gasFor(site, now) : undefined;
     return site && g && (g.state === "due" || g.state === "overdue" || g.state === "done") && g.day.closers.includes(ctx.person.id) ? { site, g } : undefined;
-  }))).filter((x) => x !== undefined);
+  }))).filter((x) => x !== undefined).filter((x) => !onTablet || x.site.id === ctx.site.id); // a tablet only does its own site
 
   const days = new Map<string, typeof shifts>();
   for (const s of shifts) days.set(s.date, [...(days.get(s.date) ?? []), s]);
@@ -83,7 +83,7 @@ export default async function MyShifts() {
         <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName, when: when(n.createdAt) }))} />
 
         {gasCards.map(({ site, g }) => (
-          <GasCheck key={site.id} siteId={site.id} siteName={site.name} state={g.state as "due" | "overdue" | "done"} closeAt={londonHM(g.day.closeAt)}
+          <GasCheck key={site.id} siteId={site.id} siteName={site.name} state={g.state as "due" | "overdue" | "done"} closeAt={londonHM(g.day.closeAt)} needsPin={onTablet}
             done={g.check ? `Checked by ${g.check.personName} at ${londonHM(g.check.createdAt)}` : undefined} />
         ))}
 

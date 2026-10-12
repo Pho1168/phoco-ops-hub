@@ -642,24 +642,42 @@ export async function replyToShift(input: unknown): Promise<ActionResult> {
 // ---------- gas off at close ----------
 
 /**
- * "All gas is off": anyone working at the site, on the shop tablet or their own phone, from 15 minutes before the
- * last shift ends. The first tap of the day counts; who, when and which kind of device are kept. If managers were
- * already alerted that nobody had checked, they hear it's done.
+ * "All gas is off", from 15 minutes before the last shift ends. On the shop tablet: anyone signed in there, for that
+ * site, with their PIN (the record is permanent, so it must be the right name). On their own phone: the closing team,
+ * or a manager of the site. The first tap of the day counts; who, when and which kind of device are kept. If managers
+ * were already alerted that nobody had checked, they hear it's done.
  */
-export async function confirmGasOff(siteId: string): Promise<ActionResult> {
+export async function confirmGasOff(siteId: string, pin?: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
   if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
-  const id = SiteIdZ.safeParse(siteId);
-  if (!id.success) return { ok: false, error: "Choose a site" };
+  const input = z.object({ siteId: SiteIdZ, pin: z.string().max(10).optional() }).safeParse({ siteId, pin });
+  if (!input.success) return { ok: false, error: "Choose a site" };
   const db = store();
-  const site = await db.site(id.data);
+  const site = await db.site(input.data.siteId);
   if (!site || ctx.person.status !== "active" || !ctx.person.access.some((a) => a.siteId === site.id)) return { ok: false, error: "You can only do the gas check at your own site" };
   const now = Date.now();
+  const onTablet = !!(await db.session(ctx.sessionId))?.deviceId;
+  if (onTablet) {
+    if (ctx.site.id !== site.id) return { ok: false, error: "Do the gas check on that site's tablet" };
+    if (isPinLocked(ctx.person, now)) return { ok: false, error: "Too many wrong PINs. Try again in a few minutes or ask a manager" };
+    if (!verifyPin(input.data.pin ?? "", ctx.person.pinHash)) {
+      const patch = registerPinFailure(ctx.person, now);
+      await db.updatePerson(ctx.person.id, patch);
+      await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "gas.failed", detail: "Wrong PIN at the gas check" });
+      if (isPinLocked(patch, now)) {
+        await db.revokeSessions({ personId: ctx.person.id }, "too many wrong PINs at the gas check");
+        (await cookies()).delete(SESSION_COOKIE);
+        return { ok: false, error: "Too many wrong PINs. You've been signed out for 15 minutes" };
+      }
+      return { ok: false, error: "PIN doesn't match" };
+    }
+    if (ctx.person.pinFailed > 0) await db.updatePerson(ctx.person.id, { pinFailed: 0 });
+  }
   const g = await gasFor(site, now, db);
   if (!g) return { ok: false, error: "There's no gas check to do right now" };
   if (g.check) return { ok: true }; // already done
-  const onTablet = !!(await db.session(ctx.sessionId))?.deviceId;
+  if (!onTablet && !g.day.closers.includes(ctx.person.id) && !canManage(ctx.person, site.id)) return { ok: false, error: "The closing team or a manager does the gas check" };
   if (!(await db.addGasCheck({ siteId: site.id, date: g.day.date, personId: ctx.person.id, onTablet }))) return { ok: true }; // someone has just done it
   const managers = siteManagers(await db.people(), site.id);
   const sentAlert = await db.noticeKeys(managers.map((p) => `gasalert|${site.id}|${g.day.date}|${p.id}`));

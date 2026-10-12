@@ -152,6 +152,36 @@ describe("the daily loop on the scheduler", () => {
     resetDemo();
   });
 
+  it("a day nobody starts by the ready time (evening only) isn't checked", async () => {
+    resetDemo();
+    const week = weekStartOf(day);
+    await demoStore.applyShiftSync("EAS", { added: [{ sourceKey: "eve", staffCode: "DEMO-FOH", section: "FOH", week, date: day, start: "17:00", end: "22:15", endsNextDay: false }], changed: [], cancelled: [] },
+      new Map([["DEMO-FOH", "DEMO-FOH"]]));
+    await demoStore.setWeekStatuses("EAS", new Map([[week, "published"]]));
+    expect(await queueReadyAlerts(at("12:05"), demoStore)).toBe(0);
+    resetDemo();
+  });
+
+  it("the not-ready message is only sent in the half hour after the ready time", async () => {
+    resetDemo();
+    await rota();
+    expect(await queueReadyAlerts(at("12:30"), demoStore)).toBe(0);
+    resetDemo();
+  });
+
+  it("a shut day isn't reported as missed checks", async () => {
+    resetDemo();
+    // Eastcote has used checklists before (so they're expected on open days), but had no rota and no records yesterday.
+    await demoStore.addAnswer("EAS-FOH-OPEN", "2026-11-01", { itemId: "EAS-FOH-OPEN#1", value: "", outcome: "done", recordedBy: "DEMO-FOH", capturedAt: londonToUtc("2026-11-01", "11:00") });
+    expect(await queueDailyDigest(at("08:05", "2026-11-05"), demoStore)).toBe(0);
+    // An open day with the same history does count them.
+    await rota();
+    expect(await queueDailyDigest(at("08:15", "2026-11-05"), demoStore)).toBe(2);
+    const [own] = (await demoStore.notices("DEMO-OWN", 10)).filter((n) => n.kind === "daily");
+    expect(own.body).toMatch(/Eastcote: NO gas-off check · 0\/\d+ checks signed \(missed: /);
+    resetDemo();
+  });
+
   it("yesterday at a glance goes to owners and managers at 08:00, once, leaving out sites that weren't in use", async () => {
     resetDemo();
     await rota();

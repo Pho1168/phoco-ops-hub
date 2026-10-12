@@ -22,10 +22,16 @@ export interface ReadyInput {
   now: number;
   /** The site's checklists today: those due at or before readyBy are the opening checks. */
   lists: { name: string; due?: string; signed: boolean }[];
-  kitDown: { name: string; foodSafety: boolean }[];
-  alerts: { title: string; critical: boolean }[];
+  /** `since`: when it went down. */
+  kitDown: { name: string; foodSafety: boolean; since?: number }[];
+  alerts: { title: string; critical: boolean; createdAt?: number }[];
   /** Shifts starting at or before readyBy, with the latest reply to their reminder. */
-  team: { name: string; start: string; reply?: { kind: ReplyKind; lateMinutes?: number } }[];
+  team: { name: string; start: string; reply?: { kind: ReplyKind; lateMinutes?: number; createdAt?: number } }[];
+  /**
+   * Judge the kit, alerts and replies as they were at this time (the scheduler passes the ready time, so a
+   * problem that comes up later in the day isn't reported as the reason the site wasn't ready).
+   */
+  asOf?: number;
 }
 export interface Reason { level: "red" | "amber"; text: string }
 export interface Ready { light: Light; readyBy: string; past: boolean; signed: number; total: number; reasons: Reason[] }
@@ -39,11 +45,12 @@ export function readyToOpen(x: ReadyInput): Ready {
   const opening = x.lists.filter((l) => l.due && l.due <= x.readyBy);
   const unsigned = opening.filter((l) => !l.signed).map((l) => l.name);
   const past = x.now >= londonToUtc(x.date, x.readyBy);
+  const by = (t?: number) => x.asOf === undefined || t === undefined || t <= x.asOf;
   const reasons: Reason[] = [];
   if (unsigned.length) reasons.push({ level: past ? "red" : "amber", text: `${past ? "Not signed" : "Still to sign"}: ${listOf(unsigned)}` });
-  for (const k of x.kitDown) reasons.push({ level: k.foodSafety ? "red" : "amber", text: `Not working: ${k.name}` });
-  for (const a of x.alerts) reasons.push({ level: a.critical ? "red" : "amber", text: `Open alert: ${a.title}` });
-  for (const t of x.team) {
+  for (const k of x.kitDown.filter((k) => by(k.since))) reasons.push({ level: k.foodSafety ? "red" : "amber", text: `Not working: ${k.name}` });
+  for (const a of x.alerts.filter((a) => by(a.createdAt))) reasons.push({ level: a.critical ? "red" : "amber", text: `Open alert: ${a.title}` });
+  for (const t of x.team.filter((t) => by(t.reply?.createdAt))) {
     if (t.reply?.kind === "cant_make_it") reasons.push({ level: "amber", text: `${t.name} can't make it (${t.start})` });
     else if (t.reply?.kind === "late") reasons.push({ level: "amber", text: `${t.name} about ${t.reply.lateMinutes} min late (${t.start})` });
   }
@@ -55,7 +62,14 @@ export function readyToOpen(x: ReadyInput): Ready {
 export const LIGHT_TEXT: Record<Light, string> = { green: "Ready to open", amber: "Getting ready", red: "Not ready" };
 export const readyHeadline = (r: Ready) =>
   r.light === "green" ? `Ready to open · ${plural(r.total, "opening check")} signed`
-    : r.light === "red" && r.past ? `Not ready at ${r.readyBy}` : r.light === "red" ? "Not ready" : `Getting ready for ${r.readyBy} · ${r.signed} of ${r.total} opening checks signed`;
+    : r.light === "red" ? (r.past ? `Not ready at ${r.readyBy}` : "Not ready")
+      : r.past ? "Ready, with things to sort" : `Getting ready for ${r.readyBy} · ${r.signed} of ${r.total} opening checks signed`;
+
+/** The light is shown until an hour after the ready time; after that the day's other screens take over. */
+export const READY_SHOWN_FOR_MIN = 60;
+export const readyShownUntil = (date: string, readyBy: string) => londonToUtc(date, readyBy) + READY_SHOWN_FOR_MIN * 60_000;
+/** The scheduler checks for this long after the ready time (so a message can't arrive long after opening). */
+export const READY_ALERT_WINDOW_MIN = 30;
 
 export interface DailyMessage { personId: string; title: string; body: string; dedupeKey: string; url: string }
 const managersOf = (people: Pick<Person, "id" | "status" | "access">[], siteId: SiteId) =>
@@ -80,13 +94,21 @@ export const GAS_OPEN_HOURS = 6;
 
 export interface GasDay { siteId: SiteId; date: string; closeAt: number; closers: string[] }
 
-/** A site's close on a day: when its last published shift ends, and who's on until then (finishing within 30 minutes of it). */
-export function gasDay(siteId: SiteId, date: string, shifts: (ShiftTimes & { personId: string; siteId: SiteId })[]): GasDay | undefined {
+/**
+ * A site's close on a day: when its last published shift ends, and who's on until then (finishing within 30 minutes
+ * of it). People who said they can't make that shift (`absent`, shift ids) aren't asked.
+ */
+export function gasDay(siteId: SiteId, date: string, shifts: (ShiftTimes & { id?: string; personId: string; siteId: SiteId })[], absent: Set<string> = new Set()): GasDay | undefined {
   const day = shifts.filter((s) => s.siteId === siteId && s.date === date);
   if (!day.length) return undefined;
   const closeAt = Math.max(...day.map(shiftEnd));
-  const closers = Array.from(new Set(day.filter((s) => shiftEnd(s) >= closeAt - 30 * 60_000).map((s) => s.personId)));
+  const closers = Array.from(new Set(day.filter((s) => shiftEnd(s) >= closeAt - 30 * 60_000 && !(s.id && absent.has(s.id))).map((s) => s.personId)));
   return { siteId, date, closeAt, closers };
+}
+
+/** The last close whose gas check window is over (6 hours after it), for "Last close" on the Owner screen. */
+export function lastCloseDay(days: (GasDay | undefined)[], now: number): GasDay | undefined {
+  return days.filter((d): d is GasDay => !!d && d.closeAt + GAS_OPEN_HOURS * 3_600_000 <= now).sort((a, b) => b.closeAt - a.closeAt)[0];
 }
 
 export type GasState = "later" | "due" | "overdue" | "done" | "missed";

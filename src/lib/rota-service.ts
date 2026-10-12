@@ -12,8 +12,8 @@ import { weekStartOf } from "@/lib/domain/rota";
 import { loadSiteReport } from "@/lib/report-service";
 import { normalizeStaffCode } from "@/lib/domain/staff";
 import { dueReminders, reminderKey, shiftReminderMessage, startingLaterToday, waitingFrom, type Waiting } from "@/lib/domain/reminders";
-import { dailyDigest, gasMessages, notReadyMessages, DAILY_DIGEST_FROM, DAILY_DIGEST_UNTIL, type DayFacts } from "@/lib/domain/daily";
-import { dayFacts, gasFor, readyFor } from "@/lib/daily-service";
+import { dailyDigest, gasConfirmedMessages, gasMessages, notReadyMessages, DAILY_DIGEST_FROM, DAILY_DIGEST_UNTIL, READY_ALERT_WINDOW_MIN, type DayFacts } from "@/lib/domain/daily";
+import { dayFacts, gasFor, readyFor, shiftsAround } from "@/lib/daily-service";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
 
@@ -187,36 +187,54 @@ export async function queueShiftReminders(now = Date.now(), db: Store = store(),
 
 /**
  * The gas check at close: the closers are reminded from 15 minutes before the last shift ends, and the site's
- * managers and owners are told if nobody has tapped 30 minutes after. Both go whatever the hour.
+ * managers and owners are told if nobody has tapped 30 minutes after. Both go whatever the hour. Each site on its own,
+ * so one failing doesn't stop the others.
  */
 export async function queueGasChecks(now = Date.now(), db: Store = store()): Promise<number> {
   const sites = (await db.sites()).filter((s) => s.status === "open");
+  const shifts = await shiftsAround(now, db);
   let people: Awaited<ReturnType<Store["people"]>> | undefined;
   let queued = 0;
   for (const site of sites) {
-    const g = await gasFor(site, now, db);
-    if (!g || (g.state !== "due" && g.state !== "overdue")) continue;
-    people ??= await db.people();
-    for (const m of gasMessages(site, g.day, g.state, people, now)) {
-      if (await db.queueNotice({ personId: m.personId, kind: "gas", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: now, url: m.url })) queued++;
-    }
+    try {
+      const g = await gasFor(site, now, db, { shifts });
+      if (!g || (g.state !== "due" && g.state !== "overdue")) continue;
+      people ??= await db.people();
+      const alerted: string[] = [];
+      for (const m of gasMessages(site, g.day, g.state, people, now)) {
+        if (await db.queueNotice({ personId: m.personId, kind: "gas", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: now, url: m.url })) {
+          queued++;
+          if (m.kind === "alert") alerted.push(m.personId);
+        }
+      }
+      // Someone may have tapped while the alert was being queued: if so, tell those just alerted that it's done.
+      const [check] = alerted.length ? await db.gasChecks([site.id], g.day.date, g.day.date) : [];
+      if (check) {
+        for (const m of gasConfirmedMessages(site, g.day, check.personName, check.onTablet, check.createdAt, alerted)) {
+          if (await db.queueNotice({ personId: m.personId, kind: "gas", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: now, url: m.url })) queued++;
+        }
+      }
+    } catch (e) { console.error(`tick: gas check at ${site.id} failed`, e); }
   }
   return queued;
 }
 
-/** For an hour from each site's ready time: if it isn't ready (red), its managers and owners are told why, once. */
+/**
+ * For half an hour from each site's ready time: if it isn't ready (red), its managers and owners are told why, once.
+ * Kit, alerts and replies count only if they were there at the ready time.
+ */
 export async function queueReadyAlerts(now = Date.now(), db: Store = store()): Promise<number> {
   const today = londonDate(now);
   const due = (await db.sites()).filter((s) => {
     if (s.status !== "open" || !s.readyBy) return false;
     const at = londonToUtc(today, s.readyBy);
-    return now >= at && now < at + 3_600_000;
+    return now >= at && now < at + READY_ALERT_WINDOW_MIN * 60_000;
   });
   if (!due.length) return 0;
   const people = await db.people();
   let queued = 0;
   for (const site of due) {
-    const r = await readyFor(site, now, db);
+    const r = await readyFor(site, now, db, { people }, { asOf: londonToUtc(today, site.readyBy!) });
     if (!r) continue;
     for (const m of notReadyMessages(site, today, r, people)) {
       if (await db.queueNotice({ personId: m.personId, kind: "ready", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: now, url: m.url })) queued++;
@@ -225,20 +243,26 @@ export async function queueReadyAlerts(now = Date.now(), db: Store = store()): P
   return queued;
 }
 
-/** 08:00–09:00: yesterday at a glance for each owner and manager, about the open sites they run that had anything going on. Once a day. */
+/**
+ * 08:00–09:00: yesterday at a glance for each owner and manager, about the open sites they run that were in use.
+ * Once a day: people who already have theirs are skipped before anything is worked out.
+ */
 export async function queueDailyDigest(now = Date.now(), db: Store = store()): Promise<number> {
   const yesterday = addDays(londonDate(now), -1);
   const sites = (await db.sites()).filter((s) => s.status === "open");
+  const key = (id: string) => `daily|${yesterday}|${id}`;
+  const managers = (await db.people()).filter((p) => p.status === "active" && sites.some((s) => canManage(p, s.id)));
+  const sent = await db.noticeKeys(managers.map((p) => key(p.id)));
   const facts = new Map<SiteId, DayFacts>();
   let queued = 0;
-  for (const p of (await db.people()).filter((x) => x.status === "active")) {
+  for (const p of managers.filter((x) => !sent.has(key(x.id)))) {
     const mine = sites.filter((s) => canManage(p, s.id));
     for (const s of mine) if (!facts.has(s.id)) facts.set(s.id, await dayFacts(s, yesterday, now, db));
-    // A site that wasn't in use at all yesterday (no rota, no checks, nothing reported) is left out.
-    const used = mine.map((s) => facts.get(s.id)!).filter((f) => f.onRota || f.checks.expected || f.faults.reported || f.faults.stillDown.length || f.notesLeft || f.alertsRaised);
+    // A site that wasn't in use yesterday (not on the rota, no checklists, nothing reported) is left out.
+    const used = mine.map((s) => facts.get(s.id)!).filter((f) => f.onRota || f.checks.expected || f.faults.reported || f.notesLeft || f.alertsRaised);
     if (!used.length) continue;
     const d = dailyDigest(yesterday, used);
-    if (await db.queueNotice({ personId: p.id, kind: "daily", title: d.title, body: d.body, dedupeKey: `daily|${yesterday}|${p.id}`, sendAfter: now, url: "/manage/records" })) queued++;
+    if (await db.queueNotice({ personId: p.id, kind: "daily", title: d.title, body: d.body, dedupeKey: key(p.id), sendAfter: now, url: "/manage/records" })) queued++;
   }
   return queued;
 }

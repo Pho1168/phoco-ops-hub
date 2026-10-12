@@ -1,33 +1,60 @@
 import { store } from "@/lib/data";
-import type { Store } from "@/lib/data/store";
-import { gasDay, gasState, openGasDay, readyToOpen, type DayFacts, type GasCheck, type GasDay, type GasState, type Ready, type ReadyInput } from "@/lib/domain/daily";
-import { faultsOf, keepsFoodSafe } from "@/lib/domain/equipment";
+import type { Alert, Store } from "@/lib/data/store";
+import { gasDay, gasState, lastCloseDay, openGasDay, readyToOpen, type DayFacts, type GasCheck, type GasDay, type GasState, type Ready, type ReadyInput } from "@/lib/domain/daily";
+import { faultsOf, keepsFoodSafe, type Equipment, type EquipmentEvent } from "@/lib/domain/equipment";
 import { datesBetween, readingLog, signoffLog } from "@/lib/domain/records";
 import { latestReplies } from "@/lib/domain/reminders";
 import { addDays, londonDate, londonToUtc } from "@/lib/domain/time";
-import type { Site, SiteId } from "@/lib/domain/types";
+import type { Person, Site, SiteId } from "@/lib/domain/types";
 
-/** Read-only: gathers what the daily loop's rules need. The rules themselves are in src/lib/domain/daily.ts. */
+/**
+ * Read-only: gathers what the daily loop's rules need. The rules themselves are in src/lib/domain/daily.ts.
+ * Pages pass in what they've already loaded (`Known`), so nothing is fetched twice.
+ */
 
-/** The site's published shifts on these London dates. */
-async function siteShiftsOn(siteId: SiteId, dates: string[], db: Store) {
-  return (await Promise.all(dates.map((d) => db.shiftsOnDate(d)))).flat().filter((s) => s.siteId === siteId);
+export type DayShift = Awaited<ReturnType<Store["shiftsOnDate"]>>[number];
+export interface Known {
+  /** Published shifts on the days asked about (from shiftsAround). */
+  shifts?: DayShift[];
+  /** Today's checklists with whether each is signed. */
+  lists?: ReadyInput["lists"];
+  kit?: Equipment[];
+  /** Open faults at the site (equipmentEvents with openFaultsOnly). */
+  openFaults?: EquipmentEvent[];
+  /** The site's unresolved alerts. */
+  alerts?: Alert[];
+  people?: Person[];
+}
+
+/** Published shifts for the day before yesterday, yesterday and today, at every site: load once, pass to the rest. */
+export async function shiftsAround(now = Date.now(), db: Store = store()): Promise<DayShift[]> {
+  const today = londonDate(now);
+  return (await Promise.all([addDays(today, -2), addDays(today, -1), today].map((d) => db.shiftsOnDate(d)))).flat();
+}
+
+async function siteShifts(siteId: SiteId, dates: string[], db: Store, known?: DayShift[]): Promise<DayShift[]> {
+  const all = known ?? (await Promise.all(dates.map((d) => db.shiftsOnDate(d)))).flat();
+  return all.filter((s) => s.siteId === siteId && dates.includes(s.date));
 }
 
 /**
- * Ready to open, for today. Undefined when the site has no ready time or nobody on the published rota today.
- * A page that has already loaded today's checklists passes them in (`lists`), saving a query per checklist.
+ * Ready to open, for today. Undefined when the site has no ready time, or nobody on the published rota starts by
+ * then (a shut day, or an evening-only one). `forStaff` leaves out who's late or not coming (managers only see that);
+ * `asOf` judges kit, alerts and replies as they were then.
  */
-export async function readyFor(site: Site, now = Date.now(), db: Store = store(), lists?: ReadyInput["lists"]): Promise<Ready | undefined> {
+export async function readyFor(site: Site, now = Date.now(), db: Store = store(), known: Known = {}, opts: { forStaff?: boolean; asOf?: number } = {}): Promise<Ready | undefined> {
   if (!site.readyBy || site.status !== "open") return undefined;
   const today = londonDate(now);
-  const shifts = await siteShiftsOn(site.id, [today], db);
-  if (!shifts.length) return undefined;
-  const opening = shifts.filter((s) => s.start <= site.readyBy!);
+  const opening = (await siteShifts(site.id, [today], db, known.shifts)).filter((s) => s.start <= site.readyBy!);
+  if (!opening.length) return undefined;
   const [kit, open, alerts, people, replies] = await Promise.all([
-    db.equipment(site.id), db.equipmentEvents({ siteId: site.id, openFaultsOnly: true }), db.alerts(site.id), db.people(),
-    db.shiftReplies(opening.map((s) => s.id)),
+    known.kit ?? db.equipment(site.id),
+    known.openFaults ?? db.equipmentEvents({ siteId: site.id, openFaultsOnly: true }),
+    known.alerts ?? db.alerts(site.id),
+    opts.forStaff ? [] : known.people ?? db.people(),
+    opts.forStaff ? [] : db.shiftReplies(opening.map((s) => s.id)),
   ]);
+  let lists = known.lists;
   if (!lists) {
     const all = await db.checklists(site.id);
     const runs = await Promise.all(all.map((l) => db.run(l.id, today)));
@@ -36,26 +63,46 @@ export async function readyFor(site: Site, now = Date.now(), db: Store = store()
   const latest = latestReplies(replies);
   const names = new Map(people.map((p) => [p.id, p.name]));
   return readyToOpen({
-    date: today, readyBy: site.readyBy, now,
-    lists,
-    kitDown: kit.filter((eq) => faultsOf(open.filter((e) => e.equipmentId === eq.id)).some((f) => f.fault.severity === "down"))
-      .map((eq) => ({ name: eq.name, foodSafety: keepsFoodSafe(eq.kind) })),
-    alerts: alerts.filter((a) => !a.resolvedAt).map((a) => ({ title: a.title, critical: a.level === "critical" })),
-    team: opening.map((s) => ({ name: names.get(s.personId) ?? s.staffCode, start: s.start, reply: latest.get(s.id) })),
+    date: today, readyBy: site.readyBy, now, asOf: opts.asOf, lists,
+    kitDown: kit.flatMap((eq) => {
+      const down = faultsOf(open.filter((e) => e.equipmentId === eq.id)).filter((f) => !f.fixed && f.fault.severity === "down");
+      return down.length ? [{ name: eq.name, foodSafety: keepsFoodSafe(eq.kind), since: Math.min(...down.map((f) => f.fault.createdAt)) }] : [];
+    }),
+    alerts: alerts.filter((a) => !a.resolvedAt && a.siteId === site.id).map((a) => ({ title: a.title, critical: a.level === "critical", createdAt: a.createdAt })),
+    team: opts.forStaff ? [] : opening.map((s) => ({ name: names.get(s.personId) ?? s.staffCode, start: s.start, reply: latest.get(s.id) })),
   });
 }
 
 export interface GasNow { day: GasDay; state: GasState; check?: GasCheck }
 
-/** The site's gas check that's open now (today's, or last night's after midnight), with its state. Undefined outside the window. */
-export async function gasFor(site: Pick<Site, "id" | "status">, now = Date.now(), db: Store = store()): Promise<GasNow | undefined> {
+/**
+ * The site's gas check that's open now (today's, or last night's after midnight), with its state. Undefined outside
+ * the window. People who said they can't make the closing shift aren't counted as closers.
+ */
+export async function gasFor(site: Pick<Site, "id" | "status">, now = Date.now(), db: Store = store(), known: Pick<Known, "shifts"> = {}): Promise<GasNow | undefined> {
   if (site.status !== "open") return undefined;
   const today = londonDate(now), yesterday = addDays(today, -1);
-  const shifts = await siteShiftsOn(site.id, [yesterday, today], db);
-  const day = openGasDay([gasDay(site.id, today, shifts), gasDay(site.id, yesterday, shifts)], now);
+  const shifts = await siteShifts(site.id, [yesterday, today], db, known.shifts);
+  const open = openGasDay([gasDay(site.id, today, shifts), gasDay(site.id, yesterday, shifts)], now);
+  if (!open) return undefined;
+  const [replies, [check]] = await Promise.all([
+    db.shiftReplies(shifts.filter((s) => s.date === open.date).map((s) => s.id)),
+    db.gasChecks([site.id], open.date, open.date),
+  ]);
+  const absent = new Set(Array.from(latestReplies(replies).values()).filter((r) => r.kind === "cant_make_it").map((r) => r.shiftId));
+  const day = gasDay(site.id, open.date, shifts, absent)!;
+  return { day, state: gasState(day, check?.createdAt, now), check };
+}
+
+/** The site's last close whose gas check window is over, and whether the check was done. Undefined if there's none in the last 3 days. */
+export async function lastClose(site: Pick<Site, "id">, now = Date.now(), db: Store = store(), known: Pick<Known, "shifts"> = {}): Promise<{ date: string; check?: GasCheck } | undefined> {
+  const today = londonDate(now);
+  const dates = [addDays(today, -2), addDays(today, -1), today];
+  const shifts = await siteShifts(site.id, dates, db, known.shifts);
+  const day = lastCloseDay(dates.map((d) => gasDay(site.id, d, shifts)), now);
   if (!day) return undefined;
   const [check] = await db.gasChecks([site.id], day.date, day.date);
-  return { day, state: gasState(day, check?.createdAt, now), check };
+  return { date: day.date, check };
 }
 
 /** The facts for one site's day, for the 08:00 summary. */
@@ -68,10 +115,12 @@ export async function dayFacts(site: Site, date: string, now = Date.now(), db: S
     db.equipmentEvents({ siteId: site.id }),
     db.tasks({ siteIds: [site.id] }),
     db.gasChecks([site.id], date, date),
-    siteShiftsOn(site.id, [date], db),
+    siteShifts(site.id, [date], db),
   ]);
   const replies = latestReplies(await db.shiftReplies(shifts.map((s) => s.id)));
-  const signoffs = signoffLog(data.lists, data.runs, datesBetween(date, date), now, data.trackingFrom).filter((r) => r.status !== "open");
+  // Checks only count on a day the site was open: on the rota, or someone started a checklist. A shut day isn't "missed".
+  const open = shifts.length > 0 || data.runs.some((r) => r.date === date && (r.answered > 0 || r.signedAt));
+  const signoffs = open ? signoffLog(data.lists, data.runs, datesBetween(date, date), now, data.trackingFrom).filter((r) => r.status !== "open") : [];
   const kitById = new Map(kit.map((e) => [e.id, e]));
   const faults = faultsOf(kitEvents);
   const [g] = gas;
@@ -93,12 +142,4 @@ export async function dayFacts(site: Site, date: string, now = Date.now(), db: S
     late: Array.from(replies.values()).filter((r) => r.kind === "late").length,
     cantMakeIt: Array.from(replies.values()).filter((r) => r.kind === "cant_make_it").length,
   };
-}
-
-/** The site's last close before today: whether the gas check was done. Undefined if it had no shifts yesterday. */
-export async function lastClose(site: Pick<Site, "id">, now = Date.now(), db: Store = store()): Promise<{ date: string; check?: GasCheck } | undefined> {
-  const yesterday = addDays(londonDate(now), -1);
-  if (!(await siteShiftsOn(site.id, [yesterday], db)).length) return undefined;
-  const [check] = await db.gasChecks([site.id], yesterday, yesterday);
-  return { date: yesterday, check };
 }
