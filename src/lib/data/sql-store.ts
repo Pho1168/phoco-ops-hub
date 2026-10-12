@@ -25,10 +25,32 @@ function sql(): Sql {
   if (!g.__phocoSql) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL is not set");
-    // prepare:false keeps it compatible with Supabase's transaction pooler (port 6543).
-    g.__phocoSql = postgres(url, { prepare: false, max: 5, idle_timeout: 20, connect_timeout: 10 });
+    // Supabase's transaction pooler (port 6543) hands a database connection to the next client as soon as a query
+    // finishes. So: no prepared statements (prepare:false), and one query at a time per connection (max_pipeline:0).
+    // With pipelining on, a page that runs many queries at once can be left waiting for an answer that never comes.
+    const options = { prepare: false, max: 5, max_pipeline: 0, idle_timeout: 20, connect_timeout: 10 };
+    g.__phocoSql = postgres(url, options);
   }
   return g.__phocoSql;
+}
+
+/**
+ * Runs `fn` in a transaction on one reserved connection. postgres.js's own sql.begin can't be used with
+ * max_pipeline:0 (it never marks its connection as reserved), so this does begin / commit / rollback itself.
+ */
+async function withTx<T>(fn: (tx: postgres.ReservedSql) => Promise<T>): Promise<T> {
+  const tx = await sql().reserve();
+  try {
+    await tx`begin`;
+    const result = await fn(tx);
+    await tx`commit`;
+    return result;
+  } catch (e) {
+    await tx`rollback`.catch(() => undefined);
+    throw e;
+  } finally {
+    tx.release();
+  }
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -213,7 +235,7 @@ export const sqlStore: Store = {
   },
 
   async createPerson({ staffCode, name, pinHash, pinMustChange, access }) {
-    return sql().begin(async (tx) => {
+    return withTx(async (tx) => {
       const [p] = await tx<{ id: string }[]>`
         insert into people (staff_code, display_name, pin_hash, pin_must_change)
         values (${staffCode}, ${name}, ${pinHash}, ${pinMustChange}) returning id`;
@@ -225,7 +247,7 @@ export const sqlStore: Store = {
   },
   async setAccess(personId, access) {
     if (!isUuid(personId)) return;
-    await sql().begin(async (tx) => {
+    await withTx(async (tx) => {
       await tx`delete from person_sites where person_id = ${personId}`;
       for (const a of access) {
         await tx`insert into person_sites (person_id, site_id, role, sections) values (${personId}, ${a.siteId}, ${a.role}, ${a.sections})`;
@@ -294,7 +316,7 @@ export const sqlStore: Store = {
             values (${p.codeHash}, ${p.siteId}, ${p.label}, ${p.createdBy}, ${new Date(p.expiresAt)})`;
   },
   async redeemPairing(codeHash, tokenHash, now) {
-    return sql().begin(async (tx) => {
+    return withTx(async (tx) => {
       // Locks the code row so two tablets can't use the same code at once.
       const [p] = await tx<{ id: string; site_id: SiteId; label: string; created_by: string }[]>`
         select id, site_id, label, created_by from device_pairings
@@ -340,7 +362,7 @@ export const sqlStore: Store = {
     return run;
   },
   async addAnswer(listId, date, answer) {
-    await sql().begin(async (tx) => {
+    await withTx(async (tx) => {
       const [run] = await tx<{ id: string }[]>`
         insert into checklist_runs (template_id, version_id, site_id, business_date)
         select t.id, v.id, t.site_id, ${date}
@@ -488,8 +510,7 @@ export const sqlStore: Store = {
     return (await prepHandoversWhere(q`h.site_id = ${siteId} and h.status = 'draft'`, 1))[0];
   },
   async prepEditDraft(siteId, personId, change) {
-    const q = sql();
-    await q.begin(async (tx) => {
+    await withTx(async (tx) => {
       await tx`insert into prep_handovers (site_id, shift, created_by) values (${siteId}, ${change.shift ?? "next"}, ${personId})
                on conflict (site_id) where status = 'draft' do nothing`;
       const [h] = await tx<{ id: string }[]>`
@@ -515,8 +536,7 @@ export const sqlStore: Store = {
     return rows.map(toPrepEntry);
   },
   async prepSubmit(siteId, personId, makePlan) {
-    const q = sql();
-    return q.begin(async (tx) => {
+    return withTx(async (tx) => {
       const [h] = await tx<{ id: string }[]>`select id from prep_handovers where site_id = ${siteId} and status = 'draft' for update`;
       if (!h) return undefined;
       const draft = (await tx<PrepEntryRow[]>`select * from prep_entries where handover_id = ${h.id}`).map(toPrepEntry);
@@ -801,7 +821,7 @@ export const sqlStore: Store = {
   },
   async setWeekStatuses(siteId, statuses) {
     if (!statuses.size) return;
-    await sql().begin(async (tx) => {
+    await withTx(async (tx) => {
       for (const [week, status] of Array.from(statuses.entries())) {
         await tx`insert into rota_weeks (site_id, week_start, status) values (${siteId}, ${week}, ${status})
                  on conflict (site_id, week_start) do update set status = excluded.status, imported_at = now()`;
@@ -824,7 +844,7 @@ export const sqlStore: Store = {
       starts: new Date(londonToUtc(s.date, s.start)),
       ends: new Date(londonToUtc(s.endsNextDay ? addDays(s.date, 1) : s.date, s.end)),
     });
-    await sql().begin(async (tx) => {
+    await withTx(async (tx) => {
       for (const s of [...plan.added, ...plan.changed.map((c) => c.after)]) {
         const personId = personIdByCode.get(s.staffCode);
         if (!personId) continue;
