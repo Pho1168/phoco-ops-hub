@@ -7,6 +7,7 @@ import { coverState } from "@/lib/domain/cover";
 import { londonDate } from "@/lib/domain/time";
 import { managedSites } from "@/lib/domain/access";
 import { canDecide } from "@/lib/domain/timeoff";
+import { libraryToDo } from "@/lib/domain/library";
 import type { Person } from "@/lib/domain/types";
 import type { ManageCounts } from "./ManageTiles";
 
@@ -15,8 +16,8 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
   const db = store();
   const today = londonDate(Date.now());
   const managed = managedSites(actor);
-  const [notices, pending, people, certs, sites] = await Promise.all([
-    db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(),
+  const [notices, pending, people, certs, sites, sops] = await Promise.all([
+    db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(), db.libraryDocs("sop"),
   ]);
   const openManaged = sites.filter((s) => s.status === "open" && managed.includes(s.id)).map((s) => s.id);
   let equipmentIssues = 0;
@@ -42,5 +43,6 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
     certIssues: issueCount(peopleInCare(actor, people), certs, today, canSeeRightToWork(actor), openManaged),
     equipmentIssues,
     coverToDo,
+    libraryToDo: libraryToDo(actor, sops),
   };
 }

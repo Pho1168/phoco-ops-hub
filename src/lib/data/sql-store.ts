@@ -9,6 +9,7 @@ import type { Equipment, EquipmentEvent, EquipmentKind, EventKind, Severity } fr
 import type { Priority, Task, TaskCategory, TaskStatus } from "@/lib/domain/tasks";
 import type { LateMinutes, ReplyKind, ShiftReply } from "@/lib/domain/reminders";
 import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
+import type { ChangeKind, LibraryDoc, LibraryKind, LibraryVersion, SopBody, VersionStatus } from "@/lib/domain/library";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -60,6 +61,33 @@ const isUuid = (s: string) => UUID.test(s);
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : undefined);
 const num = (v: string | null) => (v === null ? undefined : Number(v));
 const opt = <T,>(v: T | null) => (v === null ? undefined : v);
+
+interface LibVersionRow { id: string; doc_id: string; status: VersionStatus; version: number | null; title: string; body: SopBody; author_id: string; author_name: string;
+  created_at: Date; updated_at: Date; submitted_by: string | null; submitted_at: Date | null; review_note: string | null; reviewed_by: string | null; reviewed_by_name: string | null;
+  reviewed_at: Date | null; approved_by: string | null; approved_by_name: string | null; published_at: Date | null; change: ChangeKind | null; review_by: string | null; superseded_at: Date | null }
+const libVersionSelect = (q: postgres.Sql | postgres.ReservedSql) => q`
+  select v.id, v.doc_id, v.status, v.version, v.title, v.body, v.author_id, a.display_name as author_name, v.created_at, v.updated_at, v.submitted_by, v.submitted_at,
+    v.review_note, v.reviewed_by, r.display_name as reviewed_by_name, v.reviewed_at, v.approved_by, ap.display_name as approved_by_name, v.published_at, v.change,
+    to_char(v.review_by, 'YYYY-MM-DD') as review_by, v.superseded_at
+  from library_versions v join people a on a.id = v.author_id left join people r on r.id = v.reviewed_by left join people ap on ap.id = v.approved_by`;
+const libVersionFrom = (r: LibVersionRow): LibraryVersion => ({
+  id: r.id, docId: r.doc_id, status: r.status, version: opt(r.version), title: r.title, body: r.body, authorId: r.author_id, authorName: r.author_name,
+  createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), submittedBy: opt(r.submitted_by), submittedAt: ms(r.submitted_at),
+  reviewNote: opt(r.review_note), reviewedBy: opt(r.reviewed_by), reviewedByName: opt(r.reviewed_by_name), reviewedAt: ms(r.reviewed_at),
+  approvedBy: opt(r.approved_by), approvedByName: opt(r.approved_by_name), publishedAt: ms(r.published_at), change: opt(r.change), reviewBy: opt(r.review_by),
+  supersededAt: ms(r.superseded_at),
+});
+interface LibDocRow { id: string; kind: LibraryKind; code: string; created_at: Date; retired_at: Date | null; retired_by: string | null; retired_note: string | null }
+async function libDocsWith(q: postgres.Sql, docs: LibDocRow[]): Promise<LibraryDoc[]> {
+  if (!docs.length) return [];
+  const versions = (await q<LibVersionRow[]>`${libVersionSelect(q)}
+    where v.doc_id = any(${docs.map((d) => d.id)}::uuid[]) and v.status in ('published', 'draft', 'in_review')`).map(libVersionFrom);
+  return docs.map((d) => ({
+    id: d.id, kind: d.kind, code: d.code, createdAt: d.created_at.getTime(), retiredAt: ms(d.retired_at), retiredBy: opt(d.retired_by), retiredNote: opt(d.retired_note),
+    published: versions.find((v) => v.docId === d.id && v.status === "published"),
+    open: versions.find((v) => v.docId === d.id && (v.status === "draft" || v.status === "in_review")),
+  }));
+}
 
 interface TaskRow { id: string; site_id: SiteId; title: string; detail: string | null; priority: number; category: TaskCategory; assignee_id: string | null; assignee_name: string | null;
   section: Area | null; due_on: string | null; status: TaskStatus; created_by: string; created_by_name: string; created_at: Date; done_by: string | null; done_by_name: string | null;
@@ -960,6 +988,136 @@ export const sqlStore: Store = {
     const q = sql();
     const [first] = await q<{ d: string | null }[]>`select to_char(min(business_date), 'YYYY-MM-DD') as d from checklist_runs where site_id = ${siteId}`;
     return first?.d ?? undefined;
+  },
+
+  // ---------- library ----------
+  async libraryDocs(kind) {
+    const q = sql();
+    const docs = await q<LibDocRow[]>`select id, kind, code, created_at, retired_at, retired_by, retired_note from library_docs where kind = ${kind} order by code`;
+    return libDocsWith(q, docs);
+  },
+  async libraryDoc(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const docs = await q<LibDocRow[]>`select id, kind, code, created_at, retired_at, retired_by, retired_note from library_docs where id = ${id}`;
+    return (await libDocsWith(q, docs))[0];
+  },
+  async libraryVersions(docId) {
+    if (!isUuid(docId)) return [];
+    const q = sql();
+    return (await q<LibVersionRow[]>`${libVersionSelect(q)} where v.doc_id = ${docId} order by v.created_at desc, v.id`).map(libVersionFrom);
+  },
+  async libraryVersion(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<LibVersionRow[]>`${libVersionSelect(q)} where v.id = ${id}`;
+    return r && libVersionFrom(r);
+  },
+  async createLibraryDoc(d) {
+    return withTx(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext('library_docs.code'))`; // one new code at a time
+      const used = await tx<{ code: string }[]>`select code from library_docs where code like ${d.prefix + "%"}`;
+      const nums = used.map((u) => Number(u.code.slice(d.prefix.length))).filter((n) => Number.isInteger(n));
+      const code = d.prefix + String((nums.length ? Math.max(...nums) : 0) + 1).padStart(3, "0");
+      const [doc] = await tx<{ id: string }[]>`insert into library_docs (kind, code, created_by) values (${d.kind}, ${code}, ${d.authorId}) returning id`;
+      const [v] = await tx<{ id: string }[]>`insert into library_versions (doc_id, status, title, body, author_id)
+        values (${doc.id}, 'draft', ${d.title}, ${tx.json(d.body as unknown as postgres.JSONValue)}, ${d.authorId}) returning id`;
+      return { docId: doc.id, versionId: v.id, code };
+    });
+  },
+  async startLibraryDraft(docId, authorId) {
+    if (!isUuid(docId)) return undefined;
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into library_versions (doc_id, status, title, body, author_id)
+      select v.doc_id, 'draft', v.title, v.body, ${authorId} from library_versions v join library_docs d on d.id = v.doc_id
+      where v.doc_id = ${docId} and v.status = 'published' and d.retired_at is null
+      on conflict (doc_id) where status in ('draft', 'in_review') do nothing returning id`;
+    return r?.id;
+  },
+  async saveLibraryDraft(versionId, d) {
+    if (!isUuid(versionId)) return false;
+    const q = sql();
+    return (await q`update library_versions set title = ${d.title}, body = ${q.json(d.body as unknown as postgres.JSONValue)}, updated_at = now()
+      where id = ${versionId} and status = 'draft' returning id`).length > 0;
+  },
+  async moveLibraryVersion(versionId, move, personId, note) {
+    if (!isUuid(versionId)) return false;
+    const q = sql();
+    const r = move === "submit"
+      ? await q`update library_versions set status = 'in_review', submitted_by = ${personId}, submitted_at = now(), review_note = null, reviewed_by = null, reviewed_at = null, updated_at = now()
+          where id = ${versionId} and status = 'draft' returning id`
+      : move === "withdraw"
+      ? await q`update library_versions set status = 'draft', submitted_by = null, submitted_at = null, updated_at = now() where id = ${versionId} and status = 'in_review' returning id`
+      : move === "send_back"
+      ? await q`update library_versions set status = 'draft', submitted_by = null, submitted_at = null, review_note = ${note ?? null}, reviewed_by = ${personId}, reviewed_at = now(), updated_at = now()
+          where id = ${versionId} and status = 'in_review' returning id`
+      : await q`update library_versions set status = 'discarded', updated_at = now() where id = ${versionId} and status = 'draft' returning id`;
+    return r.length > 0;
+  },
+  async publishLibraryVersion(versionId, p) {
+    if (!isUuid(versionId)) return undefined;
+    return withTx(async (tx) => {
+      const [v] = await tx<{ doc_id: string; author_id: string }[]>`select doc_id, author_id from library_versions where id = ${versionId} and status = 'in_review' for update`;
+      if (!v) return undefined;
+      const [doc] = await tx`select id from library_docs where id = ${v.doc_id} and retired_at is null for update`;
+      if (!doc) return undefined;
+      await tx`update library_versions set status = 'superseded', superseded_at = now() where doc_id = ${v.doc_id} and status = 'published'`;
+      const [{ n }] = await tx<{ n: number }[]>`select coalesce(max(version), 0) + 1 as n from library_versions where doc_id = ${v.doc_id}`;
+      await tx`update library_versions set status = 'published', version = ${n}, approved_by = ${p.approverId}, approved_at = now(), published_at = now(),
+        change = ${p.change}, review_by = ${p.reviewBy}, updated_at = now() where id = ${versionId}`;
+      for (const personId of Array.from(new Set([v.author_id, p.approverId]))) {
+        await tx`insert into library_acks (version_id, person_id) values (${versionId}, ${personId}) on conflict do nothing`;
+      }
+      return Number(n);
+    });
+  },
+  async retireLibraryDoc(docId, personId, note) {
+    if (!isUuid(docId)) return false;
+    const q = sql();
+    return (await q`update library_docs set retired_at = now(), retired_by = ${personId}, retired_note = ${note} where id = ${docId} and retired_at is null returning id`).length > 0;
+  },
+  async reinstateLibraryDoc(docId) {
+    if (!isUuid(docId)) return false;
+    const q = sql();
+    return (await q`update library_docs set retired_at = null, retired_by = null, retired_note = null where id = ${docId} and retired_at is not null returning id`).length > 0;
+  },
+  async libraryAcks(f) {
+    const ids = f.versionIds?.filter(isUuid);
+    if ((ids && !ids.length) || (f.personId && !isUuid(f.personId))) return [];
+    const q = sql();
+    const rows = await q<{ version_id: string; person_id: string; acked_at: Date }[]>`
+      select version_id, person_id, acked_at from library_acks where true
+        ${ids ? q`and version_id = any(${ids}::uuid[])` : q``} ${f.personId ? q`and person_id = ${f.personId}` : q``}`;
+    return rows.map((r) => ({ versionId: r.version_id, personId: r.person_id, at: r.acked_at.getTime() }));
+  },
+  async ackLibraryVersion(versionId, personId) {
+    if (!isUuid(versionId) || !isUuid(personId)) return false;
+    const q = sql();
+    const r = await q`insert into library_acks (version_id, person_id)
+      select ${versionId}, ${personId} where exists (select 1 from library_versions where id = ${versionId} and status = 'published')
+      on conflict do nothing`;
+    return r.count > 0;
+  },
+
+  // ---------- photos ----------
+  async addMedia(m) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`insert into media (mime, bytes, size, width, height, created_by)
+      values (${m.mime}, ${Buffer.from(m.bytes)}, ${m.bytes.byteLength}, ${m.width}, ${m.height}, ${m.createdBy}) returning id`;
+    return r.id;
+  },
+  async media(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<{ mime: string; bytes: Buffer }[]>`select mime, bytes from media where id = ${id}`;
+    return r && { mime: r.mime, bytes: new Uint8Array(r.bytes) };
+  },
+  async mediaExisting(ids) {
+    const valid = ids.filter(isUuid);
+    if (!valid.length) return new Set();
+    const q = sql();
+    return new Set((await q<{ id: string }[]>`select id from media where id = any(${valid}::uuid[])`).map((r) => r.id));
   },
 
   // ---------- shift cover ----------

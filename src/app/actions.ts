@@ -26,6 +26,8 @@ import { gasFor } from "@/lib/daily-service";
 import { askMessages, canAskCover, canCancelCover, canDecideCover, canOffer, canWithdraw, cancelMessages, coverSendAfter, decisionMessages, NOTE_MAX, offerMessages,
   offerWithdrawnMessages, withdrawMessages, type CoverMessage } from "@/lib/domain/cover";
 import { canCoverNow, coverCandidates } from "@/lib/cover-service";
+import { canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw as canTakeBack, changeFor, CHANGE_TEXT, cleanSop, photoIds, readsAny,
+  readyForReview, sopPrefix, validReviewBy, type SopBody } from "@/lib/domain/library";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
@@ -1304,5 +1306,171 @@ export async function cancelTask(id: string): Promise<ActionResult> {
   if (!(await db.cancelTask(t.id, ctx.person.id))) return { ok: false, error: "It has just changed" };
   await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "task.cancel", detail: `Took off: ${t.title}` });
   revalidatePath("/manage/tasks"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+// ---------- library: SOPs ----------
+const PhotoZ = z.object({ id: z.string().uuid(), w: z.number().int().min(1).max(10_000), h: z.number().int().min(1).max(10_000) });
+const SopZ = z.object({
+  title: z.string().max(300),
+  sections: z.array(z.string().max(10)).max(3),
+  purpose: z.string().max(3000),
+  steps: z.array(z.object({ text: z.string().max(3000), warning: z.string().max(1500).optional(), photo: PhotoZ.optional() })).max(60),
+});
+const LibIdZ = z.string().max(64);
+
+/** Writing SOPs: managers, operations managers and owners, on the full app. */
+async function requireDrafter() {
+  const ctx = await requireCtx();
+  if (!canDraft(ctx.person)) redirect("/library");
+  return ctx;
+}
+
+/** Cleans an SOP from the editor and checks its photos were uploaded. */
+async function sopFrom(input: unknown): Promise<{ ok: true; value: { title: string; body: SopBody } } | { ok: false; error: string }> {
+  const parsed = SopZ.safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Some details are missing" };
+  const c = cleanSop(parsed.data);
+  if (!c.ok) return c;
+  const ids = photoIds(c.value.body);
+  if (ids.length) {
+    const have = await store().mediaExisting(ids);
+    if (ids.some((id) => !have.has(id))) return { ok: false, error: "A photo didn't upload properly. Add it again" };
+  }
+  return c;
+}
+
+/** A new SOP: its first draft. The code (SOP-BOH-012) comes from who it's for and never changes. */
+export async function createSop(input: unknown): Promise<ActionResult & { id?: string }> {
+  const ctx = await requireDrafter();
+  const c = await sopFrom(input);
+  if (!c.ok) return c;
+  const db = store();
+  const { docId, code } = await db.createLibraryDoc({ kind: "sop", prefix: sopPrefix(c.value.body.sections), title: c.value.title, body: c.value.body, authorId: ctx.person.id });
+  await db.audit({ actorId: ctx.person.id, action: "library.create", detail: `Started ${code}: ${c.value.title}` });
+  revalidatePath("/library");
+  return { ok: true, id: docId };
+}
+
+/** Saves a draft (not audited: drafts change often; sending, approving and publishing are). */
+export async function saveSopDraft(versionId: string, input: unknown): Promise<ActionResult> {
+  const ctx = await requireDrafter();
+  const db = store();
+  const v = await db.libraryVersion(LibIdZ.parse(versionId));
+  if (!v) return { ok: false, error: "That draft isn't there any more" };
+  const can = canEditDraft(ctx.person, v);
+  if (!can.ok) return can;
+  const c = await sopFrom(input);
+  if (!c.ok) return c;
+  if (!(await db.saveLibraryDraft(v.id, c.value))) return { ok: false, error: "It has just changed. Open it again" };
+  revalidatePath(`/library/${v.docId}`); revalidatePath("/library");
+  return { ok: true };
+}
+
+/** A new version of a published SOP starts as a copy of it. If a draft is already open, that's the one to carry on with. */
+export async function startSopDraft(docId: string): Promise<ActionResult> {
+  const ctx = await requireDrafter();
+  const db = store();
+  const doc = await db.libraryDoc(LibIdZ.parse(docId));
+  if (!doc) return { ok: false, error: "That SOP isn't there any more" };
+  if (doc.open) return { ok: true };
+  if (doc.retiredAt) return { ok: false, error: "It's retired. Bring it back first" };
+  if (!(await db.startLibraryDraft(doc.id, ctx.person.id))) return { ok: false, error: "It has just changed. Open it again" };
+  await db.audit({ actorId: ctx.person.id, action: "library.draft", detail: `Started a new version of ${doc.code}: ${doc.published?.title ?? ""}` });
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library");
+  return { ok: true };
+}
+
+const MOVE_AUDIT = { submit: "Sent for approval", withdraw: "Took back from approval", send_back: "Sent back", discard: "Discarded a draft of" } as const;
+
+/** Send for approval, take back, send back (approvers, with a note), or discard a draft. */
+export async function moveSop(versionId: string, move: string, note?: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const m = z.enum(["submit", "withdraw", "send_back", "discard"]).parse(move);
+  const db = store();
+  const v = await db.libraryVersion(LibIdZ.parse(versionId));
+  const doc = v && (await db.libraryDoc(v.docId));
+  if (!v || !doc) return { ok: false, error: "That version isn't there any more" };
+  const why = z.string().trim().max(500, "Keep the note under 500 characters").safeParse(note ?? "");
+  if (!why.success) return { ok: false, error: why.error.issues[0]?.message ?? "Check the note" };
+  const can = m === "submit" ? canEditDraft(ctx.person, v) : m === "withdraw" ? canTakeBack(ctx.person, v) : m === "send_back" ? canReview(ctx.person, v) : canDiscard(ctx.person, v);
+  if (!can.ok) return can;
+  if (m === "submit") {
+    const ready = readyForReview(v.body);
+    if (!ready.ok) return ready;
+  }
+  if (m === "send_back" && !why.data) return { ok: false, error: "Say what needs changing" };
+  if (!(await db.moveLibraryVersion(v.id, m, ctx.person.id, m === "send_back" ? why.data : undefined))) return { ok: false, error: "It has just changed. Open it again" };
+  await db.audit({ actorId: ctx.person.id, action: `library.${m}`, detail: `${MOVE_AUDIT[m]} ${doc.code}: ${v.title}${m === "send_back" ? ` (${why.data})` : ""}` });
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/owner"); revalidatePath("/manage");
+  return { ok: true };
+}
+
+/** An owner or operations manager approves and publishes. Everyone it's for must read it again (minor or major change). */
+export async function publishSop(versionId: string, input: unknown): Promise<ActionResult & { version?: number }> {
+  const ctx = await requireCtx();
+  const p = z.object({ change: z.string().max(10).optional(), reviewBy: z.string().max(10) }).safeParse(input);
+  if (!p.success) return { ok: false, error: "Choose a review date" };
+  const db = store();
+  const v = await db.libraryVersion(LibIdZ.parse(versionId));
+  const doc = v && (await db.libraryDoc(v.docId));
+  if (!v || !doc) return { ok: false, error: "That version isn't there any more" };
+  const can = canReview(ctx.person, v);
+  if (!can.ok) return can;
+  if (doc.retiredAt) return { ok: false, error: "It's retired. Bring it back first" };
+  const ready = readyForReview(v.body);
+  if (!ready.ok) return ready;
+  const change = changeFor(!!doc.published, p.data.change);
+  if (!change.ok) return change;
+  const review = validReviewBy(p.data.reviewBy, londonDate(Date.now()));
+  if (!review.ok) return review;
+  const n = await db.publishLibraryVersion(v.id, { approverId: ctx.person.id, change: change.value, reviewBy: p.data.reviewBy });
+  if (!n) return { ok: false, error: "It has just changed. Open it again" };
+  await db.audit({ actorId: ctx.person.id, action: "library.publish", detail: `Published ${doc.code} version ${n} (${CHANGE_TEXT[change.value]}): ${v.title}` });
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/owner"); revalidatePath("/manage");
+  return { ok: true, version: n };
+}
+
+/** Takes an SOP out of use (kept, with its history); it can be brought back. */
+export async function retireSop(docId: string, note: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const db = store();
+  const doc = await db.libraryDoc(LibIdZ.parse(docId));
+  if (!doc) return { ok: false, error: "That SOP isn't there any more" };
+  const can = canRetire(ctx.person, doc);
+  if (!can.ok) return can;
+  const why = z.string().trim().min(1, "Say why it's being retired").max(300, "Keep the reason under 300 characters").safeParse(note ?? "");
+  if (!why.success) return { ok: false, error: why.error.issues[0]?.message ?? "Say why" };
+  if (!(await db.retireLibraryDoc(doc.id, ctx.person.id, why.data))) return { ok: false, error: "It has just changed. Open it again" };
+  await db.audit({ actorId: ctx.person.id, action: "library.retire", detail: `Retired ${doc.code}: ${doc.published?.title ?? doc.open?.title ?? ""} (${why.data})` });
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+export async function reinstateSop(docId: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const db = store();
+  const doc = await db.libraryDoc(LibIdZ.parse(docId));
+  if (!doc) return { ok: false, error: "That SOP isn't there any more" };
+  const can = canReinstate(ctx.person, doc);
+  if (!can.ok) return can;
+  if (!(await db.reinstateLibraryDoc(doc.id))) return { ok: false, error: "It has just changed. Open it again" };
+  await db.audit({ actorId: ctx.person.id, action: "library.reinstate", detail: `Brought back ${doc.code}: ${doc.published?.title ?? ""}` });
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+/** "I've read and understood it": on the shop tablet or their own phone, for a published SOP that's for them. */
+export async function ackSop(versionId: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  const db = store();
+  const v = await db.libraryVersion(LibIdZ.parse(versionId));
+  const doc = v && (await db.libraryDoc(v.docId));
+  if (!v || !doc || v.status !== "published" || doc.retiredAt) return { ok: false, error: "This version has been replaced. Open the SOP again" };
+  if (!readsAny(v.body.sections, ctx.person, await db.sites())) return { ok: false, error: "This SOP isn't one you need to confirm" };
+  await db.ackLibraryVersion(v.id, ctx.person.id);
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me");
   return { ok: true };
 }

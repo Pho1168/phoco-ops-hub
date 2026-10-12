@@ -11,6 +11,7 @@ import type { Task, TaskInput, TaskStatus } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
 import type { CoverRequest } from "@/lib/domain/cover";
+import type { ChangeKind, LibraryDoc, LibraryKind, LibraryVersion, SopBody } from "@/lib/domain/library";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
@@ -45,6 +46,10 @@ export interface RecordsData {
   trackingFrom?: string;
 }
 export interface AuditEntry { at: number; actorId?: string; siteId?: SiteId; action: string; detail: string }
+/** "I've read it" for one version of a library document. */
+export interface LibraryAck { versionId: string; personId: string; at: number }
+/** submit: draft → waiting for approval; withdraw: taken back to draft; send_back: an approver returns it with a note; discard: draft → discarded. */
+export type LibraryMove = "submit" | "withdraw" | "send_back" | "discard";
 
 /**
  * Everything the app reads and writes goes through this interface.
@@ -175,6 +180,38 @@ export interface Store {
   gasChecks(siteIds: SiteId[], from: string, to: string): Promise<GasCheck[]>;
   /** Records the day's gas check. False if someone has already done it (the first tap counts). */
   addGasCheck(c: { siteId: SiteId; date: string; personId: string; onTablet: boolean }): Promise<boolean>;
+
+  // Library: SOPs. A published version never changes; documents are retired; nothing is deleted.
+  /** Every document of a kind (by code), each with its published version and its open one (draft or waiting for approval). */
+  libraryDocs(kind: LibraryKind): Promise<LibraryDoc[]>;
+  libraryDoc(id: string): Promise<LibraryDoc | undefined>;
+  /** Every version of a document, newest first. */
+  libraryVersions(docId: string): Promise<LibraryVersion[]>;
+  libraryVersion(id: string): Promise<LibraryVersion | undefined>;
+  /** A new document and its first draft. The code is the next free one starting with `prefix`. */
+  createLibraryDoc(d: { kind: LibraryKind; prefix: string; title: string; body: SopBody; authorId: string }): Promise<{ docId: string; versionId: string; code: string }>;
+  /** A new draft copied from the published version. Undefined if a draft is already open, nothing is published, or it's retired. */
+  startLibraryDraft(docId: string, authorId: string): Promise<string | undefined>;
+  /** Saves a draft's title and body. False if it isn't a draft any more. */
+  saveLibraryDraft(versionId: string, d: { title: string; body: SopBody }): Promise<boolean>;
+  /** Moves a version along (see LibraryMove). False if it wasn't in the state the move starts from. */
+  moveLibraryVersion(versionId: string, move: LibraryMove, personId: string, note?: string): Promise<boolean>;
+  /**
+   * Waiting for approval → published, replacing the published version (kept as superseded). The author and approver
+   * count as having read it. Returns the new version number, or undefined if it changed meanwhile or the document is retired.
+   */
+  publishLibraryVersion(versionId: string, p: { approverId: string; change: ChangeKind; reviewBy: string }): Promise<number | undefined>;
+  retireLibraryDoc(docId: string, personId: string, note: string): Promise<boolean>;
+  reinstateLibraryDoc(docId: string): Promise<boolean>;
+  libraryAcks(filter: { versionIds?: string[]; personId?: string }): Promise<LibraryAck[]>;
+  /** Records "I've read it" for a published version. False if already recorded (or it isn't published). */
+  ackLibraryVersion(versionId: string, personId: string): Promise<boolean>;
+
+  // Photos (never changed or deleted)
+  addMedia(m: { mime: string; bytes: Uint8Array; width: number; height: number; createdBy: string }): Promise<string>;
+  media(id: string): Promise<{ mime: string; bytes: Uint8Array } | undefined>;
+  /** Which of these photo ids exist. */
+  mediaExisting(ids: string[]): Promise<Set<string>>;
 
   // Shift cover (requests are withdrawn or decided, offers withdrawn; nothing is deleted)
   /**

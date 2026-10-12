@@ -303,3 +303,25 @@ table.matrix thead th:first-child { position: sticky; left: 0; z-index: 2; backg
 .light.green { background: var(--go); }
 .light.red { background: var(--bad); }
 .reasons { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+
+/* Library: SOPs read on a tablet at the station, so the steps are big and the photos wide. */
+.sop-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; counter-reset: step; }
+.sop-step { background: var(--surface); border-radius: 16px; padding: 14px 16px; display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start; }
+.sop-num { width: 40px; height: 40px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: flex; align-items: center; justify-content: center;
+  font-family: var(--display); font-weight: 700; font-size: 22px; }
+.sop-text { font-size: 18px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sop-warn { margin-top: 8px; display: flex; gap: 10px; align-items: flex-start; background: var(--bad-soft); color: var(--bad-ink); border-radius: 12px; padding: 10px 12px; font-weight: 600; white-space: pre-wrap; }
+.sop-photo { display: block; width: 100%; height: auto; max-height: 420px; object-fit: contain; border-radius: 12px; margin-top: 10px; background: var(--surface-2); }
+.sop-purpose { font-size: 17px; white-space: pre-wrap; }
+.step-mode { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; }
+.step-mode .step-body { flex: 1; overflow-y: auto; padding: 20px 20px 10px; max-width: 900px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+.step-mode .step-text { font-size: 30px; line-height: 1.3; font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-mode .sop-photo { max-height: 50vh; }
+.step-mode .step-foot { display: flex; gap: 12px; padding: 12px 20px calc(14px + env(safe-area-inset-bottom, 0px)); max-width: 900px; width: 100%; margin: 0 auto; }
+.step-mode .step-foot .btn { min-height: 64px; font-size: 18px; flex: 1; }
+.editor-step { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+.editor-step textarea { min-height: 70px; background: var(--bg); }
+.editor-step .warn-box { border-color: var(--bad-soft); }
+.thumb { width: 120px; height: 90px; object-fit: cover; border-radius: 10px; background: var(--surface-2); }
+.lib-item .chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.lib-code { font-variant-numeric: tabular-nums; letter-spacing: .3px; }

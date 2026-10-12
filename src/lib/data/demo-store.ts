@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
-import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
+import type { Alert, AuditEntry, HandoverItem, LibraryAck, NoticeRow, PrepEntryView, PrepHandover, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
 import { latestAnswers } from "@/lib/domain/checklist";
 import { londonDate, londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
 import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
@@ -14,6 +14,7 @@ import type { Task } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
 import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
+import type { LibraryDoc, LibraryVersion } from "@/lib/domain/library";
 import { shiftEnd, shiftStart } from "@/lib/domain/reminders";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
@@ -86,6 +87,31 @@ interface State {
   cover: { id: string; shiftId: string; siteId: SiteId; personId: string; section: string; note?: string; status: CoverStatus; createdAt: number;
     coveredBy?: string; decidedBy?: string; decidedAt?: number; decisionNote?: string; withdrawnAt?: number; cancelledBy?: string; cancelledAt?: number; cancelNote?: string }[];
   coverOffers: { id: string; requestId: string; personId: string; createdAt: number; withdrawnAt?: number }[];
+  libDocs: (Omit<LibraryDoc, "published" | "open"> & { createdBy: string })[];
+  libVersions: Omit<LibraryVersion, "authorName" | "reviewedByName" | "approvedByName">[];
+  libAcks: LibraryAck[];
+  media: Map<string, { mime: string; bytes: Uint8Array; width: number; height: number; createdBy: string; createdAt: number }>;
+}
+
+/** One sample SOP, published, so the library has something to show in demo mode. */
+function demoLibrary(): Pick<State, "libDocs" | "libVersions" | "libAcks" | "media"> {
+  const at = Date.now() - 3 * 86_400_000;
+  return {
+    libDocs: [{ id: "demo-sop-1", kind: "sop", code: "SOP-GEN-001", createdAt: at, createdBy: "DEMO-MGR" }],
+    libVersions: [{
+      id: "demo-sop-1-v1", docId: "demo-sop-1", status: "published", version: 1, title: "Hand washing (demo)",
+      body: { sections: [], purpose: "Clean hands stop bacteria and allergens spreading to food. Wash before starting work, after breaks, raw food, bins and cleaning, and after touching your face or phone.", steps: [
+        { text: "Wet your hands with warm running water." },
+        { text: "Use soap from the dispenser and rub palms, backs, between the fingers, thumbs and fingertips for at least 20 seconds." },
+        { text: "Rinse well under running water." },
+        { text: "Dry with a clean paper towel, then use the towel to turn off the tap.", warning: "Never dry hands on your apron or a tea towel." },
+      ] },
+      authorId: "DEMO-MGR", createdAt: at, updatedAt: at, submittedBy: "DEMO-MGR", submittedAt: at,
+      approvedBy: "DEMO-OWN", publishedAt: at, change: "new", reviewBy: addDaysIso(londonDate(at), 365),
+    }],
+    libAcks: [{ versionId: "demo-sop-1-v1", personId: "DEMO-MGR", at }],
+    media: new Map(),
+  };
 }
 
 /** Sample records so the certificates screens have something to show in demo mode. */
@@ -167,7 +193,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [], cover: [], coverOffers: [],
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [], cover: [], coverOffers: [], ...demoLibrary(),
   };
 }
 
@@ -207,6 +233,15 @@ function coverView(c: State["cover"][number]): CoverRequest | undefined {
 }
 
 const taskView = (t: Task): Task => ({ ...t, createdByName: nameOf(t.createdBy) ?? "", assigneeName: nameOf(t.assigneeId), doneByName: nameOf(t.doneBy) });
+const libVersionView = (v: State["libVersions"][number]): LibraryVersion =>
+  ({ ...structuredClone(v), authorName: nameOf(v.authorId) ?? "", reviewedByName: nameOf(v.reviewedBy), approvedByName: nameOf(v.approvedBy) });
+function libDocView(d: State["libDocs"][number]): LibraryDoc {
+  const versions = S().libVersions.filter((v) => v.docId === d.id);
+  const published = versions.find((v) => v.status === "published");
+  const open = versions.find((v) => v.status === "draft" || v.status === "in_review");
+  return { id: d.id, kind: d.kind, code: d.code, createdAt: d.createdAt, retiredAt: d.retiredAt, retiredBy: d.retiredBy, retiredNote: d.retiredNote,
+    published: published && libVersionView(published), open: open && libVersionView(open) };
+}
 
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
@@ -557,6 +592,106 @@ export const demoStore: Store = {
     const lists = new Set(S().lists.filter((l) => l.siteId === siteId).map((l) => l.id));
     return Array.from(S().runs.values()).filter((r) => lists.has(r.listId)).map((r) => r.date).sort()[0];
   },
+  // ---------- library ----------
+  async libraryDocs(kind) {
+    return S().libDocs.filter((d) => d.kind === kind).sort((a, b) => a.code.localeCompare(b.code)).map(libDocView);
+  },
+  async libraryDoc(id) {
+    const d = S().libDocs.find((x) => x.id === id);
+    return d && libDocView(d);
+  },
+  async libraryVersions(docId) {
+    return S().libVersions.filter((v) => v.docId === docId).sort((a, b) => b.createdAt - a.createdAt).map(libVersionView);
+  },
+  async libraryVersion(id) {
+    const v = S().libVersions.find((x) => x.id === id);
+    return v && libVersionView(v);
+  },
+  async createLibraryDoc(d) {
+    const codes = S().libDocs.map((x) => x.code);
+    const used = codes.filter((c) => c.startsWith(d.prefix)).map((c) => Number(c.slice(d.prefix.length))).filter((n) => Number.isInteger(n));
+    const code = d.prefix + String((used.length ? Math.max(...used) : 0) + 1).padStart(3, "0");
+    const now = Date.now();
+    const docId = randomUUID(), versionId = randomUUID();
+    S().libDocs.push({ id: docId, kind: d.kind, code, createdAt: now, createdBy: d.authorId });
+    S().libVersions.push({ id: versionId, docId, status: "draft", title: d.title, body: structuredClone(d.body), authorId: d.authorId, createdAt: now, updatedAt: now });
+    return { docId, versionId, code };
+  },
+  async startLibraryDraft(docId, authorId) {
+    const doc = S().libDocs.find((d) => d.id === docId);
+    const versions = S().libVersions.filter((v) => v.docId === docId);
+    const published = versions.find((v) => v.status === "published");
+    if (!doc || doc.retiredAt || !published || versions.some((v) => v.status === "draft" || v.status === "in_review")) return undefined;
+    const now = Date.now(), id = randomUUID();
+    S().libVersions.push({ id, docId, status: "draft", title: published.title, body: structuredClone(published.body), authorId, createdAt: now, updatedAt: now });
+    return id;
+  },
+  async saveLibraryDraft(versionId, d) {
+    const v = S().libVersions.find((x) => x.id === versionId && x.status === "draft");
+    if (!v) return false;
+    v.title = d.title; v.body = structuredClone(d.body); v.updatedAt = Date.now();
+    return true;
+  },
+  async moveLibraryVersion(versionId, move, personId, note) {
+    const from = move === "submit" || move === "discard" ? "draft" : "in_review";
+    const v = S().libVersions.find((x) => x.id === versionId && x.status === from);
+    if (!v) return false;
+    const now = Date.now();
+    if (move === "submit") Object.assign(v, { status: "in_review", submittedBy: personId, submittedAt: now, reviewNote: undefined, reviewedBy: undefined, reviewedAt: undefined });
+    if (move === "withdraw") Object.assign(v, { status: "draft", submittedBy: undefined, submittedAt: undefined });
+    if (move === "send_back") Object.assign(v, { status: "draft", submittedBy: undefined, submittedAt: undefined, reviewNote: note, reviewedBy: personId, reviewedAt: now });
+    if (move === "discard") v.status = "discarded";
+    v.updatedAt = now;
+    return true;
+  },
+  async publishLibraryVersion(versionId, p) {
+    const v = S().libVersions.find((x) => x.id === versionId && x.status === "in_review");
+    const doc = v && S().libDocs.find((d) => d.id === v.docId);
+    if (!v || !doc || doc.retiredAt) return undefined;
+    const now = Date.now();
+    const versions = S().libVersions.filter((x) => x.docId === v.docId);
+    for (const old of versions.filter((x) => x.status === "published")) Object.assign(old, { status: "superseded", supersededAt: now });
+    const n = Math.max(0, ...versions.map((x) => x.version ?? 0)) + 1;
+    Object.assign(v, { status: "published", version: n, approvedBy: p.approverId, publishedAt: now, change: p.change, reviewBy: p.reviewBy, updatedAt: now });
+    for (const personId of Array.from(new Set([v.authorId, p.approverId]))) {
+      if (!S().libAcks.some((a) => a.versionId === v.id && a.personId === personId)) S().libAcks.push({ versionId: v.id, personId, at: now });
+    }
+    return n;
+  },
+  async retireLibraryDoc(docId, personId, note) {
+    const d = S().libDocs.find((x) => x.id === docId && !x.retiredAt);
+    if (!d) return false;
+    Object.assign(d, { retiredAt: Date.now(), retiredBy: personId, retiredNote: note });
+    return true;
+  },
+  async reinstateLibraryDoc(docId) {
+    const d = S().libDocs.find((x) => x.id === docId && x.retiredAt);
+    if (!d) return false;
+    Object.assign(d, { retiredAt: undefined, retiredBy: undefined, retiredNote: undefined });
+    return true;
+  },
+  async libraryAcks(f) {
+    return S().libAcks.filter((a) => (!f.versionIds || f.versionIds.includes(a.versionId)) && (!f.personId || a.personId === f.personId)).map((a) => ({ ...a }));
+  },
+  async ackLibraryVersion(versionId, personId) {
+    if (!S().libVersions.some((v) => v.id === versionId && v.status === "published")) return false;
+    if (S().libAcks.some((a) => a.versionId === versionId && a.personId === personId)) return false;
+    S().libAcks.push({ versionId, personId, at: Date.now() });
+    return true;
+  },
+  async addMedia(m) {
+    const id = randomUUID();
+    S().media.set(id, { mime: m.mime, bytes: new Uint8Array(m.bytes), width: m.width, height: m.height, createdBy: m.createdBy, createdAt: Date.now() });
+    return id;
+  },
+  async media(id) {
+    const m = S().media.get(id);
+    return m && { mime: m.mime, bytes: m.bytes };
+  },
+  async mediaExisting(ids) {
+    return new Set(ids.filter((id) => S().media.has(id)));
+  },
+
   async coverRequests(f) {
     return S().cover.filter((c) => (!f.siteIds || f.siteIds.includes(c.siteId)) && (!f.personId || c.personId === f.personId)
       && (!f.live || c.status === "open" || c.status === "approved")).sort((a, b) => b.createdAt - a.createdAt).map(coverView)

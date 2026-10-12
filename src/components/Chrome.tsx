@@ -31,7 +31,7 @@ export function PhoneTopBar({ ctx }: { ctx: Ctx }) {
   );
 }
 
-export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "rota" | "owner" | "manage" }) {
+export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "rota" | "library" | "owner" | "manage" }) {
   const item = (href: string, id: typeof current, label: string, icon: string) => (
     <Link href={href} aria-current={current === id ? "page" : undefined}><Icon name={icon} />{label}</Link>
   );
@@ -40,6 +40,7 @@ export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "hand
       {item("/today", "today", "Today", "today")}
       {item("/handover", "handover", "Handover", "handover")}
       {item("/rota", "rota", "Rota", "rota")}
+      {item("/library", "library", "Library", "book")}
       {ctx.isLead
         ? item("/owner", "owner", ctx.isOwner ? "Owner" : "Overview", "owner")
         : managedSites(ctx.person).length > 0 && item("/manage", "manage", "Manage", "manage")}
