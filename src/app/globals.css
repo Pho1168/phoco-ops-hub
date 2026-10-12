@@ -323,5 +323,8 @@ table.matrix thead th:first-child { position: sticky; left: 0; z-index: 2; backg
 .editor-step textarea { min-height: 70px; background: var(--bg); }
 .editor-step .warn-box { border-color: var(--bad-soft); }
 .thumb { width: 120px; height: 90px; object-fit: cover; border-radius: 10px; background: var(--surface-2); }
+.photo-removed { margin-top: 10px; border-radius: 12px; background: var(--surface-2); color: var(--ink-2); padding: 14px; font-size: 13px; font-weight: 600; text-align: center; }
+.editor-step .photo-removed { margin-top: 0; width: 120px; padding: 10px 8px; }
+.photo-tools { margin-top: 6px; }
 .lib-item .chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .lib-code { font-variant-numeric: tabular-nums; letter-spacing: .3px; }

@@ -14,7 +14,7 @@ import type { Task } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
 import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
-import type { LibraryDoc, LibraryVersion } from "@/lib/domain/library";
+import { nextCode, type LibraryDoc, type LibraryVersion } from "@/lib/domain/library";
 import { shiftEnd, shiftStart } from "@/lib/domain/reminders";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
@@ -90,7 +90,7 @@ interface State {
   libDocs: (Omit<LibraryDoc, "published" | "open"> & { createdBy: string })[];
   libVersions: Omit<LibraryVersion, "authorName" | "reviewedByName" | "approvedByName">[];
   libAcks: LibraryAck[];
-  media: Map<string, { mime: string; bytes: Uint8Array; width: number; height: number; createdBy: string; createdAt: number }>;
+  media: Map<string, { mime: string; bytes: Uint8Array; width: number; height: number; createdBy: string; createdAt: number; erasedAt?: number; erasedBy?: string }>;
 }
 
 /** One sample SOP, published, so the library has something to show in demo mode. */
@@ -106,10 +106,10 @@ function demoLibrary(): Pick<State, "libDocs" | "libVersions" | "libAcks" | "med
         { text: "Rinse well under running water." },
         { text: "Dry with a clean paper towel, then use the towel to turn off the tap.", warning: "Never dry hands on your apron or a tea towel." },
       ] },
-      authorId: "DEMO-MGR", createdAt: at, updatedAt: at, submittedBy: "DEMO-MGR", submittedAt: at,
+      authorId: "DEMO-MGR", contributors: ["DEMO-MGR"], rev: 3, createdAt: at, updatedAt: at, submittedBy: "DEMO-MGR", submittedAt: at,
       approvedBy: "DEMO-OWN", publishedAt: at, change: "new", reviewBy: addDaysIso(londonDate(at), 365),
     }],
-    libAcks: [{ versionId: "demo-sop-1-v1", personId: "DEMO-MGR", at }],
+    libAcks: [{ versionId: "demo-sop-1-v1", personId: "DEMO-OWN", at }],
     media: new Map(),
   };
 }
@@ -233,14 +233,17 @@ function coverView(c: State["cover"][number]): CoverRequest | undefined {
 }
 
 const taskView = (t: Task): Task => ({ ...t, createdByName: nameOf(t.createdBy) ?? "", assigneeName: nameOf(t.assigneeId), doneByName: nameOf(t.doneBy) });
-const libVersionView = (v: State["libVersions"][number]): LibraryVersion =>
-  ({ ...structuredClone(v), authorName: nameOf(v.authorId) ?? "", reviewedByName: nameOf(v.reviewedBy), approvedByName: nameOf(v.approvedBy) });
-function libDocView(d: State["libDocs"][number]): LibraryDoc {
+const libVersionView = (v: State["libVersions"][number], light = false): LibraryVersion => {
+  const copy = structuredClone(v);
+  if (light) copy.body = { sections: copy.body.sections, purpose: "", steps: [] };
+  return { ...copy, authorName: nameOf(v.authorId) ?? "", reviewedByName: nameOf(v.reviewedBy), approvedByName: nameOf(v.approvedBy) };
+};
+function libDocView(d: State["libDocs"][number], light = false): LibraryDoc {
   const versions = S().libVersions.filter((v) => v.docId === d.id);
   const published = versions.find((v) => v.status === "published");
   const open = versions.find((v) => v.status === "draft" || v.status === "in_review");
   return { id: d.id, kind: d.kind, code: d.code, createdAt: d.createdAt, retiredAt: d.retiredAt, retiredBy: d.retiredBy, retiredNote: d.retiredNote,
-    published: published && libVersionView(published), open: open && libVersionView(open) };
+    published: published && libVersionView(published, light), open: open && libVersionView(open, light) };
 }
 
 const g = globalThis as unknown as { __phocoDemo?: State };
@@ -593,28 +596,26 @@ export const demoStore: Store = {
     return Array.from(S().runs.values()).filter((r) => lists.has(r.listId)).map((r) => r.date).sort()[0];
   },
   // ---------- library ----------
-  async libraryDocs(kind) {
-    return S().libDocs.filter((d) => d.kind === kind).sort((a, b) => a.code.localeCompare(b.code)).map(libDocView);
+  async libraryDocs(kind, opts) {
+    return S().libDocs.filter((d) => d.kind === kind).sort((a, b) => a.code.localeCompare(b.code)).map((d) => libDocView(d, !!opts?.light));
   },
   async libraryDoc(id) {
     const d = S().libDocs.find((x) => x.id === id);
     return d && libDocView(d);
   },
   async libraryVersions(docId) {
-    return S().libVersions.filter((v) => v.docId === docId).sort((a, b) => b.createdAt - a.createdAt).map(libVersionView);
+    return S().libVersions.filter((v) => v.docId === docId).sort((a, b) => b.createdAt - a.createdAt).map((v) => libVersionView(v));
   },
   async libraryVersion(id) {
     const v = S().libVersions.find((x) => x.id === id);
     return v && libVersionView(v);
   },
   async createLibraryDoc(d) {
-    const codes = S().libDocs.map((x) => x.code);
-    const used = codes.filter((c) => c.startsWith(d.prefix)).map((c) => Number(c.slice(d.prefix.length))).filter((n) => Number.isInteger(n));
-    const code = d.prefix + String((used.length ? Math.max(...used) : 0) + 1).padStart(3, "0");
+    const code = nextCode(d.prefix, S().libDocs.map((x) => x.code));
     const now = Date.now();
     const docId = randomUUID(), versionId = randomUUID();
     S().libDocs.push({ id: docId, kind: d.kind, code, createdAt: now, createdBy: d.authorId });
-    S().libVersions.push({ id: versionId, docId, status: "draft", title: d.title, body: structuredClone(d.body), authorId: d.authorId, createdAt: now, updatedAt: now });
+    S().libVersions.push({ id: versionId, docId, status: "draft", title: d.title, body: structuredClone(d.body), authorId: d.authorId, contributors: [d.authorId], rev: 1, createdAt: now, updatedAt: now });
     return { docId, versionId, code };
   },
   async startLibraryDraft(docId, authorId) {
@@ -623,45 +624,53 @@ export const demoStore: Store = {
     const published = versions.find((v) => v.status === "published");
     if (!doc || doc.retiredAt || !published || versions.some((v) => v.status === "draft" || v.status === "in_review")) return undefined;
     const now = Date.now(), id = randomUUID();
-    S().libVersions.push({ id, docId, status: "draft", title: published.title, body: structuredClone(published.body), authorId, createdAt: now, updatedAt: now });
+    S().libVersions.push({ id, docId, status: "draft", title: published.title, body: structuredClone(published.body), authorId, contributors: [authorId], rev: 1, createdAt: now, updatedAt: now });
     return id;
   },
-  async saveLibraryDraft(versionId, d) {
-    const v = S().libVersions.find((x) => x.id === versionId && x.status === "draft");
-    if (!v) return false;
-    v.title = d.title; v.body = structuredClone(d.body); v.updatedAt = Date.now();
-    return true;
+  async saveLibraryDraft(versionId, rev, d, personId) {
+    const v = S().libVersions.find((x) => x.id === versionId && x.status === "draft" && x.rev === rev);
+    if (!v) return undefined;
+    Object.assign(v, { title: d.title, body: structuredClone(d.body), updatedAt: Date.now(), rev: v.rev + 1,
+      contributors: v.contributors.includes(personId) ? v.contributors : [...v.contributors, personId] });
+    return v.rev;
   },
-  async moveLibraryVersion(versionId, move, personId, note) {
+  async moveLibraryVersion(versionId, move, personId, rev, note) {
     const from = move === "submit" || move === "discard" ? "draft" : "in_review";
-    const v = S().libVersions.find((x) => x.id === versionId && x.status === from);
+    const v = S().libVersions.find((x) => x.id === versionId && x.status === from && x.rev === rev);
     if (!v) return false;
     const now = Date.now();
-    if (move === "submit") Object.assign(v, { status: "in_review", submittedBy: personId, submittedAt: now, reviewNote: undefined, reviewedBy: undefined, reviewedAt: undefined });
+    if (move === "submit") Object.assign(v, { status: "in_review", submittedBy: personId, submittedAt: now, reviewNote: undefined, reviewedBy: undefined, reviewedAt: undefined,
+      contributors: v.contributors.includes(personId) ? v.contributors : [...v.contributors, personId] });
     if (move === "withdraw") Object.assign(v, { status: "draft", submittedBy: undefined, submittedAt: undefined });
     if (move === "send_back") Object.assign(v, { status: "draft", submittedBy: undefined, submittedAt: undefined, reviewNote: note, reviewedBy: personId, reviewedAt: now });
-    if (move === "discard") v.status = "discarded";
-    v.updatedAt = now;
+    if (move === "discard") {
+      v.status = "discarded";
+      const doc = S().libDocs.find((x) => x.id === v.docId);
+      const everPublished = S().libVersions.some((x) => x.docId === v.docId && x.version !== undefined);
+      if (doc && !everPublished && !doc.retiredAt) Object.assign(doc, { retiredAt: now, retiredBy: personId, retiredNote: "Draft discarded before it was published" });
+    }
+    v.updatedAt = now; v.rev += 1;
     return true;
   },
-  async publishLibraryVersion(versionId, p) {
-    const v = S().libVersions.find((x) => x.id === versionId && x.status === "in_review");
+  async publishLibraryVersion(versionId, rev, p) {
+    const v = S().libVersions.find((x) => x.id === versionId && x.status === "in_review" && x.rev === rev);
     const doc = v && S().libDocs.find((d) => d.id === v.docId);
     if (!v || !doc || doc.retiredAt) return undefined;
+    if (!p.ownerApproving && (v.authorId === p.approverId || v.submittedBy === p.approverId || v.contributors.includes(p.approverId))) return undefined;
     const now = Date.now();
     const versions = S().libVersions.filter((x) => x.docId === v.docId);
     for (const old of versions.filter((x) => x.status === "published")) Object.assign(old, { status: "superseded", supersededAt: now });
     const n = Math.max(0, ...versions.map((x) => x.version ?? 0)) + 1;
-    Object.assign(v, { status: "published", version: n, approvedBy: p.approverId, publishedAt: now, change: p.change, reviewBy: p.reviewBy, updatedAt: now });
-    for (const personId of Array.from(new Set([v.authorId, p.approverId]))) {
-      if (!S().libAcks.some((a) => a.versionId === v.id && a.personId === personId)) S().libAcks.push({ versionId: v.id, personId, at: now });
-    }
+    Object.assign(v, { status: "published", version: n, approvedBy: p.approverId, publishedAt: now, change: p.change, reviewBy: p.reviewBy, updatedAt: now, rev: v.rev + 1 });
+    if (!S().libAcks.some((a) => a.versionId === v.id && a.personId === p.approverId)) S().libAcks.push({ versionId: v.id, personId: p.approverId, at: now });
     return n;
   },
   async retireLibraryDoc(docId, personId, note) {
     const d = S().libDocs.find((x) => x.id === docId && !x.retiredAt);
     if (!d) return false;
-    Object.assign(d, { retiredAt: Date.now(), retiredBy: personId, retiredNote: note });
+    const now = Date.now();
+    Object.assign(d, { retiredAt: now, retiredBy: personId, retiredNote: note });
+    for (const v of S().libVersions.filter((x) => x.docId === docId && (x.status === "draft" || x.status === "in_review"))) Object.assign(v, { status: "discarded", updatedAt: now, rev: v.rev + 1 });
     return true;
   },
   async reinstateLibraryDoc(docId) {
@@ -681,15 +690,36 @@ export const demoStore: Store = {
   },
   async addMedia(m) {
     const id = randomUUID();
-    S().media.set(id, { mime: m.mime, bytes: new Uint8Array(m.bytes), width: m.width, height: m.height, createdBy: m.createdBy, createdAt: Date.now() });
+    S().media.set(id, { mime: "image/jpeg", bytes: new Uint8Array(m.bytes), width: m.width, height: m.height, createdBy: m.createdBy, createdAt: Date.now() });
     return id;
   },
   async media(id) {
     const m = S().media.get(id);
-    return m && { mime: m.mime, bytes: m.bytes };
+    return m && { mime: m.mime, bytes: m.bytes, erased: !!m.erasedAt };
   },
-  async mediaExisting(ids) {
-    return new Set(ids.filter((id) => S().media.has(id)));
+  async mediaInfo(id) {
+    const m = S().media.get(id);
+    return m && { mime: m.mime, erased: !!m.erasedAt };
+  },
+  async mediaStatus(ids) {
+    const out = new Map<string, { erased: boolean }>();
+    for (const id of ids) { const m = S().media.get(id); if (m) out.set(id, { erased: !!m.erasedAt }); }
+    return out;
+  },
+  async mediaCountSince(personId, since) {
+    return Array.from(S().media.values()).filter((m) => m.createdBy === personId && m.createdAt >= since).length;
+  },
+  async eraseMedia(id, personId) {
+    const m = S().media.get(id);
+    if (!m || m.erasedAt) return false;
+    Object.assign(m, { bytes: new Uint8Array(), erasedAt: Date.now(), erasedBy: personId });
+    return true;
+  },
+  async deleteUnusedMedia(before) {
+    const used = JSON.stringify(S().libVersions.map((v) => v.body));
+    let n = 0;
+    for (const [id, m] of Array.from(S().media.entries())) if (m.createdAt < before && !used.includes(id)) { S().media.delete(id); n++; }
+    return n;
   },
 
   async coverRequests(f) {

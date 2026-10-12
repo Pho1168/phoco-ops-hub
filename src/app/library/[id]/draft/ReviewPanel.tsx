@@ -4,8 +4,13 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { moveSop, publishSop } from "@/app/actions";
 
-/** An approver: approve and publish (minor or major change, and when to review it next), or send it back with a note. */
-export function ReviewPanel({ docId, versionId, hasPublished, reviewBy: suggested, tomorrow }: { docId: string; versionId: string; hasPublished: boolean; reviewBy: string; tomorrow: string }) {
+const CHANGED = "It has changed since you opened it. This is the latest: check it again before you approve it";
+
+/**
+ * An approver: approve and publish (minor or major change, and when to review it next), or send it back with a note.
+ * Both name the revision on screen (`rev`); if it has changed meanwhile, the page shows the latest instead.
+ */
+export function ReviewPanel({ docId, versionId, rev, hasPublished, reviewBy: suggested, tomorrow }: { docId: string; versionId: string; rev: number; hasPublished: boolean; reviewBy: string; tomorrow: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [change, setChange] = useState<"" | "minor" | "major">("");
@@ -18,14 +23,18 @@ export function ReviewPanel({ docId, versionId, hasPublished, reviewBy: suggeste
     if (!confirm("Approve and publish? Everyone it's for will be asked to read it.")) return;
     start(async () => {
       setErr("");
-      const r = await publishSop(versionId, { change: change || undefined, reviewBy });
-      if (!r.ok) setErr(r.error); else router.push(`/library/${docId}`);
+      const r = await publishSop(versionId, { rev, change: change || undefined, reviewBy });
+      if (r.ok) router.push(`/library/${docId}`);
+      else if (r.stale) { setErr(CHANGED); router.refresh(); }
+      else setErr(r.error);
     });
   };
   const sendBack = () => start(async () => {
     setErr("");
-    const r = await moveSop(versionId, "send_back", note);
-    if (!r.ok) setErr(r.error); else router.refresh();
+    const r = await moveSop(versionId, "send_back", rev, note);
+    if (r.ok) router.refresh();
+    else if (r.stale) { setErr(CHANGED); router.refresh(); }
+    else setErr(r.error);
   });
 
   return (
@@ -58,7 +67,7 @@ export function ReviewPanel({ docId, versionId, hasPublished, reviewBy: suggeste
 }
 
 /** Whoever sent it (or an approver) takes it back to change it. */
-export function TakeBack({ versionId }: { versionId: string }) {
+export function TakeBack({ versionId, rev }: { versionId: string; rev: number }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -66,8 +75,9 @@ export function TakeBack({ versionId }: { versionId: string }) {
     <>
       <button type="button" className="btn ghost" disabled={pending} onClick={() => start(async () => {
         setErr("");
-        const r = await moveSop(versionId, "withdraw");
-        if (!r.ok) setErr(r.error); else router.refresh();
+        const r = await moveSop(versionId, "withdraw", rev);
+        if (r.ok || r.stale) router.refresh(); // changed meanwhile: show where it is now
+        if (!r.ok && !r.stale) setErr(r.error);
       })}>Take it back to change it</button>
       {err && <div className="err" role="alert">{err}</div>}
     </>

@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ackSop, reinstateSop, retireSop, startSopDraft } from "@/app/actions";
+import { ackSop, eraseSopPhoto, reinstateSop, retireSop, startSopDraft } from "@/app/actions";
 
 /** "I've read and understood it". */
 export function AckButton({ versionId }: { versionId: string }) {
@@ -68,6 +68,44 @@ export function RetireButton({ docId, retired, title }: { docId: string; retired
               <textarea id="retire-note" autoFocus required maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Replaced by SOP-BOH-004" /></label>
             {err && <div className="err" role="alert">{err}</div>}
             <div className="row"><button type="button" className="btn ghost" onClick={() => setAsking(false)}>Cancel</button><button className="btn bad grow" type="submit" disabled={pending}>Retire</button></div>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * The owner: erase a step's photo for good, with a reason (privacy: it shows someone, say). It shows as removed in
+ * every version that uses it.
+ */
+export function ErasePhoto({ docId, mediaId, step }: { docId: string; mediaId: string; step: number }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [asking, setAsking] = useState(false);
+  const [why, setWhy] = useState("");
+  const [err, setErr] = useState("");
+  return (
+    <>
+      <button type="button" className="btn ghost small" onClick={() => { setErr(""); setAsking(true); }}>Erase photo</button>
+      {asking && (
+        <div className="modal-back">
+          <form className="modal" role="dialog" aria-label={`Erase the photo in step ${step}`} onSubmit={(e) => {
+            e.preventDefault();
+            start(async () => {
+              setErr("");
+              const r = await eraseSopPhoto(docId, mediaId, why);
+              if (!r.ok) setErr(r.error); else { setAsking(false); router.refresh(); }
+            });
+          }}>
+            <h2 className="h-sec">Erase this photo for good?</h2>
+            <p style={{ margin: 0 }}>Use this for privacy, say if it shows someone. It shows as &ldquo;Photo removed&rdquo; in every version of this SOP that has it. This can&apos;t be undone.</p>
+            <label className="stack" style={{ gap: 6 }}><span className="muted">Why (required)</span>
+              <input id="erase-why" className="txt" style={{ width: "100%", maxWidth: "none" }} autoFocus required maxLength={200} value={why}
+                onChange={(e) => setWhy(e.target.value)} placeholder="e.g. Shows a member of staff's face" /></label>
+            {err && <div className="err" role="alert">{err}</div>}
+            <div className="row"><button type="button" className="btn ghost" onClick={() => setAsking(false)}>Cancel</button>
+              <button className="btn bad grow" type="submit" disabled={pending || !why.trim()}>Erase for good</button></div>
           </form>
         </div>
       )}

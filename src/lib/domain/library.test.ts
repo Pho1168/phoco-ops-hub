@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  canApprove, canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw, changeFor, cleanSop, defaultReviewBy, imageKind, libraryToDo,
-  mustRead, nextCode, readStats, readsAt, readyForReview, reviewState, sopPrefix, validReviewBy, versionLabel, type LibraryDoc, type LibraryVersion, type SopBody,
+  canApprove, canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw, changeFor, cleanSop, defaultReviewBy, dropPhotos, imageKind,
+  isContributor, jpegSize, libraryToDo, mustRead, nextCode, reachedSites, readStats, readsAt, readyForReview, reviewState, sopPrefix, validReviewBy, versionLabel,
+  type LibraryDoc, type LibraryVersion, type SopBody,
 } from "./library";
 import type { Person, Site, SiteAccess } from "./types";
 
@@ -11,6 +12,7 @@ const at = (siteId: SiteAccess["siteId"], role: SiteAccess["role"], sections: Si
 
 const owner = person("own", [at("EAS", "owner"), at("WEM", "owner")]);
 const ops = person("ops", [at("EAS", "ops"), at("WEM", "ops")]);
+const easOps = person("opsE", [at("EAS", "ops")]); // runs Eastcote only
 const mgr = person("mgr", [at("EAS", "manager", ["FOH", "BOH"])]);
 const wemMgr = person("wem", [at("WEM", "manager", ["PROD"])]);
 const cook = person("cook", [at("EAS", "staff", ["BOH"])]);
@@ -25,8 +27,9 @@ const SITES: Site[] = [
 
 const version = (over: Partial<LibraryVersion> = {}): LibraryVersion => ({
   id: "v1", docId: "d1", status: "draft", title: "Probe calibration", body: { sections: ["BOH"], purpose: "Probes read true", steps: [{ text: "Ice water" }] },
-  authorId: "mgr", authorName: "mgr", createdAt: 1, updatedAt: 1, ...over,
+  authorId: "mgr", authorName: "mgr", createdAt: 1, updatedAt: 1, contributors: [], rev: 1, ...over,
 });
+const ALL = reachedSites([], SITES); // a version for everyone reaches both open sites
 const doc = (over: Partial<LibraryDoc> = {}): LibraryDoc => ({ id: "d1", kind: "sop", code: "SOP-BOH-001", createdAt: 1, ...over });
 
 describe("library: who writes and who approves", () => {
@@ -37,14 +40,28 @@ describe("library: who writes and who approves", () => {
   it("only owners and operations managers approve", () => {
     expect([owner, ops, mgr, cook].map(canApprove)).toEqual([true, true, false, false]);
   });
-  it("nobody approves a version they wrote or sent, except an owner", () => {
-    const mine = version({ status: "in_review", authorId: "ops", submittedBy: "ops" });
-    expect(canReview(ops, mine)).toMatchObject({ ok: false, error: "You wrote this version, so another approver checks it" });
-    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "ops" }))).toMatchObject({ ok: false });
-    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "mgr" }))).toEqual({ ok: true });
-    expect(canReview(owner, version({ status: "in_review", authorId: "own", submittedBy: "own" }))).toEqual({ ok: true });
-    expect(canReview(mgr, version({ status: "in_review", authorId: "ops", submittedBy: "ops" }))).toMatchObject({ ok: false, error: "Only the owner or an operations manager can approve" });
-    expect(canReview(owner, version({ status: "draft" }))).toMatchObject({ ok: false, error: "It isn't waiting for approval" });
+  it("nobody approves a version they wrote, changed or sent, except an owner", () => {
+    const mine = version({ status: "in_review", authorId: "ops", submittedBy: "ops", contributors: ["ops"] });
+    expect(canReview(ops, mine, ALL)).toMatchObject({ ok: false, error: "You wrote or changed this version, so another approver checks it" });
+    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "ops" }), ALL)).toMatchObject({ ok: false });
+    // Changed it along the way (saved the draft), even if someone else wrote and sent it.
+    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "mgr", contributors: ["mgr", "ops"] }), ALL)).toMatchObject({ ok: false });
+    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "mgr", contributors: ["mgr"] }), ALL)).toEqual({ ok: true });
+    expect(canReview(owner, version({ status: "in_review", authorId: "own", submittedBy: "own", contributors: ["own"] }), ALL)).toEqual({ ok: true });
+    expect(canReview(mgr, version({ status: "in_review", authorId: "ops", submittedBy: "ops" }), ALL)).toMatchObject({ ok: false, error: "Only the owner or an operations manager can approve" });
+    expect(canReview(owner, version({ status: "draft" }), ALL)).toMatchObject({ ok: false, error: "It isn't waiting for approval" });
+    expect([isContributor(ops, version({ contributors: ["ops"] })), isContributor(ops, version({ submittedBy: "ops" })), isContributor(ops, version())]).toEqual([true, true, false]);
+  });
+  it("an operations manager approves only what reaches sites they run; the owner approves the rest", () => {
+    expect(reachedSites(["BOH"], SITES)).toEqual(["EAS"]);
+    expect(reachedSites(["PROD"], SITES)).toEqual(["WEM"]);
+    expect(reachedSites([], SITES)).toEqual(["EAS", "WEM"]); // Sydenham is closed
+    const sent = (sections: SopBody["sections"]) => version({ status: "in_review", body: { sections, purpose: "p", steps: [{ text: "s" }] } });
+    expect(canReview(easOps, sent(["BOH"]), reachedSites(["BOH"], SITES))).toEqual({ ok: true });
+    expect(canReview(easOps, sent(["PROD"]), reachedSites(["PROD"], SITES))).toMatchObject({ ok: false, error: "It reaches a site you don't run, so the owner approves it" });
+    expect(canReview(easOps, sent([]), ALL)).toMatchObject({ ok: false });
+    expect(canReview(ops, sent([]), ALL)).toEqual({ ok: true });
+    expect(canReview(owner, sent(["PROD"]), reachedSites(["PROD"], SITES))).toEqual({ ok: true });
   });
   it("drafts can be edited; a version waiting for approval is taken back first; published ones never change", () => {
     expect(canEditDraft(mgr, version())).toEqual({ ok: true });
@@ -52,19 +69,23 @@ describe("library: who writes and who approves", () => {
     expect(canEditDraft(owner, version({ status: "published" }))).toMatchObject({ ok: false });
     expect(canEditDraft(cook, version())).toMatchObject({ ok: false });
   });
-  it("taking back: whoever wrote or sent it, or an approver", () => {
+  it("taking back: whoever wrote or sent it (if they still write SOPs), or an approver", () => {
     const sent = version({ status: "in_review", authorId: "mgr", submittedBy: "mgr" });
     expect(canWithdraw(mgr, sent)).toEqual({ ok: true });
     expect(canWithdraw(ops, sent)).toEqual({ ok: true });
     expect(canWithdraw(wemMgr, sent)).toMatchObject({ ok: false });
+    expect(canWithdraw({ ...mgr, access: [at("EAS", "staff", ["BOH"])] }, sent)).toMatchObject({ ok: false }); // no longer a manager
   });
-  it("discarding a draft: whoever started it, or an approver; retiring and bringing back: approvers", () => {
+  it("discarding a draft: whoever started it, or an approver; retiring a published SOP and bringing it back: approvers", () => {
     expect(canDiscard(mgr, version())).toEqual({ ok: true });
     expect(canDiscard(wemMgr, version())).toMatchObject({ ok: false });
     expect(canDiscard(ops, version())).toEqual({ ok: true });
-    expect(canRetire(ops, doc())).toEqual({ ok: true });
-    expect(canRetire(mgr, doc())).toMatchObject({ ok: false });
-    expect(canRetire(ops, doc({ retiredAt: 5 }))).toMatchObject({ ok: false });
+    expect(canDiscard({ ...mgr, status: "frozen" }, version())).toMatchObject({ ok: false });
+    const live = doc({ published: version({ status: "published" }) });
+    expect(canRetire(ops, live)).toEqual({ ok: true });
+    expect(canRetire(mgr, live)).toMatchObject({ ok: false });
+    expect(canRetire(ops, doc({ ...live, retiredAt: 5 }))).toMatchObject({ ok: false });
+    expect(canRetire(ops, doc({ open: version() }))).toMatchObject({ ok: false, error: "It was never published: discard the draft instead" });
     expect(canReinstate(ops, doc({ retiredAt: 5, published: version({ status: "published" }) }))).toEqual({ ok: true });
     expect(canReinstate(ops, doc({ retiredAt: 5 }))).toMatchObject({ ok: false, error: "It was never published" });
   });
@@ -160,10 +181,13 @@ describe("library: to do and labels", () => {
       doc({ id: "c", open: version({ status: "draft", authorId: "mgr", reviewNote: "Add the ice step" }) }),
       doc({ id: "d", open: version({ status: "in_review", authorId: "mgr", submittedBy: "mgr" }), retiredAt: 3 }),
     ];
-    expect(libraryToDo(ops, docs)).toBe(1); // not their own
-    expect(libraryToDo(owner, docs)).toBe(2);
-    expect(libraryToDo(mgr, docs)).toBe(1); // sent back to them
-    expect(libraryToDo(cook, docs)).toBe(0);
+    expect(libraryToDo(ops, docs, SITES)).toBe(1); // not their own
+    expect(libraryToDo(owner, docs, SITES)).toBe(2);
+    expect(libraryToDo(mgr, docs, SITES)).toBe(1); // sent back to them
+    expect(libraryToDo(cook, docs, SITES)).toBe(0);
+    // An Eastcote-only operations manager isn't asked about a production SOP: the owner is.
+    const prodDoc = doc({ id: "p", open: version({ status: "in_review", body: { sections: ["PROD"], purpose: "p", steps: [{ text: "s" }] } }) });
+    expect([libraryToDo(easOps, [prodDoc], SITES), libraryToDo(owner, [prodDoc], SITES)]).toEqual([0, 1]);
     expect([versionLabel({ status: "draft" }), versionLabel({ status: "draft", reviewNote: "x" }), versionLabel({ status: "in_review" })]).toEqual(["Draft", "Sent back", "Waiting for approval"]);
   });
 });
@@ -176,5 +200,23 @@ describe("library: photos", () => {
     expect(imageKind(new TextEncoder().encode("RIFF\0\0\0\0WEBPVP8 "))).toBe("image/webp");
     expect(imageKind(new TextEncoder().encode("<svg onload=alert(1)>"))).toBeUndefined();
     expect(imageKind(bytes())).toBeUndefined();
+  });
+  it("reads a JPEG's real width and height from its frame header", () => {
+    const app0 = [0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00];
+    const sof = (w: number, h: number, marker = 0xc0) => [0xff, marker, 0x00, 0x11, 0x08, h >> 8, h & 255, w >> 8, w & 255, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01];
+    const jpeg = (...parts: number[][]) => new Uint8Array([0xff, 0xd8, ...parts.flat(), 0xff, 0xd9]);
+    expect(jpegSize(jpeg(app0, sof(1600, 1200)))).toEqual({ w: 1600, h: 1200 });
+    expect(jpegSize(jpeg(app0, sof(900, 1600, 0xc2)))).toEqual({ w: 900, h: 1600 }); // progressive
+    expect(jpegSize(jpeg(app0, [0xff, 0xda, 0x00, 0x02]))).toBeUndefined(); // image data before any size
+    expect(jpegSize(jpeg(app0, sof(0, 10)))).toBeUndefined();
+    expect(jpegSize(jpeg(app0).subarray(0, 10))).toBeUndefined(); // cut short
+    expect(jpegSize(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0]))).toBeUndefined(); // a PNG
+  });
+  it("an erased photo leaves its step's words; a step that was only that photo goes", () => {
+    const A = "8f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b", B = "9f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b", C = "af0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b";
+    const ph = (id: string) => ({ id, w: 10, h: 10 });
+    const body: SopBody = { sections: ["BOH"], purpose: "p", steps: [{ text: "a", photo: ph(A) }, { text: "", photo: ph(B) }, { text: "", warning: "w", photo: ph(A) }, { text: "c", photo: ph(C) }] };
+    expect(dropPhotos(body, new Set([A, B]))).toEqual({ sections: ["BOH"], purpose: "p", steps: [{ text: "a" }, { text: "", warning: "w" }, { text: "c", photo: ph(C) }] });
+    expect(dropPhotos(body, new Set())).toEqual(body);
   });
 });

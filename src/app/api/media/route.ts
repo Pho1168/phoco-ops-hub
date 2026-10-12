@@ -1,32 +1,50 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/data";
-import { canDraft, imageKind, PHOTO_MAX_BYTES } from "@/lib/domain/library";
+import { canDraft, jpegSize, PHOTO_DAILY_LIMIT, PHOTO_MAX_BYTES, PHOTO_MAX_SIDE } from "@/lib/domain/library";
 import { current } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-const dimension = (v: string | null) => {
-  const n = Number(v);
-  return Number.isInteger(n) && n > 0 && n <= 10_000 ? n : undefined;
-};
+const fail = (status: number, error: string) => NextResponse.json({ ok: false, error }, { status });
+
+/** Reads the upload, giving up as soon as it passes `max` bytes (whatever its content-length said). */
+async function readCapped(req: Request, max: number): Promise<Uint8Array | undefined> {
+  if (!req.body) return new Uint8Array();
+  const reader = req.body.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { await reader.cancel().catch(() => undefined); return undefined; }
+    parts.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
 
 /**
- * A photo for an SOP step, already made smaller on the phone or tablet (the page sends JPEG with its width and height).
- * Only people who write SOPs, on the full app. The bytes must really be an image; the size is capped.
+ * A photo for an SOP step, made smaller on the phone or tablet first (a JPEG, at most 1600 px on the long side). Only
+ * people who write SOPs, on the full app, and up to PHOTO_DAILY_LIMIT a day each. The bytes must really be a JPEG,
+ * and its width and height are read from the file itself.
  */
 export async function POST(req: Request) {
   const ctx = await current();
-  if (!ctx || ctx.scope !== "full" || ctx.person.pinMustChange || !canDraft(ctx.person)) {
-    return NextResponse.json({ ok: false, error: "Only managers can add photos" }, { status: 403 });
+  if (!ctx || ctx.scope !== "full" || ctx.person.pinMustChange || !canDraft(ctx.person)) return fail(403, "Only managers can add photos");
+  if (Number(req.headers.get("content-length") ?? 0) > PHOTO_MAX_BYTES) return fail(413, "That photo is too big");
+  const db = store();
+  if ((await db.mediaCountSince(ctx.person.id, Date.now() - 86_400_000)) >= PHOTO_DAILY_LIMIT) {
+    return fail(429, `That's ${PHOTO_DAILY_LIMIT} photos in a day. Try again tomorrow`);
   }
-  const declared = Number(req.headers.get("content-length") ?? 0);
-  if (declared > PHOTO_MAX_BYTES) return NextResponse.json({ ok: false, error: "That photo is too big" }, { status: 413 });
-  const bytes = new Uint8Array(await req.arrayBuffer());
-  if (!bytes.length || bytes.length > PHOTO_MAX_BYTES) return NextResponse.json({ ok: false, error: "That photo is too big or empty" }, { status: 413 });
-  const mime = imageKind(bytes);
-  if (!mime) return NextResponse.json({ ok: false, error: "That isn't a photo the app can use (JPEG, PNG or WebP)" }, { status: 415 });
-  const width = dimension(req.headers.get("x-width")), height = dimension(req.headers.get("x-height"));
-  if (!width || !height) return NextResponse.json({ ok: false, error: "The photo's size is missing" }, { status: 400 });
-  const id = await store().addMedia({ mime, bytes, width, height, createdBy: ctx.person.id });
-  return NextResponse.json({ ok: true, id, w: width, h: height });
+  const bytes = await readCapped(req, PHOTO_MAX_BYTES);
+  if (!bytes) return fail(413, "That photo is too big");
+  if (!bytes.length) return fail(400, "The photo was empty. Try again");
+  const size = jpegSize(bytes);
+  if (!size) return fail(415, "That isn't a photo the app can use. Take it again, or choose a JPEG or PNG");
+  if (size.w > PHOTO_MAX_SIDE || size.h > PHOTO_MAX_SIDE) return fail(413, "That photo is too big");
+  const id = await db.addMedia({ bytes, width: size.w, height: size.h, createdBy: ctx.person.id });
+  return NextResponse.json({ ok: true, id, w: size.w, h: size.h });
 }

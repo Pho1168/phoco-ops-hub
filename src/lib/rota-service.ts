@@ -14,6 +14,7 @@ import { normalizeStaffCode } from "@/lib/domain/staff";
 import { dueReminders, reminderKey, shiftReminderMessage, startingLaterToday, waitingFrom, type Waiting } from "@/lib/domain/reminders";
 import { dailyDigest, gasConfirmedMessages, gasMessages, notReadyMessages, DAILY_DIGEST_FROM, DAILY_DIGEST_UNTIL, READY_ALERT_WINDOW_MIN, type DayFacts } from "@/lib/domain/daily";
 import { dayFacts, gasFor, readyFor, shiftsAround } from "@/lib/daily-service";
+import { PHOTO_KEEP_UNUSED_DAYS } from "@/lib/domain/library";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
 
@@ -65,7 +66,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
 
 /**
  * Runs every 10 minutes (Supabase schedule). Queues shift reminders as they fall due, the evening-before shift list
- * and, in the morning, certificate, service and report messages; then sends anything due.
+ * and, in the morning, certificate, service and report messages (and clears away unused photos); then sends anything due.
  */
 export async function tick(now = Date.now()): Promise<{ queued: number; sent: number }> {
   const db = store();
@@ -94,6 +95,8 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
     for (const job of [queueCertReminders, queueServiceReminders, queueWeeklyReport]) {
       try { queued += await job(now); } catch (e) { console.error(`tick: ${job.name} failed`, e); }
     }
+    // Tidying: photos no SOP version uses (taken off a step, or from a draft never saved) go after a week.
+    try { await db.deleteUnusedMedia(now - PHOTO_KEEP_UNUSED_DAYS * 86_400_000); } catch (e) { console.error("tick: clearing unused photos failed", e); }
   }
   return { queued, sent: await deliverDue(now) };
 }

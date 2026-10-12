@@ -181,37 +181,54 @@ export interface Store {
   /** Records the day's gas check. False if someone has already done it (the first tap counts). */
   addGasCheck(c: { siteId: SiteId; date: string; personId: string; onTablet: boolean }): Promise<boolean>;
 
-  // Library: SOPs. A published version never changes; documents are retired; nothing is deleted.
-  /** Every document of a kind (by code), each with its published version and its open one (draft or waiting for approval). */
-  libraryDocs(kind: LibraryKind): Promise<LibraryDoc[]>;
+  // Library: SOPs. A published version never changes; documents are retired; versions and confirmations are never deleted.
+  // Every change to a version takes the revision (`rev`) the person was shown, and fails if it has moved on since.
+  /**
+   * Every document of a kind (by code), each with its published version and its open one (draft or waiting for approval).
+   * `light`: versions carry only `body.sections` (no purpose or steps), for counts and "to read" lists.
+   */
+  libraryDocs(kind: LibraryKind, opts?: { light?: boolean }): Promise<LibraryDoc[]>;
   libraryDoc(id: string): Promise<LibraryDoc | undefined>;
   /** Every version of a document, newest first. */
   libraryVersions(docId: string): Promise<LibraryVersion[]>;
   libraryVersion(id: string): Promise<LibraryVersion | undefined>;
-  /** A new document and its first draft. The code is the next free one starting with `prefix`. */
+  /** A new document and its first draft. The code is the next free one starting with `prefix` (nextCode). */
   createLibraryDoc(d: { kind: LibraryKind; prefix: string; title: string; body: SopBody; authorId: string }): Promise<{ docId: string; versionId: string; code: string }>;
   /** A new draft copied from the published version. Undefined if a draft is already open, nothing is published, or it's retired. */
   startLibraryDraft(docId: string, authorId: string): Promise<string | undefined>;
-  /** Saves a draft's title and body. False if it isn't a draft any more. */
-  saveLibraryDraft(versionId: string, d: { title: string; body: SopBody }): Promise<boolean>;
-  /** Moves a version along (see LibraryMove). False if it wasn't in the state the move starts from. */
-  moveLibraryVersion(versionId: string, move: LibraryMove, personId: string, note?: string): Promise<boolean>;
+  /** Saves a draft's title and body; the person joins its contributors. The new revision, or undefined if it isn't that draft any more. */
+  saveLibraryDraft(versionId: string, rev: number, d: { title: string; body: SopBody }, personId: string): Promise<number | undefined>;
   /**
-   * Waiting for approval → published, replacing the published version (kept as superseded). The author and approver
-   * count as having read it. Returns the new version number, or undefined if it changed meanwhile or the document is retired.
+   * Moves a version along (see LibraryMove); sending it adds the person to its contributors. Discarding the only draft
+   * of a document that was never published also retires the document. False if it changed meanwhile.
    */
-  publishLibraryVersion(versionId: string, p: { approverId: string; change: ChangeKind; reviewBy: string }): Promise<number | undefined>;
+  moveLibraryVersion(versionId: string, move: LibraryMove, personId: string, rev: number, note?: string): Promise<boolean>;
+  /**
+   * Waiting for approval → published, replacing the published version (kept as superseded); the approver counts as
+   * having read it. Refused if it changed meanwhile, the document is retired, or the approver is one of its
+   * contributors (unless `ownerApproving`). Returns the new version number.
+   */
+  publishLibraryVersion(versionId: string, rev: number, p: { approverId: string; change: ChangeKind; reviewBy: string; ownerApproving: boolean }): Promise<number | undefined>;
+  /** Retires a document; a draft or version waiting for approval is discarded with it. */
   retireLibraryDoc(docId: string, personId: string, note: string): Promise<boolean>;
   reinstateLibraryDoc(docId: string): Promise<boolean>;
   libraryAcks(filter: { versionIds?: string[]; personId?: string }): Promise<LibraryAck[]>;
   /** Records "I've read it" for a published version. False if already recorded (or it isn't published). */
   ackLibraryVersion(versionId: string, personId: string): Promise<boolean>;
 
-  // Photos (never changed or deleted)
-  addMedia(m: { mime: string; bytes: Uint8Array; width: number; height: number; createdBy: string }): Promise<string>;
-  media(id: string): Promise<{ mime: string; bytes: Uint8Array } | undefined>;
-  /** Which of these photo ids exist. */
-  mediaExisting(ids: string[]): Promise<Set<string>>;
+  // Photos (JPEG). In use: never changed, but the owner can erase one (privacy). Unused for a week: cleared away.
+  addMedia(m: { bytes: Uint8Array; width: number; height: number; createdBy: string }): Promise<string>;
+  media(id: string): Promise<{ mime: string; bytes: Uint8Array; erased: boolean } | undefined>;
+  /** Without the bytes, for answering "not changed" quickly. */
+  mediaInfo(id: string): Promise<{ mime: string; erased: boolean } | undefined>;
+  /** Which of these photos exist, and whether each has been erased (ids not found are left out). */
+  mediaStatus(ids: string[]): Promise<Map<string, { erased: boolean }>>;
+  /** How many photos a person has uploaded since a time. */
+  mediaCountSince(personId: string, since: number): Promise<number>;
+  /** Empties a photo for good (it shows as removed). False if it's already erased or isn't there. */
+  eraseMedia(id: string, personId: string): Promise<boolean>;
+  /** Deletes photos older than `before` that no library version uses. Returns how many. */
+  deleteUnusedMedia(before: number): Promise<number>;
 
   // Shift cover (requests are withdrawn or decided, offers withdrawn; nothing is deleted)
   /**

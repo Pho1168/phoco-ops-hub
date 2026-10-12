@@ -5,6 +5,7 @@ import { managedSites } from "@/lib/domain/access";
 import { canApprove, canDraft, CHANGE_TEXT, readStats, readsAny, reviewState, STATUS_TEXT, versionLabel, type LibraryVersion } from "@/lib/domain/library";
 import { dayMonthYear, londonDate } from "@/lib/domain/time";
 import { current } from "@/lib/session";
+import { erasedPhotos } from "@/lib/library-service";
 import { BottomNav, PhoneTopBar, TopBar } from "@/components/Chrome";
 import { SopView } from "../SopView";
 import { dayMonthYearAt, whoFor } from "../format";
@@ -39,7 +40,7 @@ export default async function SopPage(props: { params: Promise<{ id: string }>; 
     notFound();
   }
   const isCurrent = v.id === doc.published?.id && !doc.retiredAt;
-  const sites = await db.sites();
+  const [sites, gone] = await Promise.all([db.sites(), erasedPhotos(v.body, db)]);
   const forMe = isCurrent && readsAny(v.body.sections, ctx.person, sites);
   const [mine] = await db.libraryAcks({ versionIds: [v.id], personId: ctx.person.id });
   const watched = ctx.isOwner ? sites : sites.filter((s) => managedSites(ctx.person).includes(s.id));
@@ -76,8 +77,8 @@ export default async function SopPage(props: { params: Promise<{ id: string }>; 
           </Link>
         )}
 
-        {isCurrent && <div className="row wrap"><StepMode title={v.title} steps={v.body.steps} /></div>}
-        <SopView body={v.body} title={v.title} />
+        {isCurrent && <div className="row wrap"><StepMode title={v.title} steps={v.body.steps.map((s) => (s.photo && gone.includes(s.photo.id) ? { text: s.text, warning: s.warning } : s))} /></div>}
+        <SopView body={v.body} title={v.title} erased={gone} eraseIn={full && ctx.isOwner ? doc.id : undefined} />
 
         {forMe && (mine
           ? <div className="alert good" role="status"><div className="grow"><div className="strong">You&apos;ve read this version</div><div style={{ fontSize: 13 }}>Confirmed on {dayMonthYearAt(mine.at)}</div></div></div>

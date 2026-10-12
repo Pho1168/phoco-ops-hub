@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createSop, moveSop, saveSopDraft } from "@/app/actions";
 import { Icon } from "@/components/Icon";
@@ -22,6 +22,8 @@ async function shrink(file: File): Promise<{ blob: Blob; w: number; h: number }>
   canvas.width = w; canvas.height = h;
   const g = canvas.getContext("2d");
   if (!g) throw new Error("This browser can't prepare photos");
+  g.fillStyle = "#fff"; // a see-through PNG would otherwise turn black as a JPEG
+  g.fillRect(0, 0, w, h);
   g.drawImage(bmp, 0, 0, w, h);
   bmp.close();
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
@@ -32,40 +34,56 @@ async function shrink(file: File): Promise<{ blob: Blob; w: number; h: number }>
 async function upload(file: File): Promise<Photo> {
   let small: Awaited<ReturnType<typeof shrink>>;
   try { small = await shrink(file); } catch { throw new Error("Couldn't read that photo. Take it again, or choose a JPEG or PNG"); }
-  const r = await fetch("/api/media", { method: "POST", headers: { "content-type": "image/jpeg", "x-width": String(small.w), "x-height": String(small.h) }, body: small.blob });
+  const r = await fetch("/api/media", { method: "POST", headers: { "content-type": "image/jpeg" }, body: small.blob });
   const j = (await r.json().catch(() => ({}))) as { ok?: boolean; id?: string; w?: number; h?: number; error?: string };
-  if (!r.ok || !j.ok || !j.id) throw new Error(j.error ?? "The photo didn't upload. Try again");
-  return { id: j.id, w: j.w ?? small.w, h: j.h ?? small.h };
+  if (!r.ok || !j.ok || !j.id || !j.w || !j.h) throw new Error(j.error ?? "The photo didn't upload. Try again");
+  return { id: j.id, w: j.w, h: j.h };
 }
+
+const editSteps = (body: SopBody): EditStep[] => body.steps.length
+  ? body.steps.map((s) => ({ key: newKey(), text: s.text, warning: s.warning ?? "", showWarning: !!s.warning, photo: s.photo }))
+  : [blank()];
 
 /**
  * Writing an SOP: title, who reads it, what it's for, and the steps (each with an optional warning and photo).
- * "new" creates the document and its first draft; "draft" saves the open draft and can send it for approval.
+ * "new" creates the document and its first draft; "draft" saves the open draft (revision `rev`, as loaded) and can send
+ * it for approval. If someone else saves it meanwhile, nothing is overwritten: the writer is offered the latest.
  */
-export function SopEditor({ mode, docId, versionId, initial, canDiscard }: {
-  mode: "new" | "draft"; docId?: string; versionId?: string; initial: { title: string; body: SopBody }; canDiscard?: boolean;
+export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, initial, erased = [], canDiscard }: {
+  mode: "new" | "draft"; docId?: string; versionId?: string; rev?: number; published?: boolean; initial: { title: string; body: SopBody };
+  /** Photos the owner has erased: shown as removed, and left out when it's saved. */
+  erased?: string[]; canDiscard?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [title, setTitle] = useState(initial.title);
   const [sections, setSections] = useState<string[]>(initial.body.sections);
   const [purpose, setPurpose] = useState(initial.body.purpose);
-  const [steps, setSteps] = useState<EditStep[]>(() => initial.body.steps.length
-    ? initial.body.steps.map((s) => ({ key: newKey(), text: s.text, warning: s.warning ?? "", showWarning: !!s.warning, photo: s.photo }))
-    : [blank()]);
+  const [steps, setSteps] = useState<EditStep[]>(() => editSteps(initial.body));
+  const [rev, setRev] = useState(loadedRev ?? 1);
   const [dirty, setDirty] = useState(false);
+  const [stale, setStale] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const edits = useRef(0); // counts changes, so a save doesn't undo typing done while it was saving
 
-  // Leaving with unsaved changes asks first.
+  // Leaving with unsaved changes asks first: closing or reloading the page, or following a link in the app.
   useEffect(() => {
     if (!dirty) return;
-    const stay = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    let leaving = false;
+    const stay = (e: BeforeUnloadEvent) => { if (!leaving) e.preventDefault(); };
+    const onClick = (e: MouseEvent) => {
+      const a = e.target instanceof Element ? e.target.closest("a[href]") : null;
+      if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.getAttribute("target") === "_blank") return;
+      if (confirm("Leave without saving your changes?")) { leaving = true; return; }
+      e.preventDefault(); e.stopPropagation();
+    };
     window.addEventListener("beforeunload", stay);
-    return () => window.removeEventListener("beforeunload", stay);
+    document.addEventListener("click", onClick, true);
+    return () => { window.removeEventListener("beforeunload", stay); document.removeEventListener("click", onClick, true); };
   }, [dirty]);
 
-  const touched = () => { setDirty(true); setMsg(""); };
+  const touched = () => { edits.current++; setDirty(true); setMsg(""); };
   const patch = (key: string, p: Partial<EditStep>) => { setSteps((cur) => cur.map((s) => (s.key === key ? { ...s, ...p } : s))); touched(); };
   const move = (i: number, d: -1 | 1) => {
     setSteps((cur) => {
@@ -106,27 +124,45 @@ export function SopEditor({ mode, docId, versionId, initial, canDiscard }: {
       router.replace(`/library/${r.id}/draft`);
       return;
     }
-    const r = await saveSopDraft(versionId!, payload());
-    if (!r.ok) { setErr(r.error); return; }
-    setDirty(false);
+    let at = rev;
+    const saving = dirty;
+    if (saving) {
+      const before = edits.current;
+      const r = await saveSopDraft(versionId!, rev, payload());
+      if (!r.ok) { if (r.stale) setStale(true); else setErr(r.error); return; }
+      at = r.rev!;
+      setRev(at);
+      if (edits.current !== before) { // more was typed while it saved: keep it, and don't send yet
+        setMsg(then === "submit" ? "Saved, but you changed it while it was saving. Send it again when you're ready" : "Saved");
+        return;
+      }
+      // Carry on from what was saved (steps left empty are gone).
+      if (r.saved) { setTitle(r.saved.title); setSections(r.saved.body.sections); setPurpose(r.saved.body.purpose); setSteps(editSteps(r.saved.body)); }
+      setDirty(false);
+    }
     if (then === "submit") {
-      const s = await moveSop(versionId!, "submit");
-      if (!s.ok) setErr(`Saved, but not sent: ${s.error}`);
+      const s = await moveSop(versionId!, "submit", at);
+      if (!s.ok) { if (s.stale) setStale(true); else setErr(saving ? `Saved, but not sent yet: ${s.error}` : s.error); return; }
       router.refresh();
       return;
     }
-    setMsg("Saved");
-    router.refresh();
+    setMsg(saving ? "Saved" : "No changes to save");
   });
 
   const discard = () => {
     if (!confirm("Discard this draft? It's kept in the history, marked discarded.")) return;
     start(async () => {
-      const r = await moveSop(versionId!, "discard");
-      if (!r.ok) { setErr(r.error); return; }
+      const r = await moveSop(versionId!, "discard", rev);
+      if (!r.ok) { if (r.stale) setStale(true); else setErr(r.error); return; }
       setDirty(false);
-      router.push(docId ? `/library/${docId}` : "/library");
+      router.push(published && docId ? `/library/${docId}` : "/library");
     });
+  };
+
+  const loadLatest = () => {
+    if (dirty && !confirm("Load the latest version? Your changes here will be lost.")) return;
+    setDirty(false);
+    router.refresh(); // the page gives the editor the latest revision
   };
 
   return (
@@ -173,7 +209,9 @@ export function SopEditor({ mode, docId, versionId, initial, canDiscard }: {
             )}
             {s.photo && (
               <div className="row wrap" style={{ gap: 10 }}>
-                <Image className="thumb" src={`/api/media/${s.photo.id}`} width={s.photo.w} height={s.photo.h} alt={`Photo for step ${i + 1}`} unoptimized />
+                {erased.includes(s.photo.id)
+                  ? <div className="photo-removed" role="img" aria-label={`Photo for step ${i + 1}: removed`}>Photo removed</div>
+                  : <Image className="thumb" src={`/api/media/${s.photo.id}`} width={s.photo.w} height={s.photo.h} alt={`Photo for step ${i + 1}`} unoptimized />}
                 <button type="button" className="btn ghost small" onClick={() => patch(s.key, { photo: undefined })}>Remove photo</button>
               </div>
             )}
@@ -192,13 +230,20 @@ export function SopEditor({ mode, docId, versionId, initial, canDiscard }: {
         {steps.length < SOP_LIMITS.steps && <button type="button" className="btn ghost" onClick={() => { setSteps((cur) => [...cur, blank()]); touched(); }}>Add a step</button>}
       </section>
 
+      {stale && (
+        <div className="alert bad" role="alert"><div className="grow stack" style={{ gap: 6 }}>
+          <div className="strong">Someone else has changed this draft since you opened it</div>
+          <div style={{ fontSize: 14 }}>Yours wasn&apos;t saved, so nothing of theirs was lost. Copy anything you want to keep, then load the latest and add it back.</div>
+          <div><button type="button" className="btn ghost small" onClick={loadLatest}>Load the latest</button></div>
+        </div></div>
+      )}
       {err && <div className="err" role="alert">{err}</div>}
       {msg && <div className="alert good" role="status"><div className="strong">{msg}</div></div>}
       <div className="sticky-foot">
         <div className="inner">
           {mode === "draft" && canDiscard && <button type="button" className="btn ghost" disabled={pending} onClick={discard}>Discard</button>}
-          <button type="submit" className="btn grow" disabled={pending || uploading}>{mode === "new" ? "Create draft" : pending ? "Saving…" : "Save draft"}</button>
-          {mode === "draft" && <button type="button" className="btn accent grow" disabled={pending || uploading} onClick={() => save("submit")}>Send for approval</button>}
+          <button type="submit" className="btn grow" disabled={pending || uploading || stale}>{mode === "new" ? "Create draft" : pending ? "Saving…" : "Save draft"}</button>
+          {mode === "draft" && <button type="button" className="btn accent grow" disabled={pending || uploading || stale} onClick={() => save("submit")}>Send for approval</button>}
         </div>
       </div>
     </form>

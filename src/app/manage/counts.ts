@@ -17,7 +17,7 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
   const today = londonDate(Date.now());
   const managed = managedSites(actor);
   const [notices, pending, people, certs, sites, sops] = await Promise.all([
-    db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(), db.libraryDocs("sop"),
+    db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(), db.libraryDocs("sop", { light: true }),
   ]);
   const openManaged = sites.filter((s) => s.status === "open" && managed.includes(s.id)).map((s) => s.id);
   let equipmentIssues = 0;
@@ -43,6 +43,6 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
     certIssues: issueCount(peopleInCare(actor, people), certs, today, canSeeRightToWork(actor), openManaged),
     equipmentIssues,
     coverToDo,
-    libraryToDo: libraryToDo(actor, sops),
+    libraryToDo: libraryToDo(actor, sops, sites),
   };
 }

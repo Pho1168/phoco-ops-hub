@@ -1,4 +1,4 @@
-import { isLead, isOwner, managedSites } from "./access";
+import { isLead, isOps, isOwner, managedSites, opsSites } from "./access";
 import { addMonths } from "./equipment";
 import { sectionsFor } from "./staff";
 import { addDays, isIsoDate } from "./time";
@@ -28,6 +28,10 @@ export interface LibraryVersion {
   version?: number;
   title: string; body: SopBody;
   authorId: string; authorName: string; createdAt: number; updatedAt: number;
+  /** Everyone who wrote, changed or sent this version: none of them can approve it (owners excepted). */
+  contributors: string[];
+  /** Goes up with every change: an action names the revision it was shown, so nobody acts on a version they haven't seen. */
+  rev: number;
   submittedBy?: string; submittedAt?: number;
   /** Why an approver sent it back (cleared when it's sent again). */
   reviewNote?: string; reviewedBy?: string; reviewedByName?: string; reviewedAt?: number;
@@ -51,6 +55,12 @@ export const SOP_LIMITS = { title: 100, purpose: 600, step: 800, warning: 300, s
 export const REVIEW_MONTHS = 12;
 export const REVIEW_SOON_DAYS = 30;
 export const PHOTO_MAX_BYTES = 2_000_000;
+/** Photos are made at most 1600 px on the long side on the device; anything over this is refused. */
+export const PHOTO_MAX_SIDE = 4096;
+/** Uploads per person in 24 hours. */
+export const PHOTO_DAILY_LIMIT = 100;
+/** A photo no version uses (removed, replaced, or from an abandoned draft) is cleared away after this many days. */
+export const PHOTO_KEEP_UNUSED_DAYS = 7;
 
 export const STATUS_TEXT: Record<VersionStatus, string> = {
   draft: "Draft", in_review: "Waiting for approval", published: "Published", superseded: "Replaced", discarded: "Discarded",
@@ -68,6 +78,16 @@ export const canDraft = (p: Pick<Person, "status" | "access">) => p.status === "
 export const canApprove = (p: Pick<Person, "status" | "access">) => p.status === "active" && isLead(p);
 
 type Actor = Pick<Person, "id" | "status" | "access">;
+type Sited = Pick<Site, "id" | "kind" | "status">;
+
+/** The open sites a version reaches: those with one of its sections (all open sites when it's for everyone). */
+export function reachedSites(sections: Area[], sites: Sited[]): SiteId[] {
+  return sites.filter((s) => s.status === "open" && (!sections.length || sectionsFor(s.kind).some((x) => sections.includes(x)))).map((s) => s.id);
+}
+
+/** Wrote, changed or sent this version. */
+export const isContributor = (p: Pick<Person, "id">, v: Pick<LibraryVersion, "authorId" | "submittedBy" | "contributors">) =>
+  p.id === v.authorId || p.id === v.submittedBy || v.contributors.includes(p.id);
 
 export function canEditDraft(p: Actor, v: Pick<LibraryVersion, "status">): Checked {
   if (!canDraft(p)) return no("Only managers can write SOPs");
@@ -76,31 +96,40 @@ export function canEditDraft(p: Actor, v: Pick<LibraryVersion, "status">): Check
   return yes;
 }
 
-/** Taking a version back from approval: whoever wrote or sent it, or an approver. */
+/** Taking a version back from approval: whoever wrote or sent it (if they still write SOPs), or an approver. */
 export function canWithdraw(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy">): Checked {
+  if (!canDraft(p)) return no("Only managers can change SOPs");
   if (v.status !== "in_review") return no("It isn't waiting for approval");
   if (p.id !== v.authorId && p.id !== v.submittedBy && !canApprove(p)) return no("Only whoever sent it, or an approver, can take it back");
   return yes;
 }
 
-/** Approving (and publishing) or sending back: an owner or operations manager who didn't write or send it (owners may). */
-export function canReview(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy">): Checked {
+/**
+ * Approving (and publishing) or sending back: an owner, or an operations manager who didn't write, change or send
+ * this version and runs every site it reaches (`reach`: reachedSites). Owners may approve their own, so they're never stuck.
+ */
+export function canReview(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy" | "contributors">, reach: SiteId[]): Checked {
   if (!canApprove(p)) return no("Only the owner or an operations manager can approve");
   if (v.status !== "in_review") return no("It isn't waiting for approval");
-  if ((p.id === v.authorId || p.id === v.submittedBy) && !isOwner(p)) return no("You wrote this version, so another approver checks it");
+  if (isOwner(p)) return yes;
+  if (isContributor(p, v)) return no("You wrote or changed this version, so another approver checks it");
+  if (isOps(p) && reach.some((s) => !opsSites(p).includes(s))) return no("It reaches a site you don't run, so the owner approves it");
   return yes;
 }
 
-/** Throwing away a draft (it's kept, marked discarded): whoever started it, or an approver. */
+/** Throwing away a draft (it's kept, marked discarded): whoever started it (if they still write SOPs), or an approver. */
 export function canDiscard(p: Actor, v: Pick<LibraryVersion, "status" | "authorId">): Checked {
+  if (!canDraft(p)) return no("Only managers can change SOPs");
   if (v.status !== "draft") return no("Only a draft can be discarded");
   if (p.id !== v.authorId && !canApprove(p)) return no("Only whoever started it, or an approver, can discard it");
   return yes;
 }
 
-export function canRetire(p: Actor, doc: Pick<LibraryDoc, "retiredAt">): Checked {
+/** Retiring takes a published SOP out of use (a draft that was never published is discarded instead). */
+export function canRetire(p: Actor, doc: Pick<LibraryDoc, "retiredAt" | "published">): Checked {
   if (!canApprove(p)) return no("Only the owner or an operations manager can retire an SOP");
   if (doc.retiredAt) return no("It's already retired");
+  if (!doc.published) return no("It was never published: discard the draft instead");
   return yes;
 }
 
@@ -141,11 +170,11 @@ export function cleanSop(input: SopInput): Cleaned<{ title: string; body: SopBod
   const purpose = text(input.purpose);
   if (purpose.length > SOP_LIMITS.purpose) return { ok: false, error: `Keep the purpose under ${SOP_LIMITS.purpose} characters` };
   const steps: SopStep[] = [];
-  for (const s of input.steps) {
+  for (const [i, s] of input.steps.entries()) {
     const t = text(s.text), w = text(s.warning);
     if (s.photo && !isPhoto(s.photo)) return { ok: false, error: "That photo didn't upload properly. Add it again" };
     if (!t && !w && !s.photo) continue;
-    const n = steps.length + 1;
+    const n = i + 1; // as numbered in the editor
     if (t.length > SOP_LIMITS.step) return { ok: false, error: `Step ${n} is too long: keep it under ${SOP_LIMITS.step} characters, or split it` };
     if (w.length > SOP_LIMITS.warning) return { ok: false, error: `The warning in step ${n} is too long: keep it under ${SOP_LIMITS.warning} characters` };
     steps.push({ text: t, ...(w ? { warning: w } : {}), ...(s.photo ? { photo: { id: s.photo.id, w: s.photo.w, h: s.photo.h } } : {}) });
@@ -165,6 +194,15 @@ export function readyForReview(body: SopBody): Checked {
 
 /** Photo ids used in a body, to check they were uploaded. */
 export const photoIds = (body: SopBody) => body.steps.flatMap((s) => (s.photo ? [s.photo.id] : []));
+
+/** The body without these photos (ones the owner erased): each step keeps its words, and a step left empty goes. */
+export function dropPhotos(body: SopBody, gone: Set<string>): SopBody {
+  const steps = body.steps.flatMap((s): SopStep[] => {
+    if (!s.photo || !gone.has(s.photo.id)) return [s];
+    return s.text || s.warning ? [{ text: s.text, ...(s.warning ? { warning: s.warning } : {}) }] : [];
+  });
+  return { ...body, steps };
+}
 
 export const defaultReviewBy = (today: string) => addMonths(today, REVIEW_MONTHS);
 
@@ -230,12 +268,12 @@ export function readStats(sections: Area[], versionId: string, people: Pick<Pers
   });
 }
 
-/** What's waiting for this person in the library: versions to approve, and their own drafts sent back. */
-export function libraryToDo(p: Actor, docs: Pick<LibraryDoc, "open" | "retiredAt">[]): number {
+/** What's waiting for this person in the library: versions they can approve, and their own drafts sent back. */
+export function libraryToDo(p: Actor, docs: Pick<LibraryDoc, "open" | "retiredAt">[], sites: Sited[]): number {
   return docs.filter((d) => {
     const v = d.open;
     if (!v || d.retiredAt) return false;
-    if (v.status === "in_review") return canReview(p, v).ok;
+    if (v.status === "in_review") return canReview(p, v, reachedSites(v.body.sections, sites)).ok;
     return v.status === "draft" && !!v.reviewNote && v.authorId === p.id;
   }).length;
 }
@@ -253,5 +291,28 @@ export function imageKind(b: Uint8Array): ImageMime | undefined {
   if (b.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((x, i) => b[i] === x)) return "image/png";
   const ascii = (from: number, to: number) => String.fromCharCode(...Array.from(b.subarray(from, to)));
   if (b.length >= 12 && ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") return "image/webp";
+  return undefined;
+}
+
+/** Width and height from a JPEG's frame header (the real size, whatever the upload claimed). Undefined if it can't be read. */
+export function jpegSize(b: Uint8Array): { w: number; h: number } | undefined {
+  if (imageKind(b) !== "image/jpeg") return undefined;
+  let i = 2;
+  while (i + 3 < b.length) {
+    if (b[i] !== 0xff) return undefined;
+    const marker = b[i + 1];
+    if (marker === 0xff) { i++; continue; } // fill byte
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { i += 2; continue; } // no length
+    const len = (b[i + 2] << 8) | b[i + 3];
+    if (len < 2) return undefined;
+    const sof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+    if (sof) {
+      if (i + 8 >= b.length) return undefined;
+      const h = (b[i + 5] << 8) | b[i + 6], w = (b[i + 7] << 8) | b[i + 8];
+      return w > 0 && h > 0 ? { w, h } : undefined;
+    }
+    if (marker === 0xd9 || marker === 0xda) return undefined; // end, or image data before any frame header
+    i += 2 + len;
+  }
   return undefined;
 }
