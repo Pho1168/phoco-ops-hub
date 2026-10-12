@@ -15,7 +15,7 @@ import { dueReminders, reminderKey, shiftReminderMessage, startingLaterToday, wa
 import { dailyDigest, gasConfirmedMessages, gasMessages, notReadyMessages, DAILY_DIGEST_FROM, DAILY_DIGEST_UNTIL, READY_ALERT_WINDOW_MIN, type DayFacts } from "@/lib/domain/daily";
 import { dayFacts, gasFor, readyFor, shiftsAround } from "@/lib/daily-service";
 import { PHOTO_KEEP_UNUSED_DAYS } from "@/lib/domain/library";
-import { trainingReminders } from "@/lib/domain/training";
+import { missingStarts, trainingReminders } from "@/lib/domain/training";
 import { trainingData } from "@/lib/training-service";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
@@ -89,6 +89,7 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
   for (const job of [queueGasChecks, queueReadyAlerts]) {
     try { queued += await job(now, db); } catch (e) { console.error(`tick: ${job.name} failed`, e); }
   }
+  try { await startMissingTraining(now, db); } catch (e) { console.error("tick: training starts failed", e); }
   if (hm >= DAILY_DIGEST_FROM && hm < DAILY_DIGEST_UNTIL) {
     try { queued += await queueDailyDigest(now, db); } catch (e) { console.error("tick: daily digest failed", e); }
   }
@@ -111,6 +112,13 @@ export async function queueCertReminders(now = Date.now(), db: Store = store()):
     if (await db.queueNotice({ personId: m.personId, kind: "cert", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) queued++;
   }
   return queued;
+}
+
+/** Training starts today for anyone training in a section with no start yet (on go-live, everyone). How many. */
+export async function startMissingTraining(now = Date.now(), db: Store = store()): Promise<number> {
+  const [people, sites, starts] = await Promise.all([db.people(), db.sites(), db.trainingStarts()]);
+  const missing = missingStarts(people, sites, starts, londonDate(now));
+  return missing.length ? db.addTrainingStarts(missing) : 0;
 }
 
 /** Training: a refresher coming up or due, or a skill to do again. Each message has a key, so it's only queued once. */

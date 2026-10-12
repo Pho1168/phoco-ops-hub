@@ -275,6 +275,8 @@ export interface Store {
    * their site reopens (createPerson, setAccess, updatePerson, setSiteStatus). The latest per section.
    */
   trainingStarts(personIds?: string[]): Promise<TrainingStart[]>;
+  /** Records starts (ignoring any already there for that day). For people training with no start yet: the scheduler. */
+  addTrainingStarts(starts: TrainingStart[]): Promise<number>;
   /** Oldest first. */
   trainingEvents(filter: { personIds?: string[]; skillIds?: string[] }): Promise<TrainingEvent[]>;
   /** Records what someone did. A quiz keeps the questions as asked and the answers given (`detail`). */

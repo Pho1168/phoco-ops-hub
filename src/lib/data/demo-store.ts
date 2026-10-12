@@ -955,6 +955,14 @@ export const demoStore: Store = {
     }
     return Array.from(latest.values());
   },
+  async addTrainingStarts(starts) {
+    let n = 0;
+    for (const x of starts) {
+      if (S().trainingStarts.some((s) => s.personId === x.personId && s.section === x.section && s.startedOn === x.startedOn)) continue;
+      S().trainingStarts.push({ ...x }); n++;
+    }
+    return n;
+  },
   async trainingEvents(f) {
     return S().trainingEvents.filter((e) => (!f.personIds || f.personIds.includes(e.personId)) && (!f.skillIds || f.skillIds.includes(e.skillId)))
       .sort((a, b) => a.at - b.at)

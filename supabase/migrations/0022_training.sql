@@ -108,18 +108,9 @@ create table if not exists training_starts (
 create or replace trigger training_starts_append_only before update or delete on training_starts
   for each row execute function refuse_change();
 alter table training_starts enable row level security;
--- Everyone training now starts today, the day training goes live: active staff and managers at open sites, not owners
--- or operations managers (the rule is trainingSections in src/lib/domain/training.ts).
-insert into training_starts (person_id, section, started_on)
-select distinct ps.person_id, s.section, (now() at time zone 'Europe/London')::date
-from person_sites ps
-join people p on p.id = ps.person_id and p.status = 'active'
-join sites st on st.id = ps.site_id and st.status = 'open'
-cross join lateral unnest(ps.sections) as s(section)
-where ps.role in ('staff', 'manager') and s.section in ('FOH', 'BOH', 'PROD')
-  and not exists (select 1 from person_sites x where x.person_id = ps.person_id and x.role in ('owner', 'ops'))
-  and not exists (select 1 from training_starts t where t.person_id = ps.person_id and t.section = s.section) -- safe to run again
-on conflict do nothing;
+-- No starts are recorded here: the scheduler records today's for everyone training without one the first time it runs
+-- after the app that uses these tables goes live (startMissingTraining in src/lib/rota-service.ts), so deadlines run
+-- from go-live, not from when this file was applied.
 
 -- What people did. A quiz keeps the questions as asked and the answers given (detail).
 create table if not exists training_events (

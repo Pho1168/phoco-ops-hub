@@ -1405,6 +1405,14 @@ export const sqlStore: Store = {
       ${ids ? q`where person_id = any(${ids}::uuid[])` : q``} order by person_id, section, started_on desc`;
     return rows.map((r) => ({ personId: r.person_id, section: r.section, startedOn: r.started_on }));
   },
+  async addTrainingStarts(starts) {
+    const rows = starts.filter((x) => isUuid(x.personId));
+    if (!rows.length) return 0;
+    const q = sql();
+    return (await q`insert into training_starts (person_id, section, started_on)
+      select * from unnest(${rows.map((x) => x.personId)}::uuid[], ${rows.map((x) => x.section)}::text[], ${rows.map((x) => x.startedOn)}::date[])
+      on conflict do nothing`).count;
+  },
   async trainingEvents(f) {
     const q = sql();
     const people = f.personIds?.filter(isUuid), skills = f.skillIds?.filter(isUuid);

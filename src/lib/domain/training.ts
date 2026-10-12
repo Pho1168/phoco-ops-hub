@@ -474,9 +474,18 @@ export interface PassportRow {
 export const pathwayOf = (pathways: Pathway[], section: Area): Pathway =>
   pathways.find((p) => p.section === section) ?? { section, ...DEFAULT_PATHWAY };
 
-/** The day someone last (re)started training in a section: they start again after leaving, a freeze or a closure. */
+/** The day someone last (re)started training in a section: they start again after leaving or a site closure. */
 export const startedOn = (starts: TrainingStart[], personId: string, section: Area): string | undefined =>
   starts.filter((s) => s.personId === personId && s.section === section).map((s) => s.startedOn).sort().at(-1);
+
+/**
+ * Starts to record today: each section someone trains in with no start yet (everyone, the first time the scheduler
+ * runs after training goes live; afterwards the stores record starts as people are given sections or come back).
+ */
+export function missingStarts(people: Pick<Person, "id" | "status" | "access">[], sites: Pick<Site, "id" | "status">[], starts: TrainingStart[], today: string): TrainingStart[] {
+  const has = new Set(starts.map((s) => `${s.personId}|${s.section}`));
+  return people.flatMap((p) => trainingSections(p, sites).filter((sec) => !has.has(`${p.id}|${sec}`)).map((section) => ({ personId: p.id, section, startedOn: today })));
+}
 
 /** Someone's passport: each of their skills, in order, with where they stand. */
 export function passport(p: Pick<Person, "id" | "status" | "access">, sites: Pick<Site, "id" | "status">[], d: TrainingData, today: string): PassportRow[] {
@@ -488,7 +497,8 @@ export function passport(p: Pick<Person, "id" | "status" | "access">, sites: Pic
     return {
       skill, hasQuiz, drafted: drafted.has(skill.id),
       progress: progress(skill, {
-        events: mine.filter((e) => e.skillId === skill.id), startedOn: startedOn(d.starts, p.id, skill.section),
+        // No start recorded yet (the scheduler records it within minutes): as if they start today.
+        events: mine.filter((e) => e.skillId === skill.id), startedOn: startedOn(d.starts, p.id, skill.section) ?? today,
         pathway: pathwayOf(d.pathways, skill.section), changedAt: changedAt(skill, d.majorChanges), hasQuiz, quizSince: quizSince(skill.id, d.questions), today,
       }),
     };

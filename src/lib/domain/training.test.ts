@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, changedAt, cleanPathway, cleanQuestion, cleanSkill, cleanVideoUrl, gradeQuiz, managesTraining,
-  passport, progress, progressText, quizOf, quizSince, quizVersion, REDO_DAYS, shuffled, skillsFor, tally, trainingReminders, trainingSections, trainingToDo,
+  missingStarts, passport, progress, progressText, quizOf, quizSince, quizVersion, REDO_DAYS, shuffled, skillsFor, tally, trainingReminders, trainingSections, trainingToDo,
   type Question, type Skill, type SkillInput, type TrainingData, type TrainingEvent,
 } from "./training";
 import { londonToUtc } from "./time";
@@ -330,6 +330,10 @@ describe("training: managers and messages", () => {
     const renewing = data([ev("confirmed", "2025-10-20", { personId: "cook", skillId: "knife", byId: "chef" }), ev("quiz", "2026-10-10", { personId: "cook", skillId: "knife", byId: "cook" })]);
     expect(tally(passport(cook, SITES, renewing, "2026-10-12"))).toMatchObject({ done: 1, ready: 1 });
     expect(trainingToDo(chef, [cook], SITES, renewing, "2026-10-12").ready).toBe(1);
+    // Everyone training with no start yet starts today (the scheduler, on go-live); until then, as if they start today.
+    expect(missingStarts([cook, server, owner, ops, chef], SITES, [{ personId: "cook", section: "BOH", startedOn: "2026-01-01" }], "2026-10-12")).toEqual([
+      { personId: "srv", section: "FOH", startedOn: "2026-10-12" }, { personId: "chef", section: "BOH", startedOn: "2026-10-12" }]);
+    expect(passport(server, SITES, data([], { starts: [] }), "2026-10-12")[0].progress).toMatchObject({ dueOn: "2026-10-19", overdue: false });
     // Starting again (back from leaving, say): the latest start counts.
     const back = data([], { starts: [{ personId: "srv", section: "FOH", startedOn: "2026-01-01" }, { personId: "srv", section: "FOH", startedOn: "2026-10-10" }] });
     expect(passport(server, SITES, back, "2026-10-12")[0].progress).toMatchObject({ dueOn: "2026-10-17", overdue: false });
