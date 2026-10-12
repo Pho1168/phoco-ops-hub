@@ -11,6 +11,7 @@ import type { TimeOff } from "@/lib/domain/timeoff";
 import type { Certificate } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent } from "@/lib/domain/equipment";
 import type { Task } from "@/lib/domain/tasks";
+import type { ShiftReply } from "@/lib/domain/reminders";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -77,6 +78,7 @@ interface State {
   equipment: Equipment[];
   equipmentEvents: EquipmentEvent[];
   tasks: Task[];
+  shiftReplies: ShiftReply[];
 }
 
 /** Sample records so the certificates screens have something to show in demo mode. */
@@ -157,7 +159,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(),
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [],
   };
 }
 
@@ -527,6 +529,24 @@ export const demoStore: Store = {
       .map((s) => ({ id: s.id, siteId: s.siteId, siteName: names.get(s.siteId) ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
         published: true, cancelled: false, personId: s.personId, staffCode: s.staffCode }));
   },
+  async shift(id) {
+    const s = S().shifts.find((x) => x.id === id);
+    if (!s) return undefined;
+    return { id: s.id, siteId: s.siteId, siteName: S().sites.find((x) => x.id === s.siteId)?.name ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
+      published: S().weeks.get(`${s.siteId}|${s.week}`) === "published", cancelled: s.cancelled, personId: s.personId, staffCode: s.staffCode };
+  },
+  async shiftReplies(shiftIds) { return S().shiftReplies.filter((r) => shiftIds.includes(r.shiftId)).sort((a, b) => a.createdAt - b.createdAt); },
+  async addShiftReply(r) {
+    const id = randomUUID();
+    // Strictly increasing times, so "latest" is well defined even within one millisecond.
+    const last = S().shiftReplies.reduce((m, x) => Math.max(m, x.createdAt), 0);
+    S().shiftReplies.push({ ...r, id, createdAt: Math.max(Date.now(), last + 1) });
+    return id;
+  },
+  async noticeKeys(keys) {
+    return new Map(S().notices.filter((n) => n.dedupeKey && keys.includes(n.dedupeKey)).map((n) => [n.dedupeKey!, n.createdAt]));
+  },
+  async peopleWithPush() { return new Set(S().pushSubs.map((p) => p.personId)); },
   async queueNotice(n) {
     if (n.dedupeKey && S().notices.some((x) => x.dedupeKey === n.dedupeKey)) return false;
     S().notices.push({ id: randomUUID(), personId: n.personId, kind: n.kind, title: n.title, body: n.body, dedupeKey: n.dedupeKey, sendAfter: n.sendAfter, createdAt: Date.now(), url: n.url });

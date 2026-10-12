@@ -14,7 +14,7 @@ export interface PersonRow { id: string; name: string; code: string; status: str
 
 type Modal = { type: "close"; site: SiteSummary } | { type: "resolve"; id: string } | null;
 
-export function OwnerClient({ tools, sites, people, log, currentSite, devices, rota }: { tools: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
+export function OwnerClient({ tools, reminders, sites, people, log, currentSite, devices, rota }: { tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [modal, setModal] = useState<Modal>(null);
@@ -34,6 +34,8 @@ export function OwnerClient({ tools, sites, people, log, currentSite, devices, r
     <main>
       <div><div className="eyebrow">All sites · owner control</div><h1 className="h-display">Group overview</h1></div>
       {msg && <div className="alert good" role="status"><Icon name="check" /><div className="grow">{msg}</div></div>}
+
+      {reminders}
 
       {tools}
 

@@ -11,6 +11,7 @@ import { weeklyDigest, type SiteWeekReport } from "@/lib/domain/report";
 import { weekStartOf } from "@/lib/domain/rota";
 import { loadSiteReport } from "@/lib/report-service";
 import { normalizeStaffCode } from "@/lib/domain/staff";
+import { dueReminders, reminderKey, shiftReminderMessage, startingLaterToday, waitingFrom, type Waiting } from "@/lib/domain/reminders";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
 
@@ -60,7 +61,10 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   return result;
 }
 
-/** Runs every 10 minutes (Supabase schedule). Queues the evening-before shift reminders and, in the morning, certificate reminders; then sends anything due. */
+/**
+ * Runs every 10 minutes (Supabase schedule). Queues shift reminders as they fall due, the evening-before shift list
+ * and, in the morning, certificate, service and report messages; then sends anything due.
+ */
 export async function tick(now = Date.now()): Promise<{ queued: number; sent: number }> {
   const db = store();
   let queued = 0;
@@ -74,6 +78,8 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
       if (await db.queueNotice({ personId, kind: "evening", title: n.title, body: n.body, dedupeKey: `evening|${personId}|${tomorrow}`, sendAfter: now })) queued++;
     }
   }
+  // Shift reminders: every run, whatever the hour (each goes 2 hours before its shift).
+  try { queued += (await queueShiftReminders(now, db)).length; } catch (e) { console.error("tick: shift reminders failed", e); }
   if (hm >= CERT_REMINDER_FROM && hm < CERT_REMINDER_UNTIL) {
     // Each morning job on its own: one failing mustn't stop the others or the sending below.
     for (const job of [queueCertReminders, queueServiceReminders, queueWeeklyReport]) {
@@ -136,4 +142,36 @@ export async function queueWeeklyReport(now = Date.now(), db: Store = store()): 
     if (await db.queueNotice({ personId: p.id, kind: "report", title: d.title, body: d.body, dedupeKey: `report|${week}|${p.id}`, sendAfter: afterQuietHours(now), url: `/manage/report?week=${week}` })) queued++;
   }
   return queued;
+}
+
+/** What's waiting at a site, for its shift reminders: open handover notes that need action, and prep still to do. */
+export async function waitingAt(siteId: SiteId, db: Store = store()): Promise<Waiting> {
+  const [notes, prepOn] = await Promise.all([db.handover(siteId), db.prepEnabledSites().then((s) => s.includes(siteId))]);
+  const prep = prepOn ? await db.prepOutstanding(siteId) : [];
+  const names = new Map(prep.length ? (await db.prepItems()).map((i) => [i.id, i.name]) : []);
+  return waitingFrom(notes, prep.map((e) => ({ name: names.get(e.itemId) ?? "Prep item", urgent: e.urgent })));
+}
+
+/**
+ * Queues shift reminders and returns who was messaged. "due": the scheduler, for shifts whose reminder time has come
+ * (2 hours before). "now": the owner's button, for everyone starting later today. Either way a person gets one
+ * reminder per shift, and it goes whatever the hour.
+ */
+export async function queueShiftReminders(now = Date.now(), db: Store = store(), mode: "due" | "now" = "due"): Promise<string[]> {
+  const today = londonDate(now);
+  const candidates = mode === "now"
+    ? startingLaterToday(await db.shiftsOnDate(today), today, now)
+    : dueReminders([...(await db.shiftsOnDate(today)), ...(await db.shiftsOnDate(addDays(today, 1)))], now);
+  if (!candidates.length) return [];
+  const already = await db.noticeKeys(candidates.map(reminderKey));
+  const waiting = new Map<SiteId, Waiting>();
+  const told: string[] = [];
+  for (const s of candidates) {
+    const key = reminderKey(s);
+    if (already.has(key)) continue;
+    if (!waiting.has(s.siteId)) waiting.set(s.siteId, await waitingAt(s.siteId, db));
+    const m = shiftReminderMessage(s, waiting.get(s.siteId), today);
+    if (await db.queueNotice({ personId: s.personId, kind: "shift", title: m.title, body: m.body, dedupeKey: key, sendAfter: now, url: "/me" })) told.push(s.personId);
+  }
+  return told;
 }

@@ -14,6 +14,8 @@ import { certStatus, expectedKinds, statusText, visibleTypes } from "@/lib/domai
 import { CHIP } from "@/app/manage/certificates/cells";
 import { dueText, isForPerson, priorityCode, taskOrder } from "@/lib/domain/tasks";
 import { TaskDone } from "@/components/TaskDone";
+import { latestReplies, replyOpen, replyText, type ShiftReply as Reply } from "@/lib/domain/reminders";
+import { ShiftReply } from "./ShiftReply";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -38,6 +40,11 @@ export default async function MyShifts() {
   const session = await db.session(ctx.sessionId);
   const onTablet = !!session?.deviceId;
   const publicKey = onTablet ? "" : (await vapidKeys()).publicKey;
+
+  const now = Date.now();
+  const replyable = shifts.filter((s) => replyOpen(s, now));
+  const replies = replyable.length ? latestReplies(await db.shiftReplies(replyable.map((s) => s.id))) : new Map<string, Reply>();
+  const TONE = { on_my_way: "done", late: "late", cant_make_it: "bad" } as const;
 
   const days = new Map<string, typeof shifts>();
   for (const s of shifts) days.set(s.date, [...(days.get(s.date) ?? []), s]);
@@ -71,10 +78,15 @@ export default async function MyShifts() {
                 <div className="muted">{shortDay(date).split(" ").slice(1).join(" ")}</div>
               </div>
               <div className="grow stack" style={{ gap: 4 }}>
-                {list.map((s) => (
-                  <div key={s.id}><span className="stat" style={{ fontSize: 24 }}>{s.start}–{s.end}</span>
-                    <div className="muted">{s.siteName} · {s.section === "FOH" ? "Front of house" : s.section === "BOH" ? "Back of house" : s.section}</div></div>
-                ))}
+                {list.map((s) => {
+                  const r = replies.get(s.id);
+                  return (
+                    <div key={s.id}><span className="stat" style={{ fontSize: 24 }}>{s.start}–{s.end}</span>
+                      <div className="muted">{s.siteName} · {s.section === "FOH" ? "Front of house" : s.section === "BOH" ? "Back of house" : s.section}</div>
+                      {replyOpen(s, now) && <ShiftReply shiftId={s.id} current={r ? { text: replyText(r), tone: TONE[r.kind] } : undefined} />}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}

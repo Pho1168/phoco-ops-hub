@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { demoStore, resetDemo } from "@/lib/data/demo-store";
-import { queueCertReminders, queueServiceReminders, queueWeeklyReport } from "@/lib/rota-service";
+import { queueCertReminders, queueServiceReminders, queueShiftReminders, queueWeeklyReport } from "@/lib/rota-service";
 import { addDays, londonDate, londonToUtc } from "@/lib/domain/time";
 import { weekStartOf } from "@/lib/domain/rota";
 
@@ -51,6 +51,35 @@ describe("certificate reminders on the scheduler", () => {
     expect((await demoStore.dueNotices(now, 50, ["DEMO-FOH"])).map((n) => n.title)).toEqual(["a"]);
     expect((await demoStore.dueNotices(now, 50)).map((n) => n.title)).toEqual(["b"]); // "a" was already taken
     expect(await demoStore.dueNotices(now, 50)).toEqual([]);
+    resetDemo();
+  });
+
+  it("reminds each person 2 hours before their shift, with what's waiting, once; the owner's button can send them early", async () => {
+    resetDemo();
+    const day = "2026-11-04";
+    const week = weekStartOf(day);
+    const sh = (code: string, section: string, start: string, end: string) =>
+      ({ sourceKey: `EAS|${week}|${code}|${section}|2`, staffCode: code, section, week, date: day, start, end, endsNextDay: false });
+    await demoStore.applyShiftSync("EAS", { added: [sh("DEMO-FOH", "FOH", "11:00", "15:00"), sh("DEMO-BOH", "BOH", "17:00", "22:15")], changed: [], cancelled: [] },
+      new Map([["DEMO-FOH", "DEMO-FOH"], ["DEMO-BOH", "DEMO-BOH"]]));
+    await demoStore.setWeekStatuses("EAS", new Map([[week, "published"]]));
+    await demoStore.addHandover({ siteId: "EAS", category: "Equipment", body: "Fridge 2 door seal loose", needsAction: true, createdBy: "DEMO-MGR" });
+    await demoStore.addHandover({ siteId: "EAS", category: "Staff note", body: "Private: talk to Sam", needsAction: true, createdBy: "DEMO-MGR" });
+    const at = (t: string) => londonToUtc(day, t);
+
+    expect(await queueShiftReminders(at("08:55"), demoStore)).toEqual([]);
+    expect(await queueShiftReminders(at("09:00"), demoStore)).toEqual(["DEMO-FOH"]);
+    expect(await queueShiftReminders(at("09:10"), demoStore)).toEqual([]); // already sent
+    const [m] = (await demoStore.notices("DEMO-FOH", 10)).filter((n) => n.kind === "shift");
+    expect(m).toMatchObject({ title: "Shift at 11:00 today · Eastcote", url: "/me", sendAfter: at("09:00") });
+    expect(m.body).toContain("Fridge 2 door seal loose");
+    expect(m.body).not.toContain("Sam");
+
+    // The button at 09:20 sends the 17:00 shift's reminder now; the scheduler doesn't send it again at 15:00.
+    expect(await queueShiftReminders(at("09:20"), demoStore, "now")).toEqual(["DEMO-BOH"]);
+    expect(await queueShiftReminders(at("09:21"), demoStore, "now")).toEqual([]);
+    expect(await queueShiftReminders(at("15:00"), demoStore)).toEqual([]);
+    expect((await demoStore.notices("DEMO-BOH", 10)).filter((n) => n.kind === "shift")).toHaveLength(1);
     resetDemo();
   });
 });

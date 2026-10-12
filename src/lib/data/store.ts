@@ -8,13 +8,14 @@ import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
 import type { Certificate } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent, EquipmentInput } from "@/lib/domain/equipment";
 import type { Task, TaskInput, TaskStatus } from "@/lib/domain/tasks";
+import type { ShiftReply } from "@/lib/domain/reminders";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
 /** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
-export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task";
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply";
 export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number; url?: string }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
@@ -181,6 +182,13 @@ export interface Store {
   teamShifts(siteId: SiteId, week: string): Promise<TeamShift[]>;
   /** Published, not-cancelled shifts on a London date, with the person's staff ID. */
   shiftsOnDate(date: string): Promise<(ShiftView & { personId: string; staffCode: string })[]>;
+  /** One shift by id, published or not, cancelled or not. */
+  shift(id: string): Promise<(ShiftView & { personId: string; staffCode: string }) | undefined>;
+
+  // Replies to shift reminders (kept: a new reply is added, the latest one counts)
+  /** Replies about these shifts, oldest first. */
+  shiftReplies(shiftIds: string[]): Promise<ShiftReply[]>;
+  addShiftReply(r: Omit<ShiftReply, "id" | "createdAt">): Promise<string>;
 
   // Messages and push
   /** `url`: the app page the phone notification opens (default My shifts). */
@@ -192,8 +200,12 @@ export interface Store {
   dueNotices(now: number, limit: number, personIds?: string[]): Promise<NoticeRow[]>;
   /** A person's messages, newest first. They show in the app at once; quiet hours only hold back the phone alert. */
   notices(personId: string, limit: number): Promise<NoticeRow[]>;
+  /** Of these message keys, the ones already queued, with when they were queued. */
+  noticeKeys(keys: string[]): Promise<Map<string, number>>;
   savePushSub(sub: PushSub): Promise<void>;
   pushSubs(personId: string): Promise<PushSub[]>;
+  /** Everyone with at least one phone set up for notifications. */
+  peopleWithPush(): Promise<Set<string>>;
   dropPushSub(endpoint: string): Promise<void>;
   /** Returns the stored value, creating it with `make()` the first time. */
   secret(key: string, make: () => string): Promise<string>;

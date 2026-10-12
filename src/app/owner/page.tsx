@@ -10,6 +10,8 @@ import { BottomNav, TopBar } from "@/components/Chrome";
 import { OwnerClient, type SiteSummary, type PersonRow } from "./OwnerClient";
 import { ManageTiles } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
+import { RemindersCard } from "./RemindersCard";
+import { teamRowsView, teamToday } from "@/lib/team-today";
 
 export const dynamic = "force-dynamic";
 
@@ -58,10 +60,15 @@ export default async function Owner() {
       issues: r?.issues ?? [],
     };
   });
+  const team = teamRowsView(await teamToday(sites.filter((s) => s.status === "open").map((s) => s.id)));
+  const withPush = await db.peopleWithPush();
+  const active = all.filter((p) => p.status === "active");
+  const missing = active.filter((p) => !withPush.has(p.id)).map((p) => p.name);
   return (
     <>
       <TopBar ctx={ctx} />
-      <OwnerClient tools={<ManageTiles counts={await manageCounts(ctx.person)} />} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
+      <OwnerClient tools={<ManageTiles counts={await manageCounts(ctx.person)} />}
+        reminders={<RemindersCard rows={team} active={active.length} pushOn={active.length - missing.length} missing={missing} />} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
         rota={<RotaCard rows={rota} />}
         devices={<DevicesCard devices={devices} demo={DEMO_MODE} sites={sites.filter((s) => s.status === "open").map((s) => ({ id: s.id, name: s.name }))} />} />
       <BottomNav ctx={ctx} current="owner" />
