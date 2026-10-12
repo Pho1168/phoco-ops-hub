@@ -11,6 +11,13 @@ import { BottomNav, TopBar } from "@/components/Chrome";
 import { Icon } from "@/components/Icon";
 import { NoticeBanner } from "@/components/NoticeBanner";
 import { unreadFor } from "@/lib/domain/notices";
+import { teamRowsView, teamToday } from "@/lib/team-today";
+import { TeamToday } from "@/components/TeamToday";
+import { ReadyLight } from "@/components/ReadyLight";
+import { GasCheck } from "@/components/GasCheck";
+import { gasFor, readyFor } from "@/lib/daily-service";
+import { readyShownUntil } from "@/lib/domain/daily";
+import { londonHM } from "@/lib/domain/time";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +51,25 @@ export default async function Today() {
   const siteTasks = await db.tasks({ siteIds: [ctx.site.id], closedSince: now - 10 * 60_000 });
   const myTasks = siteTasks.filter((t) => t.status === "open" && isForPerson(t, ctx.person)).sort(taskOrder(date));
   const justDone = siteTasks.filter((t) => t.status === "done" && t.doneBy === ctx.person.id);
+  const onTablet = !!(await db.session(ctx.sessionId))?.deviceId;
+  // Managers see today's team with their replies (late, can't make it) on the tablet.
+  const team = ctx.isManager ? teamRowsView(await teamToday([ctx.site.id], now), now) : [];
+  const away = team.filter((r) => r.alertUntil && now < r.alertUntil);
+  // Ready to open shows until an hour after the ready time (all the site's checklists count, not just the ones this
+  // person's sections see; staff aren't shown who's late or not coming). The gas check from 15 minutes before close.
+  const readyShown = !!ctx.site.readyBy && now < readyShownUntil(date, ctx.site.readyBy);
+  const readyLists = async () => {
+    const seen = new Map(rows.map((r) => [r.l.id, r.state === "done"]));
+    const others = all.filter((l) => !seen.has(l.id));
+    const runs = await Promise.all(others.map((l) => db.run(l.id, date)));
+    others.forEach((l, i) => seen.set(l.id, !!runs[i].signedAt));
+    return all.map((l) => ({ name: l.name, due: l.due, signed: seen.get(l.id)! }));
+  };
+  const [ready, gas] = await Promise.all([
+    readyShown ? readyLists().then((lists) => readyFor(ctx.site, now, db, { lists, kit, openFaults: kitOpen, alerts }, { forStaff: !ctx.isManager })) : undefined,
+    gasFor(ctx.site, now, db),
+  ]);
+  const showReady = readyShown && ready;
   const down = kit.map((eq) => ({ eq, f: faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down") }))
     .filter((x) => x.f.length).map(({ eq, f }) => ({ eq, since: Math.min(...f.map((x) => x.fault.createdAt)), body: f[f.length - 1].fault.body }));
 
@@ -75,6 +101,17 @@ export default async function Today() {
             <Icon name="wrench" />
             <div className="grow"><div className="strong">Not working: {eq.name}</div><div style={{ fontSize: 13 }}>{body} · reported {sinceText(since, now)} ago</div></div>
           </Link>
+        ))}
+        {gas && gas.state !== "later" && gas.state !== "missed" && (
+          <GasCheck siteId={ctx.site.id} siteName={ctx.site.name} state={gas.state} closeAt={londonHM(gas.day.closeAt)} needsPin={onTablet}
+            done={gas.check ? `Checked by ${gas.check.personName} at ${londonHM(gas.check.createdAt)}${gas.check.onTablet ? " on the tablet" : " on their phone"}` : undefined} />
+        )}
+        {showReady && <ReadyLight r={ready} />}
+        {away.map((r) => (
+          <div key={r.shiftId} className={`alert ${r.status?.tone === "bad" ? "bad" : ""}`} role="status">
+            <Icon name="clock" />
+            <div className="grow"><div className="strong">{r.name}: {r.status?.text}</div><div style={{ fontSize: 13 }}>{r.time} · {r.section}</div></div>
+          </div>
         ))}
         {(toDo.length > 0 || prepOn) && (
           <Link href={toDo.length || !prepOn ? "/handover" : "/handover/prep"} className={toDo.length ? "alert" : "list-btn"} style={{ textDecoration: "none" }}>
@@ -109,6 +146,12 @@ export default async function Today() {
               </div>
             ))}
           </section>
+        )}
+        {team.length > 0 && (
+          <details className="card">
+            <summary className="strong" style={{ cursor: "pointer" }}>Team today ({team.length})</summary>
+            <TeamToday rows={team} />
+          </details>
         )}
         {overdue.length > 0 && (
           <div className="alert">

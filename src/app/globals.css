@@ -5,6 +5,7 @@
   --accent: #C2611A; --accent-ink: #FFFFFF; --accent-soft: #FDE9D3; --accent-soft-ink: #7C3A0B;
   --warn-soft: #F3E6C8; --warn-ink: #6B4E0E;
   --bad: #B3261E; --bad-ink-on: #FFFFFF; --bad-soft: #FBE3E0; --bad-ink: #8C1D18;
+  --go: #2E7D4F; --wait: #C98A12;
   --display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
   --body: 'Be Vietnam Pro', 'Segoe UI', system-ui, sans-serif;
   color-scheme: light;
@@ -15,6 +16,7 @@
     --brand: #9FC2A6; --brand-ink: #132017; --sage: #2C3A30; --sage-ink: #CFE0D1;
     --accent: #E8893F; --accent-ink: #1C1007; --accent-soft: #3A2614; --accent-soft-ink: #F6C99C;
     --warn-soft: #3A3019; --warn-ink: #EBD39A; --bad: #F2867E; --bad-ink-on: #2A0D0B; --bad-soft: #3D1D1A; --bad-ink: #F7B4AE;
+    --go: #6CC48E; --wait: #E8B54A;
     color-scheme: dark;
   }
 }
@@ -292,3 +294,9 @@ table.matrix thead th:first-child { position: sticky; left: 0; z-index: 2; backg
   .labels { grid-template-columns: repeat(3, 1fr); gap: 6mm; }
   .label { border: 1px dashed #999; }
 }
+
+/* Ready to open: a traffic light dot beside the headline. */
+.light { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; background: var(--wait); box-shadow: 0 0 0 4px var(--surface); }
+.light.green { background: var(--go); }
+.light.red { background: var(--bad); }
+.reasons { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }

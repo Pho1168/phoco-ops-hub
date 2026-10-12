@@ -54,8 +54,8 @@ export function RemindersToggle({ publicKey }: { publicKey: string }) {
   return (
     <section className={`alert ${state === "on" ? "good" : ""}`} style={{ alignItems: "flex-start" }}>
       <div className="grow stack" style={{ gap: 6 }}>
-        {state === "on" && <><div className="strong">Reminders are on</div><div style={{ fontSize: 13 }}>The evening before each shift (18:00) and when your rota changes.</div></>}
-        {state === "off" && <><div className="strong">Get reminders on this phone</div><div style={{ fontSize: 13 }}>A message the evening before each shift, and when your rota changes. Nothing between 22:00 and 08:00.</div></>}
+        {state === "on" && <><div className="strong">Reminders are on</div><div style={{ fontSize: 13 }}>2 hours before each shift, the evening before (18:00), and when your rota changes.</div></>}
+        {state === "off" && <><div className="strong">Get reminders on this phone</div><div style={{ fontSize: 13 }}>A message 2 hours before each shift and the evening before, and when your rota changes. Apart from shift reminders, nothing between 22:00 and 08:00.</div></>}
         {state === "blocked" && <><div className="strong">Notifications are blocked</div><div style={{ fontSize: 13 }}>Allow notifications for this site in your browser settings, then reload this page.</div></>}
         {state === "ios-install" && <><div className="strong">On iPhone: add to Home Screen first</div><div style={{ fontSize: 13 }}>Tap Share, then &quot;Add to Home Screen&quot;. Open PHO &amp; CO from your home screen and turn reminders on there.</div></>}
         {state === "unsupported" && <><div className="strong">This browser can&apos;t show reminders</div><div style={{ fontSize: 13 }}>Use Chrome on Android, or Safari on iPhone after adding to Home Screen. Your messages still appear below.</div></>}

@@ -7,6 +7,7 @@ import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
 import type { Certificate, CertKind } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent, EquipmentKind, EventKind, Severity } from "@/lib/domain/equipment";
 import type { Priority, Task, TaskCategory, TaskStatus } from "@/lib/domain/tasks";
+import type { LateMinutes, ReplyKind, ShiftReply } from "@/lib/domain/reminders";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -91,6 +92,10 @@ const certFrom = (r: CertRow): Certificate => ({
   id: r.id, personId: r.person_id, kind: r.kind, issuedOn: opt(r.issued_on), expiresOn: opt(r.expires_on), provider: opt(r.provider), reference: opt(r.reference),
   note: opt(r.note), createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(),
 });
+interface ReplyRow { id: string; shift_id: string; person_id: string; site_id: SiteId; kind: ReplyKind; late_minutes: number | null; created_at: Date }
+const replyFrom = (r: ReplyRow): ShiftReply => ({ id: r.id, shiftId: r.shift_id, personId: r.person_id, siteId: r.site_id, kind: r.kind,
+  lateMinutes: r.late_minutes === null ? undefined : (r.late_minutes as LateMinutes), createdAt: r.created_at.getTime() });
+
 // The database stores an un-ticked item as 'cleared'; the app calls it 'todo'.
 const toDbOutcome = (o: Outcome) => (o === "todo" ? "cleared" : o);
 const fromDbOutcome = (o: string): Outcome => (o === "cleared" ? "todo" : (o as Outcome));
@@ -110,8 +115,8 @@ function toPerson(r: PersonRow): Person {
   };
 }
 
-function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null }): Site {
-  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason) };
+function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null; ready_by: string | null }): Site {
+  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason), readyBy: r.ready_by ?? undefined };
 }
 
 async function selectPeople(where: postgres.PendingQuery<postgres.Row[]> | null): Promise<Person[]> {
@@ -199,12 +204,12 @@ async function prepHandoversWhere(where: postgres.PendingQuery<postgres.Row[]>, 
 export const sqlStore: Store = {
   async sites() {
     const q = sql();
-    return (await q`select id, name, kind, status, closed_reason from sites order by case id when 'EAS' then 1 when 'WEM' then 2 else 3 end`)
+    return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by from sites order by case id when 'EAS' then 1 when 'WEM' then 2 else 3 end`)
       .map((r) => toSite(r as Parameters<typeof toSite>[0]));
   },
   async site(id) {
     const q = sql();
-    const [r] = await q`select id, name, kind, status, closed_reason from sites where id = ${id}`;
+    const [r] = await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by from sites where id = ${id}`;
     return r ? toSite(r as Parameters<typeof toSite>[0]) : undefined;
   },
   async setSiteStatus(id, status, reason) {
@@ -904,6 +909,69 @@ export const sqlStore: Store = {
       published: true, cancelled: false, personId: r.person_id, staffCode: r.staff_code,
     }));
   },
+  async shift(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<{ id: string; site_id: SiteId; site_name: string; section: string; week: string; starts_at: Date; ends_at: Date; cancelled_at: Date | null; status: WeekStatus | null; person_id: string; staff_code: string }[]>`
+      select s.id, s.site_id, si.name as site_name, s.section, to_char(s.week_start, 'YYYY-MM-DD') as week, s.starts_at, s.ends_at, s.cancelled_at, w.status, s.person_id, p.staff_code
+      from shifts s join sites si on si.id = s.site_id join people p on p.id = s.person_id
+      left join rota_weeks w on w.site_id = s.site_id and w.week_start = s.week_start
+      where s.id = ${id}`;
+    if (!r) return undefined;
+    return {
+      id: r.id, siteId: r.site_id, siteName: r.site_name, section: r.section, week: r.week,
+      date: londonDate(r.starts_at.getTime()), start: londonHM(r.starts_at.getTime()), end: londonHM(r.ends_at.getTime()),
+      published: r.status === "published", cancelled: !!r.cancelled_at, personId: r.person_id, staffCode: r.staff_code,
+    };
+  },
+
+  async checklistsStartedOn(siteId) {
+    const q = sql();
+    const [first] = await q<{ d: string | null }[]>`select to_char(min(business_date), 'YYYY-MM-DD') as d from checklist_runs where site_id = ${siteId}`;
+    return first?.d ?? undefined;
+  },
+
+  // ---------- gas off at close ----------
+  async gasChecks(siteIds, from, to) {
+    if (!siteIds.length) return [];
+    const q = sql();
+    const rows = await q<{ site_id: SiteId; business_date: string; person_id: string; name: string; on_tablet: boolean; created_at: Date }[]>`
+      select g.site_id, to_char(g.business_date, 'YYYY-MM-DD') as business_date, g.person_id, p.display_name as name, g.on_tablet, g.created_at
+      from gas_checks g join people p on p.id = g.person_id
+      where g.site_id = any(${siteIds}::text[]) and g.business_date between ${from} and ${to} order by g.business_date`;
+    return rows.map((r) => ({ siteId: r.site_id, date: r.business_date, personId: r.person_id, personName: r.name, onTablet: r.on_tablet, createdAt: r.created_at.getTime() }));
+  },
+  async addGasCheck(c) {
+    const q = sql();
+    const r = await q`insert into gas_checks (site_id, business_date, person_id, on_tablet) values (${c.siteId}, ${c.date}, ${c.personId}, ${c.onTablet})
+                      on conflict (site_id, business_date) do nothing`;
+    return r.count > 0;
+  },
+
+  // ---------- replies to shift reminders ----------
+  async shiftReplies(shiftIds) {
+    const ids = shiftIds.filter(isUuid);
+    if (!ids.length) return [];
+    const q = sql();
+    const rows = await q<ReplyRow[]>`
+      select id, shift_id, person_id, site_id, kind, late_minutes, created_at from shift_replies
+      where shift_id = any(${ids}::uuid[]) order by created_at, id`;
+    return rows.map(replyFrom);
+  },
+  async addShiftReply(r, isRepeat) {
+    return withTx(async (tx) => {
+      await tx`select id from shifts where id = ${r.shiftId} for update`; // one reply at a time per shift
+      const [latest, before] = (await tx<ReplyRow[]>`
+        select id, shift_id, person_id, site_id, kind, late_minutes, created_at from shift_replies
+        where shift_id = ${r.shiftId} order by created_at desc, id desc limit 2`).map(replyFrom);
+      if (latest && isRepeat(latest)) return { reply: latest, previous: before, added: false };
+      const [row] = await tx<ReplyRow[]>`
+        insert into shift_replies (shift_id, person_id, site_id, kind, late_minutes)
+        values (${r.shiftId}, ${r.personId}, ${r.siteId}, ${r.kind}, ${r.lateMinutes ?? null})
+        returning id, shift_id, person_id, site_id, kind, late_minutes, created_at`;
+      return { reply: replyFrom(row), previous: latest, added: true };
+    });
+  },
 
   // ---------- messages and push ----------
   async queueNotice(n) {
@@ -925,6 +993,12 @@ export const sqlStore: Store = {
       returning id, person_id, kind, title, body, send_after, sent_at, created_at, url`;
     return rows.map(toNotice);
   },
+  async noticeKeys(keys) {
+    if (!keys.length) return new Map();
+    const q = sql();
+    const rows = await q<{ dedupe_key: string; created_at: Date }[]>`select dedupe_key, created_at from notifications where dedupe_key = any(${keys}::text[])`;
+    return new Map(rows.map((r) => [r.dedupe_key, r.created_at.getTime()]));
+  },
   async notices(personId, limit) {
     if (!isUuid(personId)) return [];
     const q = sql();
@@ -944,6 +1018,11 @@ export const sqlStore: Store = {
     const rows = await q<{ person_id: string; endpoint: string; p256dh: string; auth: string }[]>`
       select person_id, endpoint, p256dh, auth from push_subscriptions where person_id = ${personId}`;
     return rows.map((r) => ({ personId: r.person_id, endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth }));
+  },
+  async peopleWithPush() {
+    const q = sql();
+    const rows = await q<{ person_id: string }[]>`select distinct person_id from push_subscriptions`;
+    return new Set(rows.map((r) => r.person_id));
   },
   async dropPushSub(endpoint) {
     const q = sql();

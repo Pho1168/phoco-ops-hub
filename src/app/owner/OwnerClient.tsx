@@ -5,16 +5,22 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { closeSite, logOutEverywhere, reopenSite, resolveAlert, setFrozen, switchSite } from "@/app/actions";
 import { Icon } from "@/components/Icon";
+import { ReadyLight } from "@/components/ReadyLight";
+import type { Ready } from "@/lib/domain/daily";
 
 export interface SiteSummary {
   id: string; name: string; closed: boolean; reason?: string; lists: number; signed: number; overdue: number;
   alerts: { id: string; title: string; detail: string; critical: boolean }[];
+  /** Ready to open today (only on days with published shifts). */
+  ready?: Ready;
+  /** The gas check: due, not done, or done (now, or at the last close). */
+  gas?: { text: string; tone: "good" | "bad" | "" };
 }
 export interface PersonRow { id: string; name: string; code: string; status: string; self: boolean; sites: string }
 
 type Modal = { type: "close"; site: SiteSummary } | { type: "resolve"; id: string } | null;
 
-export function OwnerClient({ tools, sites, people, log, currentSite, devices, rota }: { tools: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
+export function OwnerClient({ tools, reminders, sites, people, log, currentSite, devices, rota }: { tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [modal, setModal] = useState<Modal>(null);
@@ -35,6 +41,8 @@ export function OwnerClient({ tools, sites, people, log, currentSite, devices, r
       <div><div className="eyebrow">All sites · owner control</div><h1 className="h-display">Group overview</h1></div>
       {msg && <div className="alert good" role="status"><Icon name="check" /><div className="grow">{msg}</div></div>}
 
+      {reminders}
+
       {tools}
 
       <div className="grid2">
@@ -42,6 +50,12 @@ export function OwnerClient({ tools, sites, people, log, currentSite, devices, r
           <section key={s.id} className="card stack" aria-label={s.name}>
             <div className="row"><h2 className="h-sec grow">{s.name}</h2><span className={`chip ${s.closed ? "bad" : "done"}`}>{s.closed ? "Closed · sign-in frozen" : "Open"}</span></div>
             {s.closed && s.reason && <div className="muted">{s.reason}</div>}
+            {s.ready && <ReadyLight r={s.ready} />}
+            {s.gas && (
+              <div className={`alert ${s.gas.tone}`} style={{ padding: "10px 12px" }}>
+                <Icon name="flame" /><div className="grow" style={{ fontSize: 14 }}>{s.gas.text}</div>
+              </div>
+            )}
             <div className="row wrap" style={{ gap: 22 }}>
               <div><div className="stat">{s.signed}/{s.lists}</div><div className="muted">signed off</div></div>
               <div><div className="stat" style={{ color: s.overdue ? "var(--accent)" : undefined }}>{s.overdue}</div><div className="muted">overdue</div></div>

@@ -11,6 +11,8 @@ import type { TimeOff } from "@/lib/domain/timeoff";
 import type { Certificate } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent } from "@/lib/domain/equipment";
 import type { Task } from "@/lib/domain/tasks";
+import type { ShiftReply } from "@/lib/domain/reminders";
+import type { GasCheck } from "@/lib/domain/daily";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -77,6 +79,8 @@ interface State {
   equipment: Equipment[];
   equipmentEvents: EquipmentEvent[];
   tasks: Task[];
+  shiftReplies: ShiftReply[];
+  gasChecks: Omit<GasCheck, "personName">[];
 }
 
 /** Sample records so the certificates screens have something to show in demo mode. */
@@ -135,8 +139,8 @@ function seed(): State {
     ({ id, staffCode: id, name, status: "active", pinFailed: 0, pinHash: pin, access });
   return {
     sites: [
-      { id: "EAS", name: "Eastcote", kind: "restaurant", status: "open" },
-      { id: "WEM", name: "Wembley", kind: "production", status: "open" },
+      { id: "EAS", name: "Eastcote", kind: "restaurant", status: "open", readyBy: "12:00" },
+      { id: "WEM", name: "Wembley", kind: "production", status: "open", readyBy: "08:00" },
       { id: "SYD", name: "Sydenham", kind: "restaurant", status: "closed", closedReason: "Closed until it reopens" },
     ],
     people: [
@@ -157,7 +161,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(),
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [],
   };
 }
 
@@ -527,6 +531,40 @@ export const demoStore: Store = {
       .map((s) => ({ id: s.id, siteId: s.siteId, siteName: names.get(s.siteId) ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
         published: true, cancelled: false, personId: s.personId, staffCode: s.staffCode }));
   },
+  async checklistsStartedOn(siteId) {
+    const lists = new Set(S().lists.filter((l) => l.siteId === siteId).map((l) => l.id));
+    return Array.from(S().runs.values()).filter((r) => lists.has(r.listId)).map((r) => r.date).sort()[0];
+  },
+  async gasChecks(siteIds, from, to) {
+    return S().gasChecks.filter((g) => siteIds.includes(g.siteId) && g.date >= from && g.date <= to)
+      .map((g) => ({ ...g, personName: nameOf(g.personId) ?? "" })).sort((a, b) => a.date.localeCompare(b.date));
+  },
+  async addGasCheck(c) {
+    if (S().gasChecks.some((g) => g.siteId === c.siteId && g.date === c.date)) return false;
+    S().gasChecks.push({ ...c, createdAt: Date.now() });
+    return true;
+  },
+  async shift(id) {
+    const s = S().shifts.find((x) => x.id === id);
+    if (!s) return undefined;
+    return { id: s.id, siteId: s.siteId, siteName: S().sites.find((x) => x.id === s.siteId)?.name ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
+      published: S().weeks.get(`${s.siteId}|${s.week}`) === "published", cancelled: s.cancelled, personId: s.personId, staffCode: s.staffCode };
+  },
+  async shiftReplies(shiftIds) { return S().shiftReplies.filter((r) => shiftIds.includes(r.shiftId)).sort((a, b) => a.createdAt - b.createdAt); },
+  async addShiftReply(r, isRepeat) {
+    const mine = S().shiftReplies.filter((x) => x.shiftId === r.shiftId).sort((a, b) => b.createdAt - a.createdAt);
+    const [latest, before] = mine;
+    if (latest && isRepeat(latest)) return { reply: { ...latest }, previous: before && { ...before }, added: false };
+    // Strictly increasing times, so "latest" is well defined even within one millisecond.
+    const last = S().shiftReplies.reduce((m, x) => Math.max(m, x.createdAt), 0);
+    const reply = { ...r, id: randomUUID(), createdAt: Math.max(Date.now(), last + 1) };
+    S().shiftReplies.push(reply);
+    return { reply: { ...reply }, previous: latest && { ...latest }, added: true };
+  },
+  async noticeKeys(keys) {
+    return new Map(S().notices.filter((n) => n.dedupeKey && keys.includes(n.dedupeKey)).map((n) => [n.dedupeKey!, n.createdAt]));
+  },
+  async peopleWithPush() { return new Set(S().pushSubs.map((p) => p.personId)); },
   async queueNotice(n) {
     if (n.dedupeKey && S().notices.some((x) => x.dedupeKey === n.dedupeKey)) return false;
     S().notices.push({ id: randomUUID(), personId: n.personId, kind: n.kind, title: n.title, body: n.body, dedupeKey: n.dedupeKey, sendAfter: n.sendAfter, createdAt: Date.now(), url: n.url });

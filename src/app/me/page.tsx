@@ -14,6 +14,11 @@ import { certStatus, expectedKinds, statusText, visibleTypes } from "@/lib/domai
 import { CHIP } from "@/app/manage/certificates/cells";
 import { dueText, isForPerson, priorityCode, taskOrder } from "@/lib/domain/tasks";
 import { TaskDone } from "@/components/TaskDone";
+import { latestReplies, replyOpen, replyText, sectionName, type ShiftReply as Reply } from "@/lib/domain/reminders";
+import { ShiftReply } from "./ShiftReply";
+import { GasCheck } from "@/components/GasCheck";
+import { gasFor } from "@/lib/daily-service";
+import { londonHM } from "@/lib/domain/time";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -25,7 +30,12 @@ export default async function MyShifts() {
   const db = store();
   const today = londonDate(Date.now());
   const shifts = (await db.shiftsForPerson(ctx.person.id, today, addDays(today, 27))).filter((s) => s.published && !s.cancelled);
-  const notices = (await db.notices(ctx.person.id, 25)).filter((n) => n.kind !== "notice").slice(0, 15);
+  // Shift reminders and the evening-before list are only useful until the shift: older ones drop off, so they don't
+  // push rota changes, time off decisions and certificate warnings out of the list.
+  const now = Date.now();
+  const notices = (await db.notices(ctx.person.id, 60))
+    .filter((n) => n.kind !== "notice" && !(n.kind === "shift" && n.createdAt < now - 18 * 3_600_000) && !(n.kind === "evening" && n.createdAt < now - 36 * 3_600_000))
+    .slice(0, 15);
   const teamNotices = await db.teamNotices(0);
   const unread = unreadFor(teamNotices, ctx.person, today);
   const myTimeOff = (await db.timeOff({ personId: ctx.person.id, from: addDays(today, -60) })).filter((t) => t.status !== "cancelled" || t.endsOn >= today);
@@ -38,6 +48,18 @@ export default async function MyShifts() {
   const session = await db.session(ctx.sessionId);
   const onTablet = !!session?.deviceId;
   const publicKey = onTablet ? "" : (await vapidKeys()).publicKey;
+
+  const replyable = shifts.filter((s) => replyOpen(s, now));
+  const replies = replyable.length ? latestReplies(await db.shiftReplies(replyable.map((s) => s.id))) : new Map<string, Reply>();
+  const TONE = { on_my_way: "done", late: "late", cant_make_it: "bad" } as const;
+  // The gas check at close, for the people on until the end (closers) at a site where it's due now.
+  const recentSites = Array.from(new Set((await db.shiftsForPerson(ctx.person.id, addDays(today, -1), today)).filter((s) => s.published && !s.cancelled).map((s) => s.siteId)));
+  const allSites = await db.sites();
+  const gasCards = (await Promise.all(recentSites.map(async (id) => {
+    const site = allSites.find((x) => x.id === id);
+    const g = site ? await gasFor(site, now) : undefined;
+    return site && g && (g.state === "due" || g.state === "overdue" || g.state === "done") && g.day.closers.includes(ctx.person.id) ? { site, g } : undefined;
+  }))).filter((x) => x !== undefined).filter((x) => !onTablet || x.site.id === ctx.site.id); // a tablet only does its own site
 
   const days = new Map<string, typeof shifts>();
   for (const s of shifts) days.set(s.date, [...(days.get(s.date) ?? []), s]);
@@ -60,6 +82,11 @@ export default async function MyShifts() {
 
         <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName, when: when(n.createdAt) }))} />
 
+        {gasCards.map(({ site, g }) => (
+          <GasCheck key={site.id} siteId={site.id} siteName={site.name} state={g.state as "due" | "overdue" | "done"} closeAt={londonHM(g.day.closeAt)} needsPin={onTablet}
+            done={g.check ? `Checked by ${g.check.personName} at ${londonHM(g.check.createdAt)}` : undefined} />
+        ))}
+
         {!onTablet && <RemindersToggle publicKey={publicKey} />}
 
         <section className="stack">
@@ -71,10 +98,15 @@ export default async function MyShifts() {
                 <div className="muted">{shortDay(date).split(" ").slice(1).join(" ")}</div>
               </div>
               <div className="grow stack" style={{ gap: 4 }}>
-                {list.map((s) => (
-                  <div key={s.id}><span className="stat" style={{ fontSize: 24 }}>{s.start}–{s.end}</span>
-                    <div className="muted">{s.siteName} · {s.section === "FOH" ? "Front of house" : s.section === "BOH" ? "Back of house" : s.section}</div></div>
-                ))}
+                {list.map((s) => {
+                  const r = replies.get(s.id);
+                  return (
+                    <div key={s.id}><span className="stat" style={{ fontSize: 24 }}>{s.start}–{s.end}</span>
+                      <div className="muted">{s.siteName} · {sectionName(s.section)}</div>
+                      {replyOpen(s, now) && <ShiftReply shiftId={s.id} current={r ? { text: replyText(r), tone: TONE[r.kind] } : undefined} />}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}

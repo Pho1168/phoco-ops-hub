@@ -22,7 +22,7 @@ export function londonToUtc(date: string, hm: string): number {
     const p = londonParts(t);
     if (p.date === date && p.hm === hm) return t;
   }
-  return guess - 60 * 60_000; // in the spring-forward gap; an hour later is the nearest real time
+  return guess; // in the spring-forward gap (01:00–01:59 doesn't exist): read as GMT, which is the wall time an hour later
 }
 
 export const londonDate = (ms: number) => londonParts(ms).date;

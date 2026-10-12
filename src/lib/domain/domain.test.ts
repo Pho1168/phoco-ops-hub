@@ -952,3 +952,13 @@ describe("dates typed into forms and links", () => {
     expect(clampRange("2026-09-31", "2026-10-05", "2026-10-12", 7)).toEqual({ from: "2026-09-29", to: "2026-10-05" }); // bad "from" falls back to 7 days
   });
 });
+
+describe("London times that don't exist", () => {
+  it("a time in the spring-forward gap becomes the same time an hour later, not earlier", () => {
+    const t = londonToUtc("2027-03-28", "01:30");
+    expect(new Date(t).toISOString()).toBe("2027-03-28T01:30:00.000Z");
+    expect(new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })).toBe("02:30");
+    expect(new Date(londonToUtc("2027-03-28", "02:30")).toISOString()).toBe("2027-03-28T01:30:00.000Z");
+    expect(new Date(londonToUtc("2027-03-28", "00:30")).toISOString()).toBe("2027-03-28T00:30:00.000Z");
+  });
+});

@@ -10,6 +10,8 @@ export interface Site {
   kind: "restaurant" | "production";
   status: "open" | "closed";
   closedReason?: string;
+  /** "12:00": the opening checks must be signed by then (ready to open). */
+  readyBy?: string;
 }
 
 export interface SiteAccess {

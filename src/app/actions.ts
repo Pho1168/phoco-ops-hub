@@ -19,7 +19,10 @@ import { canEditCerts, certType, validateCert, CERT_KINDS, type CertKind } from 
 import { canComplete, categoryLabel, isForPerson, priorityCode, validateTask, TASK_CATEGORIES, type Priority, type TaskCategory } from "@/lib/domain/tasks";
 import { canManageEquipment, canUseEquipment, faultReportedMessages, faultsOf, siteManagers, validateEquipment, validateService,
   EQUIPMENT_KINDS, INSTRUCTIONS_MAX, NAME_MAX, SEVERITY_LABEL, TEXT_MAX, type EquipmentKind } from "@/lib/domain/equipment";
-import { deliverDue } from "@/lib/rota-service";
+import { deliverDue, queueShiftReminders } from "@/lib/rota-service";
+import { canReply, replyMessages, replySendAfter, replyText, sameReply, type LateMinutes } from "@/lib/domain/reminders";
+import { gasConfirmedMessages } from "@/lib/domain/daily";
+import { gasFor } from "@/lib/daily-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
@@ -574,7 +577,7 @@ export async function enableReminders(sub: unknown): Promise<ActionResult> {
   if (!parsed.success) return { ok: false, error: "This phone didn't give a usable notification address" };
   await db.savePushSub({ personId: ctx.person.id, endpoint: parsed.data.endpoint, p256dh: parsed.data.keys.p256dh, auth: parsed.data.keys.auth });
   await db.audit({ actorId: ctx.person.id, action: "reminders.on", detail: "Turned on rota reminders on a phone" });
-  await pushToPerson(ctx.person.id, { title: "Reminders are on", body: "You'll get a message the evening before each shift and when your rota changes.", url: "/me" });
+  await pushToPerson(ctx.person.id, { title: "Reminders are on", body: "You'll get a message 2 hours before each shift, the evening before, and when your rota changes.", url: "/me" });
   return { ok: true };
 }
 
@@ -585,6 +588,107 @@ export async function disableReminders(endpoint: string): Promise<ActionResult> 
   const db = store();
   const mine = await db.pushSubs(ctx.person.id);
   if (mine.some((s) => s.endpoint === endpoint)) await db.dropPushSub(endpoint);
+  return { ok: true };
+}
+
+// ---------- shift reminders and replies ----------
+
+/** The owner's "Send reminders now": everyone starting later today who hasn't had their reminder gets it now. */
+export async function sendShiftRemindersNow(): Promise<ActionResult & { sent?: number; phones?: number }> {
+  const ctx = await requireOwner();
+  const db = store();
+  const now = Date.now();
+  const told = await queueShiftReminders(now, db, "now");
+  const phones = told.length ? await deliverDue(now, told) : 0;
+  await db.audit({ actorId: ctx.person.id, action: "reminders.send", detail: `Sent shift reminders now to ${told.length} ${told.length === 1 ? "person" : "people"} (${phones} ${phones === 1 ? "phone" : "phones"})` });
+  revalidatePath("/owner"); revalidatePath("/today");
+  return { ok: true, sent: told.length, phones };
+}
+
+const ReplyZ = z.object({
+  shiftId: z.string().uuid(),
+  kind: z.enum(["on_my_way", "late", "cant_make_it"]),
+  lateMinutes: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
+}).refine((r) => (r.kind === "late") === (r.lateMinutes !== undefined), "Choose how late you'll be");
+
+/** A person answers their own shift's reminder: on my way, running late, or can't make it. Managers are told about the last two. */
+export async function replyToShift(input: unknown): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  const r = ReplyZ.safeParse(input);
+  if (!r.success) return { ok: false, error: r.error.issues[0]?.message ?? "That reply couldn't be sent" };
+  const db = store();
+  const shift = await db.shift(r.data.shiftId);
+  if (!shift) return { ok: false, error: "That shift isn't on the rota any more" };
+  const now = Date.now();
+  const check = canReply(shift, ctx.person.id, now);
+  if (!check.ok) return check;
+  const reply = { kind: r.data.kind, lateMinutes: r.data.lateMinutes as LateMinutes | undefined };
+  // A repeat (second tap, or a retry after something failed) adds nothing, but its messages are queued again below:
+  // their keys mean managers are told once, and a retry still reaches them if the first try stopped half way.
+  const saved = await db.addShiftReply({ shiftId: shift.id, personId: ctx.person.id, siteId: shift.siteId, ...reply }, (latest) => sameReply(latest, reply));
+  const today = londonDate(now);
+  const told: string[] = [];
+  for (const m of replyMessages(saved.reply, saved.previous, shift, ctx.person.name, await db.people(), today)) {
+    if (await db.queueNotice({ personId: m.personId, kind: "reply", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: replySendAfter(now, shift), url: m.url })) told.push(m.personId);
+  }
+  if (told.length) await deliverDue(now, told);
+  if (saved.added) await db.audit({ actorId: ctx.person.id, siteId: shift.siteId, action: "shift.reply", detail: `${replyText(reply)}: ${shift.date === today ? "today" : dayMonthYear(shift.date)} ${shift.start}–${shift.end} (${shift.section})` });
+  revalidatePath("/me"); revalidatePath("/today"); revalidatePath("/owner");
+  return { ok: true };
+}
+
+// ---------- gas off at close ----------
+
+/**
+ * "All gas is off", from 15 minutes before the last shift ends. On the shop tablet: anyone signed in there, for that
+ * site, with their PIN (the record is permanent, so it must be the right name). On their own phone: the closing team,
+ * or a manager of the site. The first tap of the day counts; who, when and which kind of device are kept. If managers
+ * were already alerted that nobody had checked, they hear it's done.
+ */
+export async function confirmGasOff(siteId: string, pin?: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  const input = z.object({ siteId: SiteIdZ, pin: z.string().max(10).optional() }).safeParse({ siteId, pin });
+  if (!input.success) return { ok: false, error: "Choose a site" };
+  const db = store();
+  const site = await db.site(input.data.siteId);
+  if (!site || ctx.person.status !== "active" || !ctx.person.access.some((a) => a.siteId === site.id)) return { ok: false, error: "You can only do the gas check at your own site" };
+  const now = Date.now();
+  const onTablet = !!(await db.session(ctx.sessionId))?.deviceId;
+  if (onTablet) {
+    if (ctx.site.id !== site.id) return { ok: false, error: "Do the gas check on that site's tablet" };
+    if (isPinLocked(ctx.person, now)) return { ok: false, error: "Too many wrong PINs. Try again in a few minutes or ask a manager" };
+    if (!verifyPin(input.data.pin ?? "", ctx.person.pinHash)) {
+      const patch = registerPinFailure(ctx.person, now);
+      await db.updatePerson(ctx.person.id, patch);
+      await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "gas.failed", detail: "Wrong PIN at the gas check" });
+      if (isPinLocked(patch, now)) {
+        await db.revokeSessions({ personId: ctx.person.id }, "too many wrong PINs at the gas check");
+        (await cookies()).delete(SESSION_COOKIE);
+        return { ok: false, error: "Too many wrong PINs. You've been signed out for 15 minutes" };
+      }
+      return { ok: false, error: "PIN doesn't match" };
+    }
+    if (ctx.person.pinFailed > 0) await db.updatePerson(ctx.person.id, { pinFailed: 0 });
+  }
+  const g = await gasFor(site, now, db);
+  if (!g) return { ok: false, error: "There's no gas check to do right now" };
+  if (g.check) return { ok: true }; // already done
+  if (!onTablet && !g.day.closers.includes(ctx.person.id) && !canManage(ctx.person, site.id)) return { ok: false, error: "The closing team or a manager does the gas check" };
+  if (!(await db.addGasCheck({ siteId: site.id, date: g.day.date, personId: ctx.person.id, onTablet }))) return { ok: true }; // someone has just done it
+  const managers = siteManagers(await db.people(), site.id);
+  const sentAlert = await db.noticeKeys(managers.map((p) => `gasalert|${site.id}|${g.day.date}|${p.id}`));
+  const alerted = managers.filter((p) => sentAlert.has(`gasalert|${site.id}|${g.day.date}|${p.id}`)).map((p) => p.id);
+  const told: string[] = [];
+  for (const m of gasConfirmedMessages(site, g.day, ctx.person.name, onTablet, now, alerted)) {
+    if (await db.queueNotice({ personId: m.personId, kind: "gas", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: now, url: m.url })) told.push(m.personId);
+  }
+  if (told.length) await deliverDue(now, told);
+  await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "gas.off", detail: `All gas off at close (${dayMonthYear(g.day.date)}), ${onTablet ? "on the tablet" : "on their own phone"}` });
+  revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/owner");
   return { ok: true };
 }
 
