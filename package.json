@@ -12,8 +12,7 @@
     "person:add": "node scripts/add-person.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.4",
-    "next": "14.2.15",
+    "next": "14.2.35",
     "postgres": "^3.4.5",
     "qrcode": "^1.5.4",
     "react": "^18",
@@ -28,7 +27,7 @@
     "@types/react-dom": "^18",
     "@types/web-push": "^3.6.4",
     "eslint": "^8",
-    "eslint-config-next": "14.2.15",
+    "eslint-config-next": "14.2.35",
     "typescript": "^5",
     "vitest": "^2.1.4"
   }
