@@ -98,7 +98,8 @@ insert into training_pathways (section) values ('FOH'), ('BOH'), ('PROD') on con
 alter table training_pathways enable row level security;
 
 -- When someone started training in a section: their pathway's deadlines run from the latest start. A new row each time
--- they start (given the section, back from leaving or a freeze, or their site reopened); never changed.
+-- they start (given the section, back from leaving, or their site reopened; the scheduler adds one for anyone training
+-- with none); never changed.
 create table if not exists training_starts (
   person_id  uuid not null references people(id),
   section    text not null check (section in ('FOH', 'BOH', 'PROD')),
