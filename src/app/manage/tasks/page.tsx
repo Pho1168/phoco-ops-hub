@@ -114,7 +114,7 @@ export default async function TaskCentre(props: { searchParams: Promise<{ site?:
         )}
         <div className="muted" style={{ fontSize: 13 }}>P1 critical: a safety or operational risk now. P2 high: this shift. P3 normal: routine. P4: improvements. Alerts, broken kit, handover actions, prep, overdue checklists, time off, certificates and servicing appear here by themselves and stay where they are.</div>
       </main>
-      <BottomNav ctx={ctx} current={ctx.isOwner ? "owner" : "manage"} />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

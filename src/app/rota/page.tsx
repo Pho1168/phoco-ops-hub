@@ -8,6 +8,7 @@ import type { SiteId } from "@/lib/domain/types";
 import { current } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { offOn } from "@/lib/domain/timeoff";
+import { canManage } from "@/lib/domain/access";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,7 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
   const sites = (await db.sites()).filter((s) => ctx.person.access.some((a) => a.siteId === s.id) && s.status === "open");
   const site = sites.find((s) => s.id === searchParams.site) ?? sites.find((s) => s.id === ctx.site.id) ?? sites[0];
   if (!site) redirect(ctx.scope === "shifts" ? "/me" : "/today");
-  const access = ctx.person.access.find((a) => a.siteId === site.id);
-  const isManager = ctx.isOwner || access?.role === "manager";
+  const isManager = ctx.isOwner || canManage(ctx.person, site.id);
 
   const today = londonDate(Date.now());
   const thisWeek = weekStartOf(today);

@@ -19,7 +19,7 @@ export function SetupScreen({ removed, returnTo }: { removed: boolean; returnTo?
         <div className="logo" style={{ color: "var(--brand)", fontSize: 28 }}>PHO &amp; CO</div>
         <h1 className="h-display" style={{ marginTop: 6 }}>Ops Hub</h1>
       </div>
-      {removed && <div className="err">This device was removed by an owner. Ask an owner for a new set-up code.</div>}
+      {removed && <div className="err">This device was removed. Ask the owner or operations manager for a new set-up code.</div>}
 
       <form className="card stack" onSubmit={(e) => {
         e.preventDefault();
@@ -29,7 +29,7 @@ export function SetupScreen({ removed, returnTo }: { removed: boolean; returnTo?
         });
       }}>
         <h2 className="h-sec">Set up this tablet</h2>
-        <p className="muted" style={{ margin: 0 }}>Staff sign in on registered site tablets only. An owner creates a one-time code on the Owner screen (valid 15 minutes).</p>
+        <p className="muted" style={{ margin: 0 }}>Staff sign in on registered site tablets only. The owner or operations manager creates a one-time code under Site tablets (valid 15 minutes).</p>
         <label className="stack" style={{ gap: 6 }}>
           <span className="strong" style={{ fontSize: 15 }}>Set-up code</span>
           <input id="pair-code" className="num" style={{ width: "100%", letterSpacing: 4, textTransform: "uppercase" }} autoComplete="off" autoCapitalize="characters"
@@ -47,7 +47,7 @@ export function SetupScreen({ removed, returnTo }: { removed: boolean; returnTo?
         });
       }}>
         <h2 className="h-sec">Sign in with your staff ID</h2>
-        <p className="muted" style={{ margin: 0 }}>On your own phone: staff see their shifts and can turn on reminders. Owners get the full app.</p>
+        <p className="muted" style={{ margin: 0 }}>On your own phone: staff see their shifts and can turn on reminders. Owners and operations managers get the full app.</p>
         <div className="row wrap">
           <label className="stack" style={{ gap: 6, flex: "1 1 140px" }}>
             <span className="strong" style={{ fontSize: 15 }}>Staff ID</span>

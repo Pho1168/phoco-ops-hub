@@ -40,8 +40,8 @@ export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "hand
       {item("/today", "today", "Today", "today")}
       {item("/handover", "handover", "Handover", "handover")}
       {item("/rota", "rota", "Rota", "rota")}
-      {ctx.isOwner
-        ? item("/owner", "owner", "Owner", "owner")
+      {ctx.isLead
+        ? item("/owner", "owner", ctx.isOwner ? "Owner" : "Overview", "owner")
         : managedSites(ctx.person).length > 0 && item("/manage", "manage", "Manage", "manage")}
     </nav>
   );

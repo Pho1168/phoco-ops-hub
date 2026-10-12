@@ -11,8 +11,8 @@ import { pushToPerson } from "@/lib/push";
 import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
-import { canFreeze, canManage, canSignIn, isPinLocked, managedSites, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
-import { canCancel, canDecide, clashes, kindLabel, rangeLabel, validateRequest } from "@/lib/domain/timeoff";
+import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn } from "@/lib/domain/access";
+import { canCancel, canDecide, clashes, kindLabel, rangeLabel, timeOffDeciders, validateRequest } from "@/lib/domain/timeoff";
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
 import { afterQuietHours, dayMonthYear, isIsoDate, londonDate } from "@/lib/domain/time";
 import { canEditCerts, certType, validateCert, CERT_KINDS, type CertKind } from "@/lib/domain/certificates";
@@ -30,9 +30,9 @@ import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
-import { canChangeAccess, canMarkLeft, normalizeStaffCode, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
-import type { SiteId } from "@/lib/domain/types";
-import { current, londonNow, requireCtx, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
+import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
+import type { Person, Role, SiteId } from "@/lib/domain/types";
+import { current, londonNow, requireCtx, requireLead, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
 
 const SiteIdZ = z.enum(["EAS", "WEM", "SYD"]);
 /** Someone still on the temporary PIN an owner gave them chooses their own before doing anything. */
@@ -75,8 +75,9 @@ async function startSession(personId: string, siteId: SiteId, deviceId?: string,
 
 /**
  * Sign-in by staff ID + PIN on a device that isn't a registered site tablet (someone's own phone or computer).
- * Owners get the full app. Everyone else gets "My shifts" only: their own shifts and messages, no names, no checklists.
- * The error is the same "not recognised" for every failure, so the screen gives nothing away.
+ * Owners and operations managers get the full app. Everyone else gets "My shifts" only: their own shifts and
+ * messages, no names, no checklists. The error is the same "not recognised" for every failure, so the screen gives
+ * nothing away.
  */
 export async function staffIdSignIn(staffCode: string, pin: string): Promise<ActionResult> {
   const db = store();
@@ -84,11 +85,9 @@ export async function staffIdSignIn(staffCode: string, pin: string): Promise<Act
   const notRecognised = { ok: false as const, error: "Staff ID or PIN not recognised" };
   const person = code ? (await db.people()).find((p) => normalizeStaffCode(p.staffCode) === code) : undefined;
   if (!person || !person.access.length) return notRecognised;
-  const isOwner = person.access.some((a) => a.role === "owner");
-  const sites = await db.sites();
-  const mine = person.access.map((a) => sites.find((s) => s.id === a.siteId)).filter((s): s is NonNullable<typeof s> => !!s);
-  const site = mine.find((s) => s.status === "open") ?? (isOwner ? mine[0] : undefined);
-  if (!site) return notRecognised;
+  const landing = remoteSignIn(person, await db.sites());
+  if (!landing) return notRecognised;
+  const { site, scope } = landing;
   const now = Date.now();
   const gate = canSignIn(person, site, now);
   if (!gate.allowed) return { ok: false, error: gate.reason };
@@ -97,9 +96,9 @@ export async function staffIdSignIn(staffCode: string, pin: string): Promise<Act
     await db.audit({ actorId: person.id, action: "signin.failed", detail: "Wrong PIN (staff ID sign-in, unregistered device)" });
     return notRecognised;
   }
-  if (isOwner) {
+  if (scope === "full") {
     await startSession(person.id, site.id);
-    await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Owner signed in on an unregistered device" });
+    await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: `${isOwner(person) ? "Owner" : "Operations manager"} signed in on an unregistered device` });
   } else {
     await startSession(person.id, site.id, undefined, "shifts");
     await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Signed in to My shifts on own phone" });
@@ -113,7 +112,7 @@ export async function pairDevice(input: string): Promise<ActionResult> {
   if (!code) return { ok: false, error: "That code doesn't look right. It's 6 letters and numbers, like ABC-234" };
   const token = newDeviceToken();
   const device = await store().redeemPairing(sha256(code), sha256(token), Date.now());
-  if (!device) return { ok: false, error: "Code not recognised, already used or expired. Ask an owner for a new one" };
+  if (!device) return { ok: false, error: "Code not recognised, already used or expired. Ask the owner or operations manager for a new one" };
   (await cookies()).set(DEVICE_COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: DEVICE_COOKIE_MAX_AGE, path: "/" });
   (await cookies()).delete(SESSION_COOKIE);
   await store().audit({ siteId: device.siteId, action: "device.paired", detail: `${device.label} set up` });
@@ -309,10 +308,22 @@ export async function prepSetDone(handoverId: string, entryId: string, done: boo
   return { ok: true };
 }
 
+/** Closing and reopening sites and connecting rota sheets stay with the owner. */
 async function requireOwner() {
   const ctx = await requireCtx();
   if (!ctx.isOwner) redirect("/today");
   return ctx;
+}
+
+/** Who did it, for the reason a session ended. */
+const byWhom = (ctx: { isOwner: boolean }) => (ctx.isOwner ? "owner" : "operations manager");
+
+/** The person whose account an owner or operations manager is changing, if they may. */
+async function accountFor(ctx: { person: Person }, personId: string): Promise<{ ok: true; target: Person } | { ok: false; error: string }> {
+  const target = await store().person(z.string().max(64).parse(personId));
+  if (!target) return { ok: false, error: "Person not found" };
+  const can = canManageAccount(ctx.person, target);
+  return can.ok ? { ok: true, target } : can;
 }
 
 export async function closeSite(siteId: string, typedName: string, reason: string): Promise<ActionResult> {
@@ -351,17 +362,21 @@ export async function reopenSite(siteId: string): Promise<ActionResult> {
 }
 
 export async function setFrozen(personId: string, frozen: boolean): Promise<ActionResult> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
-  const target = await db.person(personId);
-  if (!target) return { ok: false, error: "Person not found" };
+  const found = await accountFor(ctx, personId);
+  if (!found.ok) return found;
+  const target = found.target;
   if (frozen) {
     const ok = canFreeze(ctx.person, target, await db.people());
     if (!ok.allowed) return { ok: false, error: ok.reason };
-    await db.updatePerson(personId, { status: "frozen", frozenReason: "owner" });
-    await db.revokeSessions({ personId }, "account frozen by owner");
+    // "owner" means frozen on its own (not by a site closure), whoever did it; the activity log says who.
+    await db.updatePerson(target.id, { status: "frozen", frozenReason: "owner" });
+    await db.revokeSessions({ personId: target.id }, `account frozen by ${byWhom(ctx)}`);
   } else {
-    await db.updatePerson(personId, { status: "active", frozenReason: undefined });
+    const ok = canUnfreeze(ctx.person, target);
+    if (!ok.ok) return ok;
+    await db.updatePerson(target.id, { status: "active", frozenReason: undefined });
   }
   await db.audit({ actorId: ctx.person.id, action: frozen ? "person.freeze" : "person.unfreeze", detail: target.name });
   revalidatePath("/owner");
@@ -369,11 +384,12 @@ export async function setFrozen(personId: string, frozen: boolean): Promise<Acti
 }
 
 export async function logOutEverywhere(personId: string): Promise<ActionResult> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
-  const n = await db.revokeSessions({ personId }, "logged out by owner");
-  const p = await db.person(personId);
-  await db.audit({ actorId: ctx.person.id, action: "person.logout", detail: `${p?.name}: ${n} sessions ended` });
+  const found = await accountFor(ctx, personId);
+  if (!found.ok) return found;
+  const n = await db.revokeSessions({ personId: found.target.id }, `logged out by ${byWhom(ctx)}`);
+  await db.audit({ actorId: ctx.person.id, action: "person.logout", detail: `${found.target.name}: ${n} sessions ended` });
   revalidatePath("/owner");
   return { ok: true };
 }
@@ -395,10 +411,13 @@ export async function resolveAlert(id: string, note: string): Promise<ActionResu
   return { ok: true };
 }
 
+/** Owners and operations managers move their session to another site they have access to. */
 export async function switchSite(siteId: string): Promise<void> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
   const id = SiteIdZ.parse(siteId);
+  const site = await db.site(id);
+  if (!site || !canSwitchTo(ctx.person, site)) redirect("/owner");
   await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
   const prev = await db.session(ctx.sessionId);
   const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS, prev?.deviceId);
@@ -406,23 +425,26 @@ export async function switchSite(siteId: string): Promise<void> {
   redirect("/today");
 }
 
-// ---------- staff management (owners) ----------
+// ---------- staff management (owners; operations managers for staff and managers at their sites) ----------
 
 const AccessZ = z.array(z.object({
   siteId: SiteIdZ,
-  role: z.enum(["owner", "manager", "staff"]),
+  role: z.enum(ROLES as [Role, ...Role[]]),
   sections: z.array(z.enum(["FOH", "BOH", "PROD"])).max(3),
 })).max(3);
 const PersonZ = z.object({ staffCode: z.string().max(20), name: z.string().max(80), access: AccessZ });
 const describeAccess = (a: z.infer<typeof AccessZ>) => a.map((x) => `${x.siteId} ${x.role}${x.sections.length ? ` (${x.sections.join("+")})` : ""}`).join(", ");
 
 export async function createPerson(input: unknown, tempPin: string): Promise<ActionResult & { id?: string }> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
   const parsed = PersonZ.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Some details are missing" };
-  const checked = validatePersonInput(parsed.data, await db.sites(), await db.people());
+  const people = await db.people();
+  const checked = validatePersonInput(parsed.data, await db.sites(), people, undefined, (p) => accountsFor(ctx.person, [p]).length > 0);
   if (!checked.ok) return checked;
+  const allowed = canGiveAccess(ctx.person, checked.value.access);
+  if (!allowed.ok) return allowed;
   if (!isValidPin(tempPin)) return { ok: false, error: `Temporary PIN: ${PIN_RULE}` };
   const id = await db.createPerson({ ...checked.value, pinHash: hashPin(tempPin), pinMustChange: true });
   await db.audit({ actorId: ctx.person.id, action: "person.create", detail: `Added ${checked.value.name} (${checked.value.staffCode}): ${describeAccess(checked.value.access)}` });
@@ -431,15 +453,18 @@ export async function createPerson(input: unknown, tempPin: string): Promise<Act
 }
 
 export async function updatePerson(personId: string, input: unknown): Promise<ActionResult> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
-  const target = await db.person(z.string().max(64).parse(personId));
-  if (!target) return { ok: false, error: "Person not found" };
+  const found = await accountFor(ctx, personId);
+  if (!found.ok) return found;
+  const target = found.target;
   const parsed = PersonZ.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Some details are missing" };
   const people = await db.people();
-  const checked = validatePersonInput(parsed.data, await db.sites(), people, target.id);
+  const checked = validatePersonInput(parsed.data, await db.sites(), people, target.id, (p) => accountsFor(ctx.person, [p]).length > 0);
   if (!checked.ok) return checked;
+  const given = canGiveAccess(ctx.person, checked.value.access);
+  if (!given.ok) return given;
   const allowed = canChangeAccess(ctx.person, target, checked.value.access, people);
   if (!allowed.ok) return allowed;
   const accessChanged = describeAccess(target.access) !== describeAccess(checked.value.access);
@@ -456,30 +481,34 @@ export async function updatePerson(personId: string, input: unknown): Promise<Ac
 }
 
 export async function resetPin(personId: string, tempPin: string): Promise<ActionResult> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
-  const target = await db.person(z.string().max(64).parse(personId));
-  if (!target) return { ok: false, error: "Person not found" };
-  if (target.id === ctx.person.id) return { ok: false, error: "Change your own PIN from \"My PIN\" instead" };
+  if (z.string().max(64).parse(personId) === ctx.person.id) return { ok: false, error: "Change your own PIN from \"My PIN\" instead" };
+  const found = await accountFor(ctx, personId);
+  if (!found.ok) return found;
+  const target = found.target;
   if (!isValidPin(tempPin)) return { ok: false, error: `Temporary PIN: ${PIN_RULE}` };
   await db.updatePerson(target.id, { pinHash: hashPin(tempPin), pinMustChange: true, pinFailed: 0, pinLockedUntil: undefined });
-  await db.revokeSessions({ personId: target.id }, "PIN reset by owner");
+  await db.revokeSessions({ personId: target.id }, `PIN reset by ${byWhom(ctx)}`);
   await db.audit({ actorId: ctx.person.id, action: "person.pin_reset", detail: `Temporary PIN set for ${target.name}` });
   revalidatePath(`/staff/${target.id}`);
   return { ok: true };
 }
 
 export async function setLeft(personId: string, left: boolean): Promise<ActionResult> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
-  const target = await db.person(z.string().max(64).parse(personId));
-  if (!target) return { ok: false, error: "Person not found" };
+  const found = await accountFor(ctx, personId);
+  if (!found.ok) return found;
+  const target = found.target;
   if (left) {
     const allowed = canMarkLeft(ctx.person, target, await db.people());
     if (!allowed.ok) return allowed;
     await db.updatePerson(target.id, { status: "left", frozenReason: undefined });
     await db.revokeSessions({ personId: target.id }, "marked as left");
   } else {
+    const ok = canRejoin(target);
+    if (!ok.ok) return ok;
     await db.updatePerson(target.id, { status: "active", frozenReason: undefined });
   }
   await db.audit({ actorId: ctx.person.id, action: left ? "person.left" : "person.rejoined", detail: target.name });
@@ -517,13 +546,14 @@ export async function changeMyPin(currentPin: string, nextPin: string, confirmPi
   return { ok: true };
 }
 
-// ---------- site devices (owners) ----------
+// ---------- site devices (owners; operations managers at their sites) ----------
 
 export async function createPairingCode(siteId: string, label: string): Promise<ActionResult & { code?: string; expiresAt?: number }> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
   const site = await db.site(SiteIdZ.parse(siteId));
   if (!site) return { ok: false, error: "Site not found" };
+  if (!ctx.leads.includes(site.id)) return { ok: false, error: "You can only set up tablets at sites you run" };
   const name = z.string().max(80).parse(label).trim().replace(/\s+/g, " ");
   if (!name) return { ok: false, error: "Give the device a name, e.g. Eastcote kitchen tablet" };
   if (name.length > 40) return { ok: false, error: "Keep the name under 40 characters" };
@@ -535,10 +565,11 @@ export async function createPairingCode(siteId: string, label: string): Promise<
 }
 
 export async function removeDevice(deviceId: string): Promise<ActionResult> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
   const device = await db.device(z.string().max(64).parse(deviceId));
   if (!device) return { ok: false, error: "Device not found" };
+  if (!ctx.leads.includes(device.siteId)) return { ok: false, error: "You can only remove tablets at sites you run" };
   await db.setDeviceStatus(device.id, "locked");
   const ended = await db.revokeSessions({ deviceId: device.id }, "device removed");
   await db.audit({ actorId: ctx.person.id, siteId: device.siteId, action: "device.removed", detail: `${device.label} removed · ${ended} sessions ended` });
@@ -596,12 +627,15 @@ export async function disableReminders(endpoint: string): Promise<ActionResult> 
 
 // ---------- shift reminders and replies ----------
 
-/** The owner's "Send reminders now": everyone starting later today who hasn't had their reminder gets it now. */
+/**
+ * "Send reminders now" on the overview: everyone starting later today who hasn't had their reminder gets it now.
+ * An operations manager sends them for the sites they run.
+ */
 export async function sendShiftRemindersNow(): Promise<ActionResult & { sent?: number; phones?: number }> {
-  const ctx = await requireOwner();
+  const ctx = await requireLead();
   const db = store();
   const now = Date.now();
-  const told = await queueShiftReminders(now, db, "now");
+  const told = await queueShiftReminders(now, db, "now", ctx.leads);
   const phones = told.length ? await deliverDue(now, told) : 0;
   await db.audit({ actorId: ctx.person.id, action: "reminders.send", detail: `Sent shift reminders now to ${told.length} ${told.length === 1 ? "person" : "people"} (${phones} ${phones === 1 ? "phone" : "phones"})` });
   revalidatePath("/owner"); revalidatePath("/today");
@@ -863,9 +897,9 @@ export async function postNotice(input: unknown): Promise<ActionResult & { sentT
   const n = NoticeZ.safeParse(input);
   if (!n.success) return { ok: false, error: n.error.issues[0]?.message ?? "That notice couldn't be posted" };
   const db = store();
-  const openSites = (await db.sites()).filter((s) => s.status === "open").map((s) => s.id);
+  const allSites = (await db.sites()).map((s) => s.id);
   const siteId = n.data.siteId ?? undefined;
-  if (!canPostTo(managed, openSites, siteId)) return { ok: false, error: "You can only post to sites you manage" };
+  if (!canPostTo(managed, allSites, siteId)) return { ok: false, error: "You can only post to sites you manage" };
   const now = Date.now();
   if (n.data.showUntil && n.data.showUntil < londonDate(now)) return { ok: false, error: "The last day to show it is already past" };
   const id = await db.addTeamNotice({ siteId, sections: n.data.sections, title: n.data.title, body: n.data.body, important: n.data.important, createdBy: ctx.person.id, showUntil: n.data.showUntil ?? undefined });
@@ -890,8 +924,8 @@ export async function endNotice(id: string): Promise<ActionResult> {
   const db = store();
   const n = (await db.teamNotices()).find((x) => x.id === id);
   if (!n) return { ok: false, error: "That notice isn't there any more" };
-  const openSites = (await db.sites()).filter((s) => s.status === "open").map((s) => s.id);
-  if (!canPostTo(managedSites(ctx.person), openSites, n.siteId)) return { ok: false, error: "Only a manager of that site can take it down" };
+  const allSites = (await db.sites()).map((s) => s.id);
+  if (!canPostTo(managedSites(ctx.person), allSites, n.siteId)) return { ok: false, error: "Only a manager of that site can take it down" };
   if (!(await db.endTeamNotice(n.id, ctx.person.id))) return { ok: false, error: "It has already been taken down" };
   await db.audit({ actorId: ctx.person.id, siteId: n.siteId, action: "notice.end", detail: `Took down notice: ${n.title}` });
   revalidatePath("/manage/notices"); revalidatePath("/today"); revalidatePath("/me");
@@ -919,12 +953,15 @@ const TimeOffZ = z.object({
   note: z.string().trim().max(300, "Keep the note under 300 characters").optional(),
 });
 
-/** Messages the managers of a site (not the person themself) about time off. Pushed if they have notifications on. */
-async function tellManagers(siteId: SiteId, exceptId: string, title: string, body: string, dedupeKey: string) {
+/**
+ * Messages whoever could decide someone's time off at a site (the site's managers, or the owners for an operations
+ * manager), never the person themself. Pushed if they have notifications on.
+ */
+async function tellDeciders(requester: Person, siteId: SiteId, title: string, body: string, dedupeKey: string) {
   const db = store();
   const now = Date.now();
   const told: string[] = [];
-  for (const p of (await db.people()).filter((p) => p.status === "active" && p.id !== exceptId && canManage(p, siteId))) {
+  for (const p of timeOffDeciders(await db.people(), requester, siteId)) {
     if (await db.queueNotice({ personId: p.id, kind: "leave", title, body, dedupeKey: `${dedupeKey}|${p.id}`, sendAfter: afterQuietHours(now), url: "/manage/time-off" })) told.push(p.id);
   }
   if (told.length) await deliverDue(now, told);
@@ -943,7 +980,7 @@ export async function requestTimeOff(input: unknown): Promise<ActionResult> {
   if (!check.ok) return check;
   const id = await db.requestTimeOff({ personId: ctx.person.id, siteId: ctx.site.id, ...t.data, note: t.data.note || undefined });
   const onRota = clashes(t.data, (await db.shiftsForPerson(ctx.person.id, t.data.startsOn, t.data.endsOn)).filter((s) => !s.cancelled));
-  await tellManagers(ctx.site.id, ctx.person.id, `Time off request: ${ctx.person.name}`,
+  await tellDeciders(ctx.person, ctx.site.id, `Time off request: ${ctx.person.name}`,
     `${rangeLabel(t.data)} · ${kindLabel(t.data.kind)}${onRota.length ? ` · ${onRota.length} rota shift${onRota.length > 1 ? "s" : ""} on those days` : ""}${t.data.note ? `\n"${t.data.note}"` : ""}`, `timeoff|${id}`);
   await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "timeoff.request", detail: `Asked for ${rangeLabel(t.data)} (${kindLabel(t.data.kind)})` });
   revalidatePath("/me"); revalidatePath("/manage/time-off");
@@ -956,7 +993,9 @@ export async function decideTimeOff(id: string, decision: "approved" | "declined
   const db = store();
   const t = (await db.timeOff({ siteIds: managedSites(ctx.person) })).find((x) => x.id === id);
   if (!t) return { ok: false, error: "That request isn't there any more" };
-  const ok = canDecide(ctx.person, t);
+  const requester = await db.person(t.personId);
+  if (!requester) return { ok: false, error: "That request isn't there any more" };
+  const ok = canDecide(ctx.person, t, requester);
   if (!ok.ok) return ok;
   const d = z.enum(["approved", "declined"]).parse(decision);
   const why = z.string().trim().max(300).parse(note ?? "");
@@ -981,7 +1020,7 @@ export async function cancelTimeOff(id: string): Promise<ActionResult> {
   if (!canCancel(t, londonDate(Date.now()))) return { ok: false, error: "This can't be withdrawn now. Speak to your manager" };
   if (t.status !== "pending" && t.status !== "approved") return { ok: false, error: "It has already changed" };
   if (!(await db.cancelTimeOff(t.id, t.status))) return { ok: false, error: "It has just changed. Check it again" };
-  if (t.status === "approved") await tellManagers(t.siteId, ctx.person.id, `Time off withdrawn: ${ctx.person.name}`, `${rangeLabel(t)} is no longer needed`, `timeoff-withdrawn|${t.id}`);
+  if (t.status === "approved") await tellDeciders(ctx.person, t.siteId, `Time off withdrawn: ${ctx.person.name}`, `${rangeLabel(t)} is no longer needed`, `timeoff-withdrawn|${t.id}`);
   await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "timeoff.cancel", detail: `Withdrew ${rangeLabel(t)}` });
   revalidatePath("/me"); revalidatePath("/manage/time-off"); revalidatePath("/rota");
   return { ok: true };

@@ -128,7 +128,7 @@ export default async function Report(props: { searchParams: Promise<{ week?: str
         {reports.map((r) => <SiteBlock key={r.site.id} name={r.site.name} id={r.site.id} r={r.week} last={r.last} week={week} />)}
         <div className="muted">Checklist figures start from the day each site began recording on its tablet. Hours are planned hours from the rota sheet, not hours worked.</div>
       </main>
-      <BottomNav ctx={ctx} current={ctx.isOwner ? "owner" : "manage"} />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

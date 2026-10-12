@@ -16,11 +16,13 @@ export interface SiteSummary {
   /** The gas check: due, not done, or done (now, or at the last close). */
   gas?: { text: string; tone: "good" | "bad" | "" };
 }
-export interface PersonRow { id: string; name: string; code: string; status: string; self: boolean; sites: string }
+/** `canEdit`: whoever is looking may change this account (an operations manager: staff and managers at their sites only). */
+export interface PersonRow { id: string; name: string; code: string; status: string; self: boolean; sites: string; canEdit: boolean }
 
 type Modal = { type: "close"; site: SiteSummary } | { type: "resolve"; id: string } | null;
 
-export function OwnerClient({ tools, reminders, sites, people, log, currentSite, devices, rota }: { tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
+/** The overview. `lead`: an owner (every site, closing and reopening) or an operations manager (the sites they run). */
+export function OwnerClient({ lead, tools, reminders, sites, people, log, currentSite, devices, rota }: { lead: "owner" | "ops"; tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [modal, setModal] = useState<Modal>(null);
@@ -38,7 +40,7 @@ export function OwnerClient({ tools, reminders, sites, people, log, currentSite,
 
   return (
     <main>
-      <div><div className="eyebrow">All sites · owner control</div><h1 className="h-display">Group overview</h1></div>
+      <div><div className="eyebrow">{lead === "owner" ? "All sites · owner control" : `${sites.map((s) => s.name).join(" · ")} · operations`}</div><h1 className="h-display">Group overview</h1></div>
       {msg && <div className="alert good" role="status"><Icon name="check" /><div className="grow">{msg}</div></div>}
 
       {reminders}
@@ -69,9 +71,9 @@ export function OwnerClient({ tools, reminders, sites, people, log, currentSite,
               </div>
             ))}
             {!s.closed && s.id !== currentSite && <button type="button" className="btn ghost" disabled={pending} onClick={() => start(() => switchSite(s.id))}>Work at {s.name}</button>}
-            {s.closed
+            {lead === "owner" && (s.closed
               ? <button type="button" className="btn" disabled={pending} onClick={() => run(() => reopenSite(s.id), `${s.name} reopened`)}>Reopen {s.name}</button>
-              : <button type="button" className="btn bad" onClick={() => { setErr(""); setModal({ type: "close", site: s }); }}>Close site · log everyone out</button>}
+              : <button type="button" className="btn bad" onClick={() => { setErr(""); setModal({ type: "close", site: s }); }}>Close site · log everyone out</button>)}
           </section>
         ))}
       </div>
@@ -87,8 +89,8 @@ export function OwnerClient({ tools, reminders, sites, people, log, currentSite,
               </div>
               <span className={`chip ${p.status === "active" ? "done" : p.status === "left" ? "" : "bad"}`}>{p.status === "active" ? "Active" : p.status === "left" ? "Left" : "Frozen"}</span>
               <span className="acct-actions">
-                <Link className="btn ghost small" href={`/staff/${p.id}`}>Edit</Link>
-              {!p.self && p.status !== "left" && (
+              {p.canEdit && <Link className="btn ghost small" href={`/staff/${p.id}`}>Edit</Link>}
+              {p.canEdit && !p.self && p.status !== "left" && (
                 <>
                   <button type="button" className="btn ghost small" disabled={pending} onClick={() => run(() => logOutEverywhere(p.id), `${p.name} logged out on all devices`)}>Log out</button>
                   {p.status === "active"
@@ -100,6 +102,7 @@ export function OwnerClient({ tools, reminders, sites, people, log, currentSite,
             </li>
           ))}
         </ul>
+        {lead === "ops" && <div className="muted">You can change staff and manager accounts at your sites. The owner changes owner and operations manager accounts, and anyone who also works at another site.</div>}
         {err && !modal && <div className="err" role="alert">{err}</div>}
       </section>
 

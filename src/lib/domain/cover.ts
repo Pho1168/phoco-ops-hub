@@ -1,4 +1,4 @@
-import { canManage } from "./access";
+import { canManage, isOwner } from "./access";
 import { sectionName, shiftEnd, shiftStart, type ShiftTimes } from "./reminders";
 import { afterQuietHours, shortDay } from "./time";
 import { offOn, type TimeOff } from "./timeoff";
@@ -102,7 +102,7 @@ export function canDecideCover(actor: Pick<Person, "id" | "access">, r: CoverReq
   if (!canManage(actor, r.siteId)) return { ok: false, error: "Only a manager of that site can decide this" };
   if (r.status !== "open") return { ok: false, error: "This request has already been decided" };
   if (shiftMoved(r)) return { ok: false, error: `The rota has already changed: this shift isn't ${r.personName}'s any more` };
-  if (actor.id === r.personId && !actor.access.some((a) => a.role === "owner")) return { ok: false, error: "Another manager needs to decide your own request" };
+  if (actor.id === r.personId && !isOwner(actor)) return { ok: false, error: "Another manager needs to decide your own request" };
   if (coveredBy !== undefined) {
     if (now >= shiftStart(r)) return { ok: false, error: "That shift has already started" };
     if (!liveOffers(r).some((o) => o.personId === coveredBy)) return { ok: false, error: "That person hasn't offered (or has taken their offer back)" };

@@ -52,7 +52,10 @@ export function readStats(n: TeamNotice, people: Pick<Person, "id" | "name" | "s
   };
 }
 
-/** A manager may post to their own sites; only someone who manages every site may post to "all sites". */
+/**
+ * A manager may post to their own sites; only someone who manages every site (`allSites`: open or closed, since an
+ * "all sites" notice also reaches a closed site's people when it reopens) may post to "all sites" or take one down.
+ */
 export function canPostTo(managed: SiteId[], allSites: SiteId[], siteId: SiteId | undefined): boolean {
   return siteId ? managed.includes(siteId) : allSites.every((s) => managed.includes(s));
 }

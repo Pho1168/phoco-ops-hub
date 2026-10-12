@@ -1,6 +1,7 @@
 export type SiteId = "EAS" | "WEM" | "SYD";
 export type Area = "FOH" | "BOH" | "PROD";
-export type Role = "owner" | "manager" | "staff";
+/** Per site. "ops" is an operations manager: above the site managers, below the owner. */
+export type Role = "owner" | "ops" | "manager" | "staff";
 export type AnswerType = "tick" | "temp" | "number" | "text" | "photo";
 export type Outcome = "todo" | "done" | "ok" | "warn" | "bad";
 

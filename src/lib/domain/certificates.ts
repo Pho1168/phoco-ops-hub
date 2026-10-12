@@ -1,4 +1,4 @@
-import { canManage, managedSites } from "./access";
+import { canManage, isOps, isOwner, managedSites } from "./access";
 import { addDays, dayMonthYear, daysBetween, isIsoDate } from "./time";
 import type { Person, SiteId } from "./types";
 
@@ -85,10 +85,10 @@ export function certStatus(records: Certificate[], kind: CertKind, expected: boo
   return { status: "valid", cert: best };
 }
 
-/** Kinds this person is expected to hold under PHO & CO's standard. Owners aren't held to it. */
+/** Kinds this person is expected to hold under PHO & CO's standard. Owners aren't held to it; operations managers count as managers. */
 export function expectedKinds(person: Pick<Person, "access" | "status">): CertKind[] {
-  if (person.status !== "active" || !person.access.length || person.access.some((a) => a.role === "owner")) return [];
-  const isManager = person.access.some((a) => a.role === "manager");
+  if (person.status !== "active" || !person.access.length || isOwner(person)) return [];
+  const isManager = person.access.some((a) => a.role === "manager" || a.role === "ops");
   return CERT_TYPES.filter((t) => t.expectedFor === "everyone" || (t.expectedFor === "managers" && isManager)).map((t) => t.id);
 }
 
@@ -174,9 +174,10 @@ export function certReminderMessages(people: Pick<Person, "id" | "name" | "statu
           : { personId: p.id, title: `${holder.name}: right to work follow-up due ${when}`, body: `Their permission to work is time-limited. Do the follow-up check by ${dayMonthYear(exp)}, then record it in Manage → Certificates.`, dedupeKey: key(p.id), url: `/manage/certificates/${holder.id}` });
         continue;
       }
+      const boss = isOps(holder) ? "the owner" : "your manager";
       out.push(stage === "expired"
-        ? { personId: holder.id, title: `Your ${t.label} has run out`, body: `It ran out on ${dayMonthYear(exp)}. Speak to your manager about renewing it.`, dedupeKey: key(holder.id), url: "/me" }
-        : { personId: holder.id, title: `Your ${t.label} runs out ${when}`, body: `Last valid day: ${dayMonthYear(exp)}. Speak to your manager about the refresher.`, dedupeKey: key(holder.id), url: "/me" });
+        ? { personId: holder.id, title: `Your ${t.label} has run out`, body: `It ran out on ${dayMonthYear(exp)}. Speak to ${boss} about renewing it.`, dedupeKey: key(holder.id), url: "/me" }
+        : { personId: holder.id, title: `Your ${t.label} runs out ${when}`, body: `Last valid day: ${dayMonthYear(exp)}. Speak to ${boss} about the refresher.`, dedupeKey: key(holder.id), url: "/me" });
       for (const p of others) out.push(stage === "expired"
         ? { personId: p.id, title: `${holder.name}: ${t.label} has run out`, body: `It ran out on ${dayMonthYear(exp)}. Book the refresher, then add the new certificate in Manage → Certificates.`, dedupeKey: key(p.id), url: `/manage/certificates/${holder.id}` }
         : { personId: p.id, title: `${holder.name}: ${t.label} runs out ${when}`, body: `Last valid day: ${dayMonthYear(exp)}. Book the refresher, then add the new certificate in Manage → Certificates.`, dedupeKey: key(p.id), url: `/manage/certificates/${holder.id}` });
@@ -187,16 +188,15 @@ export function certReminderMessages(people: Pick<Person, "id" | "name" | "statu
 
 /** People a manager looks after: anyone (not left) with access to a site they manage. Owners see everyone. */
 export function peopleInCare<P extends Pick<Person, "status" | "access">>(actor: Pick<Person, "access">, people: P[]): P[] {
-  const isOwner = actor.access.some((a) => a.role === "owner");
+  const owner = isOwner(actor);
   const managed = managedSites(actor);
-  return people.filter((p) => p.status !== "left" && (isOwner || p.access.some((a) => managed.includes(a.siteId))));
+  return people.filter((p) => p.status !== "left" && (owner || p.access.some((a) => managed.includes(a.siteId))));
 }
 
 /** Who may add or remove a person's records: a manager of one of their sites; right to work, only people allowed to see it. */
 export function canEditCerts(actor: Pick<Person, "id" | "access" | "status" | "seesRightToWork">, target: Pick<Person, "access" | "status">, kind?: CertKind): { ok: true } | { ok: false; error: string } {
-  const isOwner = actor.access.some((a) => a.role === "owner");
   if (kind && certType(kind).restricted && !canSeeRightToWork(actor)) return { ok: false, error: "Right to work checks are private to the owner" };
-  if (!isOwner && !target.access.some((a) => canManage(actor, a.siteId))) return { ok: false, error: "You can only update records for people at your sites" };
+  if (!isOwner(actor) && !target.access.some((a) => canManage(actor, a.siteId))) return { ok: false, error: "You can only update records for people at your sites" };
   return { ok: true };
 }
 

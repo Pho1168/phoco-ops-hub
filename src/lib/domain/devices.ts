@@ -1,9 +1,9 @@
 import type { SiteId } from "./types";
 
 /**
- * Site devices. A tablet is registered to one site with a one-time pairing code that an owner creates.
- * Registered devices show that site's staff on the sign-in screen; anything else shows no names and
- * only allows owners to sign in with staff ID + PIN.
+ * Site devices. A tablet is registered to one site with a one-time pairing code that an owner or operations manager
+ * creates. Registered devices show that site's staff on the sign-in screen; anything else shows no names: people sign
+ * in with staff ID + PIN, owners and operations managers to the full app, everyone else to My shifts.
  */
 
 export interface Device { id: string; siteId: SiteId; label: string; status: "active" | "locked"; lastSeen?: number; createdAt: number }
@@ -35,21 +35,22 @@ export type DeviceCheck = { allowed: true } | { allowed: false; reason: string }
 
 /**
  * Whether a name-and-PIN sign-in may happen on this device for this site.
- * Owners signing in on an unregistered device use the separate staff ID route instead.
+ * Anyone signing in on an unregistered device uses the separate staff ID route instead.
  */
 export function canUseDeviceForSite(device: Device | null, siteId: SiteId): DeviceCheck {
-  if (!device) return { allowed: false, reason: "This device isn't set up for staff sign-in. Ask an owner" };
-  if (device.status !== "active") return { allowed: false, reason: "This device has been removed. Ask an owner" };
+  if (!device) return { allowed: false, reason: "This device isn't set up for staff sign-in. Ask the owner or operations manager" };
+  if (device.status !== "active") return { allowed: false, reason: "This device has been removed. Ask the owner or operations manager" };
   if (device.siteId !== siteId) return { allowed: false, reason: "This device belongs to another site" };
   return { allowed: true };
 }
 
 /**
- * A session stays valid only while its device does. Sessions without a device are owner sign-ins
- * from an unregistered device (valid for owners only), or "My shifts" sessions on a staff member's own phone.
+ * A session stays valid only while its device does. Sessions without a device are full sign-ins from an
+ * unregistered device (valid for owners and operations managers only: `isLead`), or "My shifts" sessions on a
+ * staff member's own phone.
  */
-export function sessionDeviceOk(deviceId: string | undefined, device: Device | undefined, isOwner: boolean, scope: "full" | "shifts" = "full"): boolean {
+export function sessionDeviceOk(deviceId: string | undefined, device: Device | undefined, isLead: boolean, scope: "full" | "shifts" = "full"): boolean {
   if (scope === "shifts") return true; // "My shifts" on a personal phone: no names, no checklists
-  if (!deviceId) return isOwner;
+  if (!deviceId) return isLead;
   return !!device && device.status === "active";
 }

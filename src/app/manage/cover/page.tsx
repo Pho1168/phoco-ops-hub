@@ -93,7 +93,7 @@ export default async function CoverPage() {
           ))}
         </section>
       </main>
-      <BottomNav ctx={ctx} current="manage" />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

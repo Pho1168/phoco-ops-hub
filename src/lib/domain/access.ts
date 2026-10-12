@@ -18,12 +18,59 @@ export function canSignIn(person: Person, site: Site, now: number): SignInCheck 
   return { allowed: true };
 }
 
+/** Owners run the business: every site and every account. */
+export const isOwner = (p: Pick<Person, "access">) => p.access.some((a) => a.role === "owner");
+
 /**
- * Sites where the person is an owner or a manager. That's where they can see reports and inspection records,
- * post team notices, decide time off and keep staff certificates.
+ * Operations managers run a group of sites: everything a manager does there, plus the overview, staff and manager
+ * accounts, and the shop tablets. Someone who is an owner anywhere counts as an owner.
+ */
+export const isOps = (p: Pick<Person, "access">) => !isOwner(p) && p.access.some((a) => a.role === "ops");
+
+/** Owners and operations managers: the overview, staff accounts and shop tablets. */
+export const isLead = (p: Pick<Person, "access">) => isOwner(p) || isOps(p);
+
+/** The sites someone is an operations manager at. */
+export const opsSites = (p: Pick<Person, "access">): SiteId[] => p.access.filter((a) => a.role === "ops").map((a) => a.siteId);
+
+/** The sites a lead runs, in `all`'s order: every site for an owner, their own for an operations manager, none for anyone else. */
+export function leadSites(p: Pick<Person, "access">, all: SiteId[]): SiteId[] {
+  if (isOwner(p)) return all;
+  const mine = isOps(p) ? opsSites(p) : [];
+  return all.filter((s) => mine.includes(s));
+}
+
+/** Whether someone runs this site: an owner, or its operations manager. Only then is the full app allowed off a site tablet. */
+export const runsSite = (p: Pick<Person, "access">, siteId: SiteId) => leadSites(p, [siteId]).includes(siteId);
+
+/**
+ * Where a staff ID sign-in on someone's own phone or laptop lands. Owners: the full app at their first open site (any
+ * site if all are closed). Operations managers: the full app at an open site they run. Everyone else (and an operations
+ * manager whose sites are all closed): My shifts at an open site.
+ */
+export function remoteSignIn(p: Pick<Person, "access">, sites: Site[]): { site: Site; scope: "full" | "shifts" } | undefined {
+  const mine = p.access.map((a) => sites.find((s) => s.id === a.siteId)).filter((s): s is Site => !!s);
+  const open = mine.filter((s) => s.status === "open");
+  if (isOwner(p)) {
+    const site = open[0] ?? mine[0];
+    return site ? { site, scope: "full" } : undefined;
+  }
+  const run = open.find((s) => runsSite(p, s.id));
+  if (run) return { site: run, scope: "full" };
+  return open[0] ? { site: open[0], scope: "shifts" } : undefined;
+}
+
+/** "Work at": a lead moves their session to a site they run and have access to, if it's open (owners: even if closed). */
+export function canSwitchTo(p: Pick<Person, "access">, site: Site): boolean {
+  return runsSite(p, site.id) && p.access.some((a) => a.siteId === site.id) && (site.status === "open" || isOwner(p));
+}
+
+/**
+ * Sites where the person is an owner, an operations manager or a manager. That's where they can see reports and
+ * inspection records, post team notices, decide time off and keep staff certificates.
  */
 export function managedSites(person: Pick<Person, "access">): SiteId[] {
-  return person.access.filter((a) => a.role === "owner" || a.role === "manager").map((a) => a.siteId);
+  return person.access.filter((a) => a.role === "owner" || a.role === "ops" || a.role === "manager").map((a) => a.siteId);
 }
 
 export function canManage(person: Pick<Person, "access">, siteId: SiteId): boolean {
@@ -60,17 +107,17 @@ export function planSiteClosure(siteId: SiteId, people: Person[], openSites: Set
   for (const p of people) {
     const here = p.access.find((a) => a.siteId === siteId);
     if (!here) continue;
-    if (here.role === "owner" || p.access.some((a) => a.role === "owner")) { plan.untouched.push(p.id); continue; }
+    if (isOwner(p)) { plan.untouched.push(p.id); continue; }
     const elsewhere = p.access.some((a) => a.siteId !== siteId && openSites.has(a.siteId));
     (elsewhere ? plan.endSessionsOnly : plan.freeze).push(p.id);
   }
   return plan;
 }
 
-/** An owner can't freeze themself, and the last active owner can't be frozen. */
+/** Only an active account can be frozen (so a freeze from a site closure is never overwritten). Nobody can freeze themself, and the last active owner can't be frozen. */
 export function canFreeze(actor: Person, target: Person, people: Person[]): SignInCheck {
   if (actor.id === target.id) return { allowed: false, reason: "You can't freeze your own account" };
-  const isOwner = (p: Person) => p.access.some((a) => a.role === "owner");
+  if (target.status !== "active") return { allowed: false, reason: target.status === "frozen" ? "This account is already frozen" : "This person has left" };
   if (isOwner(target) && people.filter((p) => isOwner(p) && p.status === "active").length <= 1)
     return { allowed: false, reason: "This is the last owner account. Add another owner first" };
   return { allowed: true };

@@ -5,7 +5,8 @@ import { connectRotaSheet } from "@/app/actions";
 
 export interface RotaRow { siteId: string; site: string; connected: boolean; last?: string; summary?: string; published?: string; issues: string[] }
 
-export function RotaCard({ rows }: { rows: RotaRow[] }) {
+/** Each site's rota sheet: what it last sent. Only owners connect a sheet (`canConnect`): the script holds a private key. */
+export function RotaCard({ rows, canConnect }: { rows: RotaRow[]; canConnect: boolean }) {
   const [pending, start] = useTransition();
   const [script, setScript] = useState<{ site: string; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -14,7 +15,7 @@ export function RotaCard({ rows }: { rows: RotaRow[] }) {
   return (
     <section className="card stack" aria-label="Rota">
       <h2 className="h-sec">Rota sheets</h2>
-      <p className="muted" style={{ margin: 0 }}>Each site&apos;s Google Sheet sends its rota here every hour. Only Published weeks are shown to staff or send reminders.</p>
+      <p className="muted" style={{ margin: 0 }}>Each site&apos;s Google Sheet sends its rota here every hour. Only Published weeks are shown to staff or send reminders.{canConnect ? "" : " The owner connects the sheets."}</p>
       <ul className="accounts">
         {rows.map((r) => (
           <li key={r.siteId} style={{ alignItems: "flex-start" }}>
@@ -27,7 +28,7 @@ export function RotaCard({ rows }: { rows: RotaRow[] }) {
                   <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 13 }}>{r.issues.map((i, k) => <li key={k}>{i}</li>)}</ul></details>
               )}
             </div>
-            <span className="acct-actions">
+            {canConnect && <span className="acct-actions">
               <button type="button" className={`btn small ${r.connected ? "ghost" : "accent"}`} disabled={pending} onClick={() => {
                 if (r.connected && !confirm(`Create a new connection for ${r.site}? The script already in the sheet will stop working until you paste the new one.`)) return;
                 start(async () => {
@@ -36,7 +37,7 @@ export function RotaCard({ rows }: { rows: RotaRow[] }) {
                   if (!res.ok || !res.script) setErr(res.ok ? "Something went wrong" : res.error); else setScript({ site: r.site, text: res.script });
                 });
               }}>{r.connected ? "New connection" : "Connect sheet"}</button>
-            </span>
+            </span>}
           </li>
         ))}
       </ul>

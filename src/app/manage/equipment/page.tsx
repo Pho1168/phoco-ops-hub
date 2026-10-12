@@ -89,7 +89,7 @@ export default async function ManageEquipment(props: { searchParams: Promise<{ s
           <EquipmentForm siteId={site.id} today={today} />
         </section>
       </main>
-      <BottomNav ctx={ctx} current={ctx.isOwner ? "owner" : "manage"} />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

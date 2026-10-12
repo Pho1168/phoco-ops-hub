@@ -1,4 +1,4 @@
-import { canManage } from "./access";
+import { canManage, isOps, isOwner } from "./access";
 import { addDays, isIsoDate, shortDay } from "./time";
 import type { Person, SiteId } from "./types";
 
@@ -52,13 +52,26 @@ export function validateRequest(input: { startsOn: string; endsOn: string }, tod
   return { ok: true };
 }
 
-/** A manager of the request's site decides it, but not their own request (owners excepted, nobody is above them). */
-export function canDecide(actor: Pick<Person, "id" | "access">, t: Pick<TimeOff, "personId" | "siteId" | "status">): Checked {
+/**
+ * A manager of the request's site decides it, but not their own request (owners excepted, nobody is above them).
+ * An operations manager's time off is decided by an owner. `requester` is the person who asked.
+ */
+export function canDecide(actor: Pick<Person, "id" | "access">, t: Pick<TimeOff, "personId" | "siteId" | "status">, requester: Pick<Person, "access">): Checked {
   if (!canManage(actor, t.siteId)) return { ok: false, error: "Only a manager of that site can decide this" };
   if (t.status !== "pending") return { ok: false, error: "This request has already been decided" };
-  if (actor.id === t.personId && !actor.access.some((a) => a.role === "owner")) return { ok: false, error: "Another manager needs to decide your own request" };
+  if (isOps(requester) && !isOwner(actor)) return { ok: false, error: "The owner decides an operations manager's time off" };
+  if (actor.id === t.personId && !isOwner(actor)) return { ok: false, error: "Another manager needs to decide your own request" };
   return { ok: true };
 }
+
+/** Who is told about someone's time off at a site (asked, or withdrawn): the people who could decide it, apart from them. */
+export function timeOffDeciders<P extends Pick<Person, "id" | "status" | "access">>(people: P[], requester: Pick<Person, "id" | "access">, siteId: SiteId): P[] {
+  return people.filter((p) => p.status === "active" && p.id !== requester.id && canDecide(p, { personId: requester.id, siteId, status: "pending" }, requester).ok);
+}
+
+/** Whether a manager sees a request on their time-off list: an operations manager's is only for the owners (and themself). */
+export const seesRequest = (viewer: Pick<Person, "id" | "access">, t: Pick<TimeOff, "personId">, requester: Pick<Person, "access">) =>
+  !isOps(requester) || isOwner(viewer) || viewer.id === t.personId;
 
 /** Staff can withdraw a request that's waiting, or approved time off that hasn't started yet. */
 export function canCancel(t: Pick<TimeOff, "status" | "startsOn">, today: string): boolean {

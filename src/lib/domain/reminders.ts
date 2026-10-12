@@ -1,4 +1,4 @@
-import { canManage } from "./access";
+import { canManage, isLead } from "./access";
 import { noteOrder } from "./handover";
 import { addDays, afterQuietHours, londonToUtc, shortDay } from "./time";
 import type { Person, SiteId } from "./types";
@@ -187,7 +187,7 @@ export function replyMessages(reply: ShiftReply, previous: ShiftReply | undefine
       : { title: previous?.kind === "cant_make_it" ? `Can make it after all: ${name}` : `On the way: ${name}`, body: `${name} is on the way for ${what}` };
   return people
     .filter((p) => p.status === "active" && p.id !== reply.personId && canManage(p, shift.siteId))
-    .map((p) => ({ personId: p.id, ...msg, dedupeKey: `reply|${reply.id}|${p.id}`, url: p.access.some((a) => a.role === "owner") ? "/owner" : "/today" }));
+    .map((p) => ({ personId: p.id, ...msg, dedupeKey: `reply|${reply.id}|${p.id}`, url: isLead(p) ? "/owner" : "/today" }));
 }
 
 // ---------- today's team, for managers and the owner ----------

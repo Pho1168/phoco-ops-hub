@@ -1,4 +1,4 @@
-import { canManage } from "./access";
+import { canManage, isLead } from "./access";
 import { shiftEnd, type ReplyKind, type ShiftTimes } from "./reminders";
 import { londonHM, londonToUtc, shortDay } from "./time";
 import type { Person, SiteId } from "./types";
@@ -74,7 +74,7 @@ export const READY_ALERT_WINDOW_MIN = 30;
 export interface DailyMessage { personId: string; title: string; body: string; dedupeKey: string; url: string }
 const managersOf = (people: Pick<Person, "id" | "status" | "access">[], siteId: SiteId) =>
   people.filter((p) => p.status === "active" && canManage(p, siteId));
-const urlFor = (p: Pick<Person, "access">) => (p.access.some((a) => a.role === "owner") ? "/owner" : "/today");
+const urlFor = (p: Pick<Person, "access">) => (isLead(p) ? "/owner" : "/today");
 
 /** At the ready time, a site that isn't ready (red) tells its managers and owners why, once a day. */
 export function notReadyMessages(site: { id: SiteId; name: string }, date: string, r: Ready, people: Pick<Person, "id" | "status" | "access">[]): DailyMessage[] {

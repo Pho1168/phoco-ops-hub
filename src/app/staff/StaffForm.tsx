@@ -4,16 +4,21 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createPerson, resetPin, setLeft, updatePerson } from "@/app/actions";
+import { ROLE_SHORT } from "@/lib/domain/staff";
 import type { Area, Role, SiteAccess, SiteId } from "@/lib/domain/types";
 
 export interface SiteOpt { id: SiteId; name: string; sections: Area[]; closed: boolean }
 export interface PersonView { id: string; staffCode: string; name: string; status: string; self: boolean; access: SiteAccess[] }
 
-const ROLE_LABEL: Record<Role, string> = { staff: "Staff", manager: "Manager", owner: "Owner" };
+const ROLE_NOTE: Partial<Record<Role, string>> = {
+  owner: "Owners see every section and the owner controls.",
+  ops: "Operations managers see every section, the overview, staff and manager accounts, and the tablets at the sites they run.",
+};
 const AREA_LABEL: Record<Area, string> = { FOH: "Front of house", BOH: "Back of house", PROD: "Production" };
 const digits = (v: string) => v.replace(/\D/g, "").slice(0, 4);
 
-export function StaffForm({ sites, person, suggestedCode }: { sites: SiteOpt[]; person?: PersonView; suggestedCode: string }) {
+/** `sites` and `roles`: what whoever is filling it in may give (an operations manager: staff or manager, at their sites). */
+export function StaffForm({ sites, roles, person, suggestedCode }: { sites: SiteOpt[]; roles: Role[]; person?: PersonView; suggestedCode: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState(person?.name ?? "");
@@ -62,12 +67,12 @@ export function StaffForm({ sites, person, suggestedCode }: { sites: SiteOpt[]; 
               </label>
               {a && (
                 <div className="stack" style={{ gap: 10, paddingLeft: 34 }}>
-                  <div className="seg" role="group" aria-label={`Role at ${s.name}`}>
-                    {(["staff", "manager", "owner"] as Role[]).map((r) => (
-                      <button key={r} type="button" aria-pressed={a.role === r} onClick={() => patch(s.id, { role: r })}>{ROLE_LABEL[r]}</button>
+                  <div className="seg roles" role="group" aria-label={`Role at ${s.name}`}>
+                    {roles.map((r) => (
+                      <button key={r} type="button" aria-pressed={a.role === r} onClick={() => patch(s.id, { role: r })}>{ROLE_SHORT[r]}</button>
                     ))}
                   </div>
-                  {a.role !== "owner" && (
+                  {!ROLE_NOTE[a.role] && (
                     <div className="row wrap" style={{ gap: 14 }}>
                       {s.sections.map((sec) => (
                         <label key={sec} className="row" style={{ gap: 8 }}>
@@ -78,7 +83,7 @@ export function StaffForm({ sites, person, suggestedCode }: { sites: SiteOpt[]; 
                       ))}
                     </div>
                   )}
-                  {a.role === "owner" && <span className="muted">Owners see every section and the owner controls.</span>}
+                  {ROLE_NOTE[a.role] && <span className="muted">{ROLE_NOTE[a.role]}</span>}
                 </div>
               )}
             </fieldset>

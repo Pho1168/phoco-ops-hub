@@ -4,6 +4,7 @@ import { currentDevice } from "@/lib/device";
 import { LoginForm } from "./LoginForm";
 import { SetupScreen } from "./SetupScreen";
 import { safeNextPath } from "@/lib/domain/equipment";
+import { isOps, isOwner } from "@/lib/domain/access";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ export default async function LoginPage(props: { searchParams: Promise<{ next?: 
   const db = store();
   const device = await currentDevice();
 
-  // Not a registered (active) tablet: no names are shown. Owners sign in with staff ID; tablets pair with a code.
+  // Not a registered (active) tablet: no names are shown. People sign in with staff ID; tablets pair with a code.
   if (!DEMO_MODE && (!device || device.status !== "active")) {
     return <SetupScreen removed={device?.status === "locked"} returnTo={next} />;
   }
@@ -27,7 +28,7 @@ export default async function LoginPage(props: { searchParams: Promise<{ next?: 
       name: p.name,
       frozen: p.status === "frozen",
       sites: p.access.map((a) => a.siteId),
-      label: p.access.some((a) => a.role === "owner") ? "Owner · all sites" : Array.from(new Set(p.access.flatMap((a) => a.sections))).join(" · "),
+      label: isOwner(p) ? "Owner · all sites" : isOps(p) ? "Operations manager" : Array.from(new Set(p.access.flatMap((a) => a.sections))).join(" · "),
     }));
   return (
     <>
