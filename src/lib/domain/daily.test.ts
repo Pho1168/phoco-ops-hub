@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  dailyDigest, dayLine, gasConfirmedMessages, gasDay, gasMessages, gasState, lastCloseDay, notReadyMessages, openGasDay, readyHeadline, readyShownUntil, readyToOpen,
+  dailyDigest, dayLine, gasConfirmedMessages, gasDay, gasExpected, gasMessages, gasState, lastCloseDay, notReadyMessages, openGasDay, readyHeadline, readyShownUntil, readyToOpen,
   type DayFacts, type ReadyInput,
 } from "./daily";
 import { londonToUtc } from "./time";
@@ -101,6 +101,10 @@ describe("gas off at close", () => {
     const withIds = shifts.map((x, i) => ({ ...x, id: `s${i}` }));
     expect(gasDay("EAS", "2026-10-14", withIds, new Set(["s1"]))!.closers).toEqual(["a"]);
   });
+  it("closes before the gas check went live aren't judged", () => {
+    const sun = gasDay("EAS", "2026-10-11", [sh("a", "11:00", "22:15", "2026-10-11")])!;
+    expect(lastCloseDay([sun], at("2026-10-12", "13:00"))).toBeUndefined();
+  });
   it("the last close is the latest one whose window is over", () => {
     const d13 = gasDay("EAS", "2026-10-13", [sh("a", "11:00", "22:15", "2026-10-13")])!;
     const d14 = gasDay("EAS", "2026-10-14", [sh("a", "09:00", "15:00")])!;
@@ -148,19 +152,22 @@ describe("gas off at close", () => {
 
 describe("yesterday at a glance", () => {
   const facts = (over: Partial<DayFacts> = {}): DayFacts => ({
-    siteName: "Eastcote", onRota: true, checks: { expected: 12, signed: 11, missed: ["BOH Cleaning"] }, outOfRange: 1, alertsRaised: 1,
+    siteName: "Eastcote", onRota: true, gasExpected: true, checks: { expected: 12, signed: 11, missed: ["BOH Cleaning"] }, outOfRange: 1, alertsRaised: 1,
     faults: { reported: 1, fixed: 0, stillDown: ["Fryer 2"] }, notesLeft: 2, tasksOverdue: 0,
     gas: { byName: "Anh", at: at("2026-10-13", "22:21"), onTablet: true }, late: 1, cantMakeIt: 0, ...over,
   });
   it("one line per site, most important first", () => {
     expect(dayLine(facts())).toBe("Eastcote: 11/12 checks signed (missed: BOH Cleaning) · 1 temperature out of range · 1 alert · Fryer 2 still not working · 1 fault reported · 1 late · 2 handover notes · gas off ✓ Anh 22:21");
   });
-  it("a missing gas check leads the line, but only on a day the site was on the rota", () => {
+  it("a missing gas check leads the line, but only on a day the site was on the rota, from the day the check went live", () => {
     expect(dayLine(facts({ gas: undefined })).startsWith("Eastcote: NO gas-off check · ")).toBe(true);
-    expect(dayLine(facts({ gas: undefined, onRota: false }))).not.toContain("gas");
+    expect(dayLine(facts({ gas: undefined, onRota: false, gasExpected: false }))).not.toContain("gas");
+    expect(gasExpected("2026-10-12", true)).toBe(true);
+    expect(gasExpected("2026-10-11", true)).toBe(false); // before it went live
+    expect(gasExpected("2026-10-13", false)).toBe(false);
   });
   it("a quiet day says so", () => {
-    expect(dayLine({ siteName: "Wembley", onRota: false, checks: { expected: 0, signed: 0, missed: [] }, outOfRange: 0, alertsRaised: 0, faults: { reported: 0, fixed: 0, stillDown: [] }, notesLeft: 0, tasksOverdue: 0, late: 0, cantMakeIt: 0 }))
+    expect(dayLine({ siteName: "Wembley", onRota: false, gasExpected: false, checks: { expected: 0, signed: 0, missed: [] }, outOfRange: 0, alertsRaised: 0, faults: { reported: 0, fixed: 0, stillDown: [] }, notesLeft: 0, tasksOverdue: 0, late: 0, cantMakeIt: 0 }))
       .toBe("Wembley: a quiet day");
   });
   it("titled with the day, pointing to the records", () => {
