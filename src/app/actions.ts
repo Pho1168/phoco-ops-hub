@@ -23,7 +23,8 @@ import { deliverDue, queueShiftReminders } from "@/lib/rota-service";
 import { canReply, replyMessages, replySendAfter, replyText, sameReply, type LateMinutes } from "@/lib/domain/reminders";
 import { gasConfirmedMessages } from "@/lib/domain/daily";
 import { gasFor } from "@/lib/daily-service";
-import { askMessages, canAskCover, canDecideCover, canOffer, coverSendAfter, decisionMessages, NOTE_MAX, offerMessages, withdrawMessages, type CoverMessage } from "@/lib/domain/cover";
+import { askMessages, canAskCover, canCancelCover, canDecideCover, canOffer, canWithdraw, cancelMessages, coverSendAfter, decisionMessages, NOTE_MAX, offerMessages,
+  offerWithdrawnMessages, withdrawMessages, type CoverMessage } from "@/lib/domain/cover";
 import { canCoverNow, coverCandidates } from "@/lib/cover-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
@@ -705,8 +706,9 @@ async function sendCover(messages: CoverMessage[], sendAfter: number) {
   }
   if (told.length) await deliverDue(Date.now(), told);
 }
-const coverPaths = () => { revalidatePath("/me"); revalidatePath("/manage/cover"); revalidatePath("/owner"); };
+const coverPaths = () => { revalidatePath("/me"); revalidatePath("/manage/cover"); revalidatePath("/owner"); revalidatePath("/manage"); };
 const shiftText = (r: { date: string; start: string; end: string; section: string }) => `${dayMonthYear(r.date)} ${r.start}–${r.end} (${r.section})`;
+const RequestIdZ = z.string().uuid();
 
 /** Ask for cover on one of your own published shifts that hasn't started. Colleagues who could cover are asked; managers are told. */
 export async function askCover(shiftId: string, note: string): Promise<ActionResult> {
@@ -724,58 +726,68 @@ export async function askCover(shiftId: string, note: string): Promise<ActionRes
   const id = await db.addCoverRequest({ shiftId: shift.id, siteId: shift.siteId, personId: ctx.person.id, section: shift.section, note: input.data.note || undefined });
   if (!id) return { ok: false, error: "You've already asked for cover for this shift" };
   const r = (await db.coverRequest(id))!;
-  const candidates = (await coverCandidates(r, db)).map((p) => p.id);
+  const candidates = (await coverCandidates(r, now, db)).map((p) => p.id);
   await sendCover(askMessages(r, candidates, await db.people()), coverSendAfter(now, r));
   await db.audit({ actorId: ctx.person.id, siteId: shift.siteId, action: "cover.ask", detail: `Asked for cover: ${shiftText(r)}${r.note ? ` · "${r.note}"` : ""} · ${candidates.length} could cover` });
   coverPaths();
   return { ok: true };
 }
 
-/** The person asking takes it back, while it's still open. */
+/** The person asking takes it back, while it's still open and before the shift starts. */
 export async function withdrawCover(requestId: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
   if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  const id = RequestIdZ.safeParse(requestId);
+  if (!id.success) return { ok: false, error: "That request isn't there any more" };
   const db = store();
-  const r = await db.coverRequest(String(requestId ?? "").slice(0, 64));
-  if (!r || r.personId !== ctx.person.id) return { ok: false, error: "That request isn't yours" };
-  if (!(await db.decideCover(r.id, { status: "withdrawn", personId: ctx.person.id }))) return { ok: false, error: "It has already been decided" };
+  const r = await db.coverRequest(id.data);
+  if (!r) return { ok: false, error: "That request isn't there any more" };
+  const check = canWithdraw(r, ctx.person.id, Date.now());
+  if (!check.ok) return check;
+  if (!(await db.decideCover(r.id, { status: "withdrawn", personId: ctx.person.id }))) return { ok: false, error: "It has just been decided" };
   await sendCover(withdrawMessages(r, await db.people()), coverSendAfter(Date.now(), r));
   await db.audit({ actorId: ctx.person.id, siteId: r.siteId, action: "cover.withdraw", detail: `Withdrew the cover request: ${shiftText(r)}` });
   coverPaths();
   return { ok: true };
 }
 
-/** "I can cover": someone at the same site and section, not working then and not off. Managers and the person asking are told. */
+/** "I can cover": someone at the same site and section, not working or covering then, not off. Managers and the person asking are told. */
 export async function offerCover(requestId: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
   if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  const rid = RequestIdZ.safeParse(requestId);
+  if (!rid.success) return { ok: false, error: "That request isn't there any more" };
   const db = store();
-  const r = await db.coverRequest(String(requestId ?? "").slice(0, 64));
+  const r = await db.coverRequest(rid.data);
   if (!r) return { ok: false, error: "That request isn't there any more" };
   const now = Date.now();
   const open = canOffer(r, ctx.person.id, now);
   if (!open.ok) return open;
-  const fits = await canCoverNow(ctx.person, r, db);
+  const fits = await canCoverNow(ctx.person, r, now, db);
   if (!fits.ok) return fits;
   const id = await db.addCoverOffer(r.id, ctx.person.id);
-  if (!id) return { ok: false, error: "You've already offered" };
+  if (!id) return { ok: false, error: "You've already offered, or it has just been decided" };
   await sendCover(offerMessages(r, id, { id: ctx.person.id, name: ctx.person.name }, await db.people()), coverSendAfter(now, r));
   await db.audit({ actorId: ctx.person.id, siteId: r.siteId, action: "cover.offer", detail: `Offered to cover ${r.personName}: ${shiftText(r)}` });
   coverPaths();
   return { ok: true };
 }
 
-/** Take back an offer, while the request is still open. */
+/** Take back an offer while the request is still open. The managers and the person asking are told. */
 export async function withdrawOffer(requestId: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
   if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  const rid = RequestIdZ.safeParse(requestId);
+  if (!rid.success) return { ok: false, error: "That request isn't there any more" };
   const db = store();
-  const r = await db.coverRequest(String(requestId ?? "").slice(0, 64));
-  if (!r || r.status !== "open") return { ok: false, error: "That request has already been decided" };
-  if (!(await db.withdrawCoverOffer(r.id, ctx.person.id))) return { ok: false, error: "You haven't offered on this one" };
+  const r = await db.coverRequest(rid.data);
+  if (!r) return { ok: false, error: "That request isn't there any more" };
+  const offerId = await db.withdrawCoverOffer(r.id, ctx.person.id);
+  if (!offerId) return { ok: false, error: r.status === "open" ? "You haven't offered on this one" : "It has already been decided" };
+  await sendCover(offerWithdrawnMessages(r, offerId, { id: ctx.person.id, name: ctx.person.name }, await db.people()), coverSendAfter(Date.now(), r));
   await db.audit({ actorId: ctx.person.id, siteId: r.siteId, action: "cover.unoffer", detail: `Took back the offer to cover ${r.personName}: ${shiftText(r)}` });
   coverPaths();
   return { ok: true };
@@ -802,8 +814,8 @@ export async function decideCover(input: unknown): Promise<ActionResult> {
   const coverer = d.data.coveredBy ? await db.person(d.data.coveredBy) : undefined;
   if (d.data.decision === "approved") {
     if (!coverer) return { ok: false, error: "That person isn't on the system any more" };
-    const fits = await canCoverNow(coverer, r, db);
-    if (!fits.ok) return { ok: false, error: `${coverer.name} can't cover it now: ${fits.error.charAt(0).toLowerCase()}${fits.error.slice(1)}` };
+    const fits = await canCoverNow(coverer, r, now, db, coverer.name);
+    if (!fits.ok) return { ok: false, error: `${fits.error}. They can't cover it now` };
   }
   if (!(await db.decideCover(r.id, { status: d.data.decision, personId: ctx.person.id, coveredBy: coverer?.id, note: d.data.note || undefined }))) {
     return { ok: false, error: "It has just been decided, withdrawn or the offer was taken back" };
@@ -811,6 +823,24 @@ export async function decideCover(input: unknown): Promise<ActionResult> {
   await sendCover(decisionMessages(r, d.data.decision, coverer && { id: coverer.id, name: coverer.name }, ctx.person.name, d.data.note || undefined), coverSendAfter(now, r));
   await db.audit({ actorId: ctx.person.id, siteId: r.siteId, action: d.data.decision === "approved" ? "cover.approve" : "cover.decline",
     detail: d.data.decision === "approved" ? `Approved: ${coverer!.name} covers ${r.personName}, ${shiftText(r)}. Rota sheet to update` : `Declined ${r.personName}'s cover request: ${shiftText(r)}${d.data.note ? ` · "${d.data.note}"` : ""}` });
+  coverPaths();
+  return { ok: true };
+}
+
+/** A manager cancels an approved cover (the person covering drops out, plans change): the shift goes back to the person who asked. */
+export async function cancelCover(requestId: string, note: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const input = z.object({ requestId: z.string().uuid(), note: z.string().trim().max(NOTE_MAX, `Keep the note under ${NOTE_MAX} characters`) }).safeParse({ requestId, note });
+  if (!input.success) return { ok: false, error: input.error.issues[0]?.message ?? "That couldn't be saved" };
+  const db = store();
+  const r = await db.coverRequest(input.data.requestId);
+  if (!r) return { ok: false, error: "That request isn't there any more" };
+  const now = Date.now();
+  const check = canCancelCover(ctx.person, r, now);
+  if (!check.ok) return check;
+  if (!(await db.decideCover(r.id, { status: "cancelled", personId: ctx.person.id, note: input.data.note || undefined }))) return { ok: false, error: "It has just changed. Reload and try again" };
+  await sendCover(cancelMessages(r, ctx.person.name, input.data.note || undefined), coverSendAfter(now, r));
+  await db.audit({ actorId: ctx.person.id, siteId: r.siteId, action: "cover.cancel", detail: `Cancelled ${r.coveredByName}'s cover of ${r.personName}: ${shiftText(r)}${input.data.note ? ` · "${input.data.note}"` : ""}` });
   coverPaths();
   return { ok: true };
 }

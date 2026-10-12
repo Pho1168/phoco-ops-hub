@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { offerCover, withdrawOffer } from "@/app/actions";
 
-export interface CoverOfferRow { id: string; who: string; when: string; where: string; note?: string; offered: boolean }
+export interface CoverOfferRow { id: string; who: string; when: string; where: string; offered: boolean }
 
 /** Shifts colleagues want covered that I could do. */
 export function CoverOffers({ rows }: { rows: CoverOfferRow[] }) {
@@ -25,7 +25,6 @@ export function CoverOffers({ rows }: { rows: CoverOfferRow[] }) {
         <div key={r.id} className="stack timeoff-row" style={{ gap: 6 }}>
           <div className="strong" style={{ fontSize: 15 }}>{r.when}</div>
           <div className="muted">{r.who} · {r.where}</div>
-          {r.note && <div style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>&ldquo;{r.note}&rdquo;</div>}
           <div className="row wrap" style={{ gap: 6 }}>
             {r.offered
               ? <><span className="chip done">You offered · your manager will decide</span><button type="button" className="btn ghost small" disabled={pending} onClick={() => run(r.id, () => withdrawOffer(r.id))}>Take back</button></>

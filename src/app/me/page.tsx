@@ -19,7 +19,8 @@ import { ShiftReply } from "./ShiftReply";
 import { GasCheck } from "@/components/GasCheck";
 import { CoverAsk, type MyCover } from "./CoverAsk";
 import { CoverOffers } from "./CoverOffers";
-import { couldCover, withStates } from "@/lib/cover-service";
+import { couldCover } from "@/lib/cover-service";
+import { coverState } from "@/lib/domain/cover";
 import { shiftStart } from "@/lib/domain/reminders";
 import { gasFor } from "@/lib/daily-service";
 import { londonHM } from "@/lib/domain/time";
@@ -65,15 +66,17 @@ export default async function MyShifts() {
     return site && g && (g.state === "due" || g.state === "overdue" || g.state === "done") && g.day.closers.includes(ctx.person.id) ? { site, g } : undefined;
   }))).filter((x) => x !== undefined).filter((x) => !onTablet || x.site.id === ctx.site.id); // a tablet only does its own site
 
-  // Shift cover: my requests (latest per shift) and colleagues' shifts I could cover.
+  // Shift cover: my latest request for each upcoming shift, and colleagues' shifts I could cover.
   const myCover = new Map<string, MyCover>();
-  for (const r of (await withStates(await db.coverRequests({ personId: ctx.person.id, since: now - 45 * 86_400_000 }), now)).reverse()) {
-    if (r.state === "open" || r.state === "approved" || r.state === "done" || r.state === "declined")
-      myCover.set(r.shiftId, { id: r.id, state: r.state, offers: r.offers.filter((o) => !o.withdrawnAt).length, coveredByName: r.coveredByName, decisionNote: r.decisionNote });
+  for (const r of await db.coverRequests({ personId: ctx.person.id, shiftEndsAfter: now })) { // newest first
+    if (myCover.has(r.shiftId)) continue;
+    const state = coverState(r, now);
+    myCover.set(r.shiftId, { id: r.id, state: state === "open" || state === "approved" || state === "done" || state === "declined" || state === "cancelled" ? state : "none",
+      offers: r.offers.filter((o) => !o.withdrawnAt).length, coveredByName: r.coveredByName, note: r.status === "cancelled" ? r.cancelNote : r.decisionNote });
   }
   const canCoverRows = (await couldCover(ctx.person, now)).map((r) => ({
     id: r.id, who: `${r.personName} is asking`, when: `${shortDay(r.date)} · ${r.start}–${r.end}`, where: `${r.siteName} · ${sectionName(r.section)}`,
-    note: r.note, offered: r.offers.some((o) => o.personId === ctx.person.id && !o.withdrawnAt),
+    offered: r.offers.some((o) => o.personId === ctx.person.id && !o.withdrawnAt),
   }));
 
   const days = new Map<string, typeof shifts>();
@@ -103,6 +106,8 @@ export default async function MyShifts() {
         ))}
 
         {!onTablet && <RemindersToggle publicKey={publicKey} />}
+
+        <CoverOffers rows={canCoverRows} />
 
         <section className="stack">
           {shifts.length === 0 && <div className="card muted">No published shifts in the next 4 weeks. New rotas show here as soon as they&apos;re published.</div>}
@@ -144,8 +149,6 @@ export default async function MyShifts() {
             ))}
           </section>
         )}
-
-        <CoverOffers rows={canCoverRows} />
 
         <TimeOffCard today={today} shiftDays={shifts.map((s) => s.date)} requests={myTimeOff.map((t) => ({
           id: t.id, range: rangeLabel(t), kind: kindLabel(t.kind), status: t.status, note: t.note, canCancel: canCancel(t, today),

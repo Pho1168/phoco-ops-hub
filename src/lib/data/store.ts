@@ -177,19 +177,23 @@ export interface Store {
   addGasCheck(c: { siteId: SiteId; date: string; personId: string; onTablet: boolean }): Promise<boolean>;
 
   // Shift cover (requests are withdrawn or decided, offers withdrawn; nothing is deleted)
-  /** Requests matching the filter, newest first, with the shift as it is now and every offer. `live`: open or approved. */
-  coverRequests(filter: { siteIds?: SiteId[]; personId?: string; since?: number; live?: boolean }): Promise<CoverRequest[]>;
+  /**
+   * Requests matching the filter, newest first, with the shift as it is now and every offer. `live`: open or approved.
+   * `shiftEndsAfter`: only shifts ending after then (so old ones drop out without anything being deleted).
+   */
+  coverRequests(filter: { siteIds?: SiteId[]; personId?: string; shiftEndsAfter?: number; live?: boolean }): Promise<CoverRequest[]>;
   coverRequest(id: string): Promise<CoverRequest | undefined>;
   /** Undefined if a request for that shift is already in play. */
   addCoverRequest(r: { shiftId: string; siteId: SiteId; personId: string; section: string; note?: string }): Promise<string | undefined>;
   /**
-   * Open → approved (with who covers; they must still have an offer in), declined, or withdrawn by the person asking.
-   * False if it isn't open any more (or the offer has gone).
+   * Open → approved (with who covers; they must still have an offer in), declined, or withdrawn by the person asking;
+   * approved → cancelled by a manager. False if it isn't in that state any more (or the offer has gone).
    */
-  decideCover(id: string, d: { status: "approved" | "declined" | "withdrawn"; personId: string; coveredBy?: string; note?: string }): Promise<boolean>;
-  /** Undefined if they already have an offer in. */
+  decideCover(id: string, d: { status: "approved" | "declined" | "withdrawn" | "cancelled"; personId: string; coveredBy?: string; note?: string }): Promise<boolean>;
+  /** Undefined if they already have an offer in, or the request isn't open. */
   addCoverOffer(requestId: string, personId: string): Promise<string | undefined>;
-  withdrawCoverOffer(requestId: string, personId: string): Promise<boolean>;
+  /** Takes back an offer while the request is open; returns the offer's id. */
+  withdrawCoverOffer(requestId: string, personId: string): Promise<string | undefined>;
 
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;

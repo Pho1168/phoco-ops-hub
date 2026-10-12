@@ -6,26 +6,50 @@ import type { Person, SiteId } from "./types";
 
 /**
  * Shift cover. Someone who can't do a published shift asks for cover; people at the same site who work the same
- * section, aren't already working then and aren't off can offer; a manager of the site approves one (or declines).
- * The app never changes the rota sheet: once approved, the manager moves the shift in the sheet, and when the next
- * import shows it moved, the request is done. Requests and offers are kept: they're withdrawn or decided, not deleted.
+ * section, aren't already working then (or already covering someone then) and aren't off can offer; a manager of
+ * the site approves one, declines, or later cancels an approval. The app never changes the rota sheet: once
+ * approved, the manager moves the shift in the sheet, and when the next import shows it moved, the request is done.
+ * Requests and offers are kept: withdrawn, decided or cancelled, never deleted. The reason (note) is for managers
+ * only: colleagues see the shift, not why.
  */
 
-export type CoverStatus = "open" | "approved" | "declined" | "withdrawn";
+export type CoverStatus = "open" | "approved" | "declined" | "withdrawn" | "cancelled";
 export interface CoverOffer { id: string; personId: string; personName: string; createdAt: number; withdrawnAt?: number }
 export interface CoverRequest extends ShiftTimes {
   id: string; shiftId: string; siteId: SiteId; siteName: string; personId: string; personName: string; section: string;
   note?: string; status: CoverStatus; createdAt: number;
   coveredBy?: string; coveredByName?: string; decidedBy?: string; decidedByName?: string; decidedAt?: number; decisionNote?: string;
+  cancelledByName?: string; cancelledAt?: number; cancelNote?: string;
   /** The shift as it is now: cancelled, or given to someone else, once the rota sheet has been changed. */
   shiftCancelled: boolean; shiftPersonId: string;
+  /** The person covering has a shift at the site overlapping this one (the sheet has been updated for them). */
+  covererOnRota: boolean;
   offers: CoverOffer[];
 }
 
 export const NOTE_MAX = 200;
 export const liveOffers = (r: Pick<CoverRequest, "offers">) => r.offers.filter((o) => !o.withdrawnAt);
-/** Still in play: open, or approved and waiting for the rota. */
-export const isLive = (r: Pick<CoverRequest, "status">) => r.status === "open" || r.status === "approved";
+/** The rota sheet has moved the shift away from the person who asked. */
+export const shiftMoved = (r: Pick<CoverRequest, "shiftCancelled" | "shiftPersonId" | "personId">) => r.shiftCancelled || r.shiftPersonId !== r.personId;
+
+export type CoverState = "open" | "expired" | "rota_changed" | "approved" | "done" | "past" | "declined" | "withdrawn" | "cancelled";
+/**
+ * Where a request stands, worked out from the row and the shift as it is now:
+ * open (until the shift starts: then expired; if the sheet moved the shift meanwhile: rota_changed);
+ * approved (until the sheet shows the coverer on: done; if the shift ends first: past);
+ * declined, withdrawn or cancelled.
+ */
+export function coverState(r: CoverRequest, now: number): CoverState {
+  if (r.status === "declined" || r.status === "withdrawn" || r.status === "cancelled") return r.status;
+  if (r.status === "open") return shiftMoved(r) ? "rota_changed" : now >= shiftStart(r) ? "expired" : "open";
+  if (shiftMoved(r) && r.covererOnRota) return "done";
+  return now >= shiftEnd(r) ? "past" : "approved";
+}
+
+export const STATE_TEXT: Record<CoverState, string> = {
+  open: "Asking for cover", expired: "Not covered", rota_changed: "Rota changed", approved: "Approved: rota to update", done: "Covered",
+  past: "Approved, rota not updated", declined: "Not approved", withdrawn: "Withdrawn", cancelled: "Cover cancelled",
+};
 
 export type Checked = { ok: true } | { ok: false; error: string };
 type Shift = ShiftTimes & { id: string; personId: string; siteId: SiteId; section: string; published: boolean; cancelled: boolean };
@@ -35,39 +59,49 @@ export function canAskCover(shift: Shift, personId: string, requests: Pick<Cover
   if (shift.personId !== personId) return { ok: false, error: "That isn't your shift" };
   if (!shift.published || shift.cancelled) return { ok: false, error: "That shift isn't on the rota any more" };
   if (now >= shiftStart(shift)) return { ok: false, error: "That shift has already started. Talk to your manager" };
-  if (requests.some((r) => r.shiftId === shift.id && isLive(r))) return { ok: false, error: "You've already asked for cover for this shift" };
+  if (requests.some((r) => r.shiftId === shift.id && (r.status === "open" || r.status === "approved"))) return { ok: false, error: "You've already asked for cover for this shift" };
+  return { ok: true };
+}
+
+/** The person who asked takes it back while it's open and before the shift starts. */
+export function canWithdraw(r: CoverRequest, personId: string, now: number): Checked {
+  if (r.personId !== personId) return { ok: false, error: "That request isn't yours" };
+  if (coverState(r, now) !== "open") return { ok: false, error: r.status === "approved" ? "It's been approved. Talk to your manager to change it" : "It's already closed" };
   return { ok: true };
 }
 
 const overlap = (a: ShiftTimes, b: ShiftTimes) => shiftStart(a) < shiftEnd(b) && shiftStart(b) < shiftEnd(a);
 
 /**
- * Who can cover: active, works at the site in that section, not the person asking, not working at any site at the
- * same time, and not on approved time off that day.
+ * Who can cover: active, works at the site in that section, not the person asking, not working (or already approved to
+ * cover someone) at an overlapping time at any site, and not on approved time off that day. `busy` is their shifts
+ * around then plus covers they've been approved for. With `name`, the reasons are worded for a manager.
  */
 export function canCover(p: Pick<Person, "id" | "status" | "access">, r: Pick<CoverRequest, "personId" | "siteId" | "section" | "date" | "start" | "end">,
-  theirShifts: ShiftTimes[], theirTimeOff: TimeOff[]): Checked {
-  if (p.status !== "active") return { ok: false, error: "Your account isn't active" };
-  if (p.id === r.personId) return { ok: false, error: "That's your own shift" };
+  busy: ShiftTimes[], theirTimeOff: TimeOff[], name?: string): Checked {
+  if (p.status !== "active") return { ok: false, error: name ? `${name}'s account isn't active` : "Your account isn't active" };
+  if (p.id === r.personId) return { ok: false, error: "That's their own shift" };
   const access = p.access.find((a) => a.siteId === r.siteId);
   if (!access || !access.sections.includes(r.section as never)) return { ok: false, error: `Only ${sectionName(r.section).toLowerCase()} staff at that site can cover it` };
-  if (theirShifts.some((s) => overlap(s, r))) return { ok: false, error: "You're already working then" };
-  if (offOn(theirTimeOff, r.date).length) return { ok: false, error: "You're off that day" };
+  if (busy.some((s) => overlap(s, r))) return { ok: false, error: name ? `${name} is already working then` : "You're already working then" };
+  if (offOn(theirTimeOff, r.date).length) return { ok: false, error: name ? `${name} is off that day` : "You're off that day" };
   return { ok: true };
 }
 
-/** Offers are open while the request is open and the shift hasn't started. */
+/** Offers are open while the request is (not moved by the rota, shift not started). */
 export function canOffer(r: CoverRequest, personId: string, now: number): Checked {
-  if (r.status !== "open") return { ok: false, error: r.status === "approved" ? "Someone is already covering it" : "This request has closed" };
-  if (now >= shiftStart(r)) return { ok: false, error: "That shift has started" };
+  const state = coverState(r, now);
+  if (state === "rota_changed") return { ok: false, error: `The rota has changed: this shift isn't ${r.personName}'s any more` };
+  if (state !== "open") return { ok: false, error: r.status === "approved" ? "Someone is already covering it" : "This request has closed" };
   if (liveOffers(r).some((o) => o.personId === personId)) return { ok: false, error: "You've already offered" };
   return { ok: true };
 }
 
-/** A manager of the site decides, while it's open and before the shift starts; not their own request (owners excepted). */
+/** A manager of the site decides while it's open; not their own request (owners excepted). Approving needs a current offer. */
 export function canDecideCover(actor: Pick<Person, "id" | "access">, r: CoverRequest, coveredBy: string | undefined, now: number): Checked {
   if (!canManage(actor, r.siteId)) return { ok: false, error: "Only a manager of that site can decide this" };
   if (r.status !== "open") return { ok: false, error: "This request has already been decided" };
+  if (shiftMoved(r)) return { ok: false, error: `The rota has already changed: this shift isn't ${r.personName}'s any more` };
   if (actor.id === r.personId && !actor.access.some((a) => a.role === "owner")) return { ok: false, error: "Another manager needs to decide your own request" };
   if (coveredBy !== undefined) {
     if (now >= shiftStart(r)) return { ok: false, error: "That shift has already started" };
@@ -76,22 +110,23 @@ export function canDecideCover(actor: Pick<Person, "id" | "access">, r: CoverReq
   return { ok: true };
 }
 
-export type CoverState = "open" | "expired" | "approved" | "done" | "declined" | "withdrawn";
-/**
- * Where a request stands. Approved is done once the rota shows the shift has moved: the original shift is cancelled or
- * belongs to someone else, and the person covering has a shift overlapping it. An open request whose shift has started
- * has expired.
- */
-export function coverState(r: CoverRequest, coverersShifts: ShiftTimes[], now: number): CoverState {
-  if (r.status === "declined" || r.status === "withdrawn") return r.status;
-  if (r.status === "open") return now >= shiftStart(r) ? "expired" : "open";
-  const moved = (r.shiftCancelled || r.shiftPersonId !== r.personId) && coverersShifts.some((s) => overlap(s, r));
-  return moved ? "done" : "approved";
+/** A manager can cancel an approval before the shift ends (the person covering drops out, or plans change). */
+export function canCancelCover(actor: Pick<Person, "access">, r: CoverRequest, now: number): Checked {
+  if (!canManage(actor, r.siteId)) return { ok: false, error: "Only a manager of that site can change this" };
+  if (r.status !== "approved") return { ok: false, error: "Only an approved cover can be cancelled" };
+  if (now >= shiftEnd(r)) return { ok: false, error: "That shift is over" };
+  return { ok: true };
 }
 
-export const STATE_TEXT: Record<CoverState, string> = {
-  open: "Asking for cover", expired: "Not covered", approved: "Approved: rota to update", done: "Covered", declined: "Not approved", withdrawn: "Withdrawn",
-};
+/** Covers a person has been approved for whose shift hasn't moved to them on the rota yet: they count as busy then. */
+export function pendingCovers(requests: CoverRequest[], now: number): Map<string, ShiftTimes[]> {
+  const out = new Map<string, ShiftTimes[]>();
+  for (const r of requests) {
+    if (coverState(r, now) !== "approved" || !r.coveredBy) continue;
+    out.set(r.coveredBy, [...(out.get(r.coveredBy) ?? []), { date: r.date, start: r.start, end: r.end }]);
+  }
+  return out;
+}
 
 // ---------- messages ----------
 
@@ -104,16 +139,15 @@ const managersOf = (people: Pick<Person, "id" | "status" | "access">[], siteId: 
 export const coverSendAfter = (now: number, r: ShiftTimes) => afterQuietHours(now, shiftStart(r) - now < 12 * 3_600_000);
 
 /**
- * A new request: the site's managers and owners are told (they decide; if they work that section they can still
- * offer from My shifts), and everyone else who could cover is asked. Each person gets one message.
+ * A new request: the site's managers and owners are told, with the reason (they decide; if they work that section
+ * they can still offer from My shifts). Everyone else who could cover is asked, without the reason. One message each.
  */
 export function askMessages(r: CoverRequest, candidates: string[], people: Pick<Person, "id" | "status" | "access">[]): CoverMessage[] {
-  const quote = r.note ? `\n"${r.note}"` : "";
   const managers = managersOf(people, r.siteId, [r.personId]);
   const told = managers.map((p) => ({ personId: p.id, title: `Cover needed: ${r.personName}`,
-    body: `${when(r)} (${sectionName(r.section)}) at ${r.siteName}.${quote}`, dedupeKey: `cover|ask|${r.id}|${p.id}`, url: "/manage/cover" }));
+    body: `${when(r)} (${sectionName(r.section)}) at ${r.siteName}.${r.note ? `\n"${r.note}"` : ""}`, dedupeKey: `cover|ask|${r.id}|${p.id}`, url: "/manage/cover" }));
   const asked = candidates.filter((id) => !managers.some((m) => m.id === id)).map((id) => ({ personId: id, title: `Can you cover? ${when(r)} · ${r.siteName}`,
-    body: `${r.personName} is asking for cover (${sectionName(r.section)}). Tap to offer.${quote}`, dedupeKey: `cover|ask|${r.id}|${id}`, url: "/me" }));
+    body: `${r.personName} is asking for cover (${sectionName(r.section)}). Tap to offer.`, dedupeKey: `cover|ask|${r.id}|${id}`, url: "/me" }));
   return [...told, ...asked];
 }
 
@@ -123,6 +157,15 @@ export function offerMessages(r: CoverRequest, offerId: string, offerer: { id: s
     ...managersOf(people, r.siteId, [offerer.id, r.personId]).map((p) => ({ personId: p.id, title: `${offerer.name} can cover ${r.personName}`,
       body: `${when(r)} (${sectionName(r.section)}) at ${r.siteName}. Approve it in Manage → Shift cover.`, dedupeKey: `cover|offer|${offerId}|${p.id}`, url: "/manage/cover" })),
     { personId: r.personId, title: `${offerer.name} offered to cover your shift`, body: `${when(r)}. Your manager will decide.`, dedupeKey: `cover|offer|${offerId}|${r.personId}`, url: "/me" },
+  ];
+}
+
+/** An offer taken back: the same people who heard about it. */
+export function offerWithdrawnMessages(r: CoverRequest, offerId: string, offerer: { id: string; name: string }, people: Pick<Person, "id" | "status" | "access">[]): CoverMessage[] {
+  return [
+    ...managersOf(people, r.siteId, [offerer.id, r.personId]).map((p) => ({ personId: p.id, title: `${offerer.name} can't cover ${r.personName} after all`,
+      body: `${when(r)} (${sectionName(r.section)}) at ${r.siteName}.`, dedupeKey: `cover|unoffer|${offerId}|${p.id}`, url: "/manage/cover" })),
+    { personId: r.personId, title: `${offerer.name} can't cover your shift after all`, body: `${when(r)}. You're still asking for cover.`, dedupeKey: `cover|unoffer|${offerId}|${r.personId}`, url: "/me" },
   ];
 }
 
@@ -139,6 +182,14 @@ export function decisionMessages(r: CoverRequest, decision: "approved" | "declin
   for (const o of liveOffers(r).filter((o) => o.personId !== coveredBy?.id)) {
     out.push({ personId: o.personId, title: "Thanks for offering", body: decision === "approved" ? `${r.personName}'s ${when(r)} shift has been covered.` : `${r.personName}'s ${when(r)} shift is staying with them.`, dedupeKey: key(o.personId), url: "/me" });
   }
+  return out;
+}
+
+/** An approval cancelled: the person who asked has the shift back; the person covering doesn't. */
+export function cancelMessages(r: CoverRequest, byName: string, note?: string): CoverMessage[] {
+  const why = note ? `\n${byName}: "${note}"` : "";
+  const out: CoverMessage[] = [{ personId: r.personId, title: `Cover cancelled: ${shortDay(r.date)} ${r.start}`, body: `Your ${when(r)} shift is yours again.${why}`, dedupeKey: `cover|cancel|${r.id}|${r.personId}`, url: "/me" }];
+  if (r.coveredBy) out.push({ personId: r.coveredBy, title: `You're no longer covering ${r.personName}`, body: `${when(r)} at ${r.siteName}.${why}`, dedupeKey: `cover|cancel|${r.id}|${r.coveredBy}`, url: "/me" });
   return out;
 }
 

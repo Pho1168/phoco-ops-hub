@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  askMessages, canAskCover, canCover, canDecideCover, canOffer, coverSendAfter, coverState, decisionMessages, offerMessages, withdrawMessages,
-  type CoverRequest,
+  askMessages, canAskCover, canCancelCover, canCover, canDecideCover, canOffer, canWithdraw, cancelMessages, coverSendAfter, coverState, decisionMessages,
+  offerMessages, offerWithdrawnMessages, pendingCovers, withdrawMessages, type CoverRequest,
 } from "./cover";
 import { londonToUtc } from "./time";
 import type { TimeOff } from "./timeoff";
@@ -11,7 +11,7 @@ const at = londonToUtc;
 const shift = { id: "s1", personId: "anh", siteId: "EAS" as const, section: "BOH", date: "2026-10-17", start: "11:00", end: "22:15", published: true, cancelled: false };
 const req = (over: Partial<CoverRequest> = {}): CoverRequest => ({
   id: "c1", shiftId: "s1", siteId: "EAS", siteName: "Eastcote", personId: "anh", personName: "Anh", section: "BOH", date: "2026-10-17", start: "11:00", end: "22:15",
-  status: "open", createdAt: at("2026-10-14", "10:00"), shiftCancelled: false, shiftPersonId: "anh", offers: [], ...over,
+  status: "open", createdAt: at("2026-10-14", "10:00"), shiftCancelled: false, shiftPersonId: "anh", covererOnRota: false, offers: [], ...over,
 });
 const person = (id: string, access: Person["access"], status: Person["status"] = "active") => ({ id, status, access });
 const boh = (id: string, status: Person["status"] = "active") => person(id, [{ siteId: "EAS", role: "staff", sections: ["BOH"] }], status);
@@ -46,6 +46,18 @@ describe("who can cover", () => {
     expect(canCover(people[3], req(), [], [])).toMatchObject({ ok: false, error: "Only back of house staff at that site can cover it" });
     expect(canCover(people[4], req(), [], []).ok).toBe(false);
   });
+  it("reasons are worded for the manager when a name is given", () => {
+    expect(canCover(boh("bo"), req(), [{ date: "2026-10-17", start: "17:00", end: "23:00" }], [], "Bo")).toMatchObject({ error: "Bo is already working then" });
+    expect(canCover(boh("bo"), req(), [], [off("bo", "2026-10-17", "2026-10-17")], "Bo")).toMatchObject({ error: "Bo is off that day" });
+  });
+  it("someone already approved to cover another shift then counts as busy", () => {
+    const other = req({ id: "c2", shiftId: "s2", personId: "cy", status: "approved", coveredBy: "bo", start: "17:00", end: "23:00" });
+    const busy = pendingCovers([other], at("2026-10-14", "12:00")).get("bo") ?? [];
+    expect(canCover(boh("bo"), req(), busy, []).ok).toBe(false);
+    // once the sheet shows it, it's a real shift instead, and a past or cancelled cover doesn't count
+    expect(pendingCovers([{ ...other, shiftCancelled: true, covererOnRota: true }], at("2026-10-14", "12:00")).get("bo")).toBeUndefined();
+    expect(pendingCovers([{ ...other, status: "cancelled" }], at("2026-10-14", "12:00")).get("bo")).toBeUndefined();
+  });
   it("not already working then (any site, including a shift from the night before), and not off that day", () => {
     const d = "2026-10-17";
     expect(canCover(boh("bo"), req(), [{ date: d, start: "17:00", end: "23:00" }], [])).toMatchObject({ ok: false, error: "You're already working then" });
@@ -61,6 +73,7 @@ describe("who can cover", () => {
     expect(canOffer(req(), "bo", at("2026-10-17", "11:00")).ok).toBe(false);
     expect(canOffer(req({ offers: [{ id: "o1", personId: "bo", personName: "Bo", createdAt: 1 }] }), "bo", now).ok).toBe(false);
     expect(canOffer(req({ offers: [{ id: "o1", personId: "bo", personName: "Bo", createdAt: 1, withdrawnAt: 2 }] }), "bo", now).ok).toBe(true);
+    expect(canOffer(req({ shiftCancelled: true }), "bo", now)).toMatchObject({ ok: false, error: "The rota has changed: this shift isn't Anh's any more" });
   });
 });
 
@@ -76,33 +89,55 @@ describe("deciding", () => {
     expect(canDecideCover(people[5], offered, undefined, at("2026-10-17", "11:05")).ok).toBe(true); // declining is still fine
   });
   it("not your own request, unless you're the owner", () => {
-    expect(canDecideCover(people[5], req({ personId: "mgr" }), undefined, now).ok).toBe(false);
-    expect(canDecideCover(people[6], req({ personId: "own" }), undefined, now).ok).toBe(true);
+    expect(canDecideCover(people[5], req({ personId: "mgr", shiftPersonId: "mgr" }), undefined, now).ok).toBe(false);
+    expect(canDecideCover(people[6], req({ personId: "own", shiftPersonId: "own" }), undefined, now).ok).toBe(true);
+  });
+  it("not once the rota sheet has moved the shift", () => {
+    expect(canDecideCover(people[5], { ...offered, shiftPersonId: "dee" }, "bo", now)).toMatchObject({ ok: false });
+    expect(canDecideCover(people[5], { ...offered, shiftCancelled: true }, undefined, now)).toMatchObject({ ok: false });
+  });
+  it("a manager can cancel an approval until the shift ends", () => {
+    const approved = req({ status: "approved", coveredBy: "bo" });
+    expect(canCancelCover(people[5], approved, now)).toEqual({ ok: true });
+    expect(canCancelCover(people[1], approved, now).ok).toBe(false);
+    expect(canCancelCover(people[5], req(), now).ok).toBe(false);
+    expect(canCancelCover(people[5], approved, at("2026-10-17", "22:15")).ok).toBe(false);
+  });
+  it("the person asking can withdraw while it's open, before the shift", () => {
+    expect(canWithdraw(req(), "anh", now)).toEqual({ ok: true });
+    expect(canWithdraw(req(), "bo", now).ok).toBe(false);
+    expect(canWithdraw(req({ status: "approved", coveredBy: "bo" }), "anh", now)).toMatchObject({ ok: false, error: "It's been approved. Talk to your manager to change it" });
+    expect(canWithdraw(req(), "anh", at("2026-10-17", "11:00")).ok).toBe(false);
   });
 });
 
 describe("where a request stands", () => {
   const before = at("2026-10-14", "12:00");
-  it("open until the shift starts, then expired", () => {
-    expect(coverState(req(), [], before)).toBe("open");
-    expect(coverState(req(), [], at("2026-10-17", "11:00"))).toBe("expired");
+  it("open until the shift starts, then expired; closed if the rota sheet moves the shift first", () => {
+    expect(coverState(req(), before)).toBe("open");
+    expect(coverState(req(), at("2026-10-17", "11:00"))).toBe("expired");
+    expect(coverState(req({ shiftCancelled: true }), before)).toBe("rota_changed");
+    expect(coverState(req({ shiftPersonId: "dee" }), before)).toBe("rota_changed");
   });
-  it("approved until the rota sheet shows the shift has moved, then done", () => {
+  it("approved until the rota sheet shows the coverer on, then done; past if the shift ends first", () => {
     const approved = req({ status: "approved", coveredBy: "bo" });
-    expect(coverState(approved, [], before)).toBe("approved");
-    expect(coverState({ ...approved, shiftCancelled: true }, [], before)).toBe("approved"); // removed, but not given to Bo yet
-    expect(coverState({ ...approved, shiftCancelled: true }, [{ date: "2026-10-17", start: "11:00", end: "22:15" }], before)).toBe("done");
-    expect(coverState(req({ status: "declined" }), [], before)).toBe("declined");
-    expect(coverState(req({ status: "withdrawn" }), [], before)).toBe("withdrawn");
+    expect(coverState(approved, before)).toBe("approved");
+    expect(coverState({ ...approved, shiftCancelled: true }, before)).toBe("approved"); // removed, but not given to Bo yet
+    expect(coverState({ ...approved, shiftCancelled: true, covererOnRota: true }, before)).toBe("done");
+    expect(coverState(approved, at("2026-10-17", "22:15"))).toBe("past");
+    expect(coverState(req({ status: "declined" }), before)).toBe("declined");
+    expect(coverState(req({ status: "withdrawn" }), before)).toBe("withdrawn");
+    expect(coverState(req({ status: "cancelled", coveredBy: "bo" }), before)).toBe("cancelled");
   });
 });
 
 describe("cover messages", () => {
-  it("asks the people who could cover, tells managers, and nobody twice", () => {
+  it("asks the people who could cover (without the reason), tells managers (with it), and nobody twice", () => {
     const m = askMessages(req({ note: "Dentist" }), ["bo", "cy", "mgr"], people);
     expect(m.map((x) => x.personId).sort()).toEqual(["bo", "cy", "mgr", "own"]);
     expect(m.find((x) => x.personId === "bo")).toMatchObject({ title: "Can you cover? Sat 17 Oct 11:00–22:15 · Eastcote", url: "/me" });
-    expect(m.find((x) => x.personId === "bo")?.body).toBe('Anh is asking for cover (Back of house). Tap to offer.\n"Dentist"');
+    expect(m.find((x) => x.personId === "bo")?.body).toBe("Anh is asking for cover (Back of house). Tap to offer.");
+    expect(m.find((x) => x.personId === "own")?.body).toContain('"Dentist"');
     expect(m.find((x) => x.personId === "own")).toMatchObject({ title: "Cover needed: Anh", url: "/manage/cover" });
     expect(m.find((x) => x.personId === "mgr")?.title).toBe("Cover needed: Anh"); // a manager who could cover is told as a manager
     expect(new Set(m.map((x) => x.dedupeKey)).size).toBe(m.length);
@@ -119,6 +154,15 @@ describe("cover messages", () => {
     const no = decisionMessages(r, "declined", undefined, "Mia", "We're short that day");
     expect(no[0]).toMatchObject({ personId: "anh", title: "Cover not approved: Sat 17 Oct 11:00", body: "Mia: We're short that day" });
     expect(no.slice(1).map((x) => x.personId)).toEqual(["bo", "cy"]);
+  });
+  it("an offer taken back tells the managers and the person asking", () => {
+    const m = offerWithdrawnMessages(req(), "o1", { id: "bo", name: "Bo" }, people);
+    expect(m.map((x) => [x.personId, x.title]).sort()).toEqual([["anh", "Bo can't cover your shift after all"], ["mgr", "Bo can't cover Anh after all"], ["own", "Bo can't cover Anh after all"]]);
+  });
+  it("a cancelled approval gives the shift back and tells the person who was covering", () => {
+    const m = cancelMessages(req({ status: "approved", coveredBy: "bo" }), "Mia", "Bo is ill");
+    expect(m.map((x) => [x.personId, x.title])).toEqual([["anh", "Cover cancelled: Sat 17 Oct 11:00"], ["bo", "You're no longer covering Anh"]]);
+    expect(m[0].body).toBe('Your Sat 17 Oct 11:00–22:15 shift is yours again.\nMia: "Bo is ill"');
   });
   it("a withdrawn request tells managers and anyone who offered", () => {
     const m = withdrawMessages(req({ offers: [{ id: "o1", personId: "bo", personName: "Bo", createdAt: 1 }] }), people);

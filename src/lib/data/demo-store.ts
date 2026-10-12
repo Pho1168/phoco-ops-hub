@@ -14,6 +14,7 @@ import type { Task } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
 import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
+import { shiftEnd, shiftStart } from "@/lib/domain/reminders";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -83,7 +84,7 @@ interface State {
   shiftReplies: ShiftReply[];
   gasChecks: Omit<GasCheck, "personName">[];
   cover: { id: string; shiftId: string; siteId: SiteId; personId: string; section: string; note?: string; status: CoverStatus; createdAt: number;
-    coveredBy?: string; decidedBy?: string; decidedAt?: number; decisionNote?: string; withdrawnAt?: number }[];
+    coveredBy?: string; decidedBy?: string; decidedAt?: number; decisionNote?: string; withdrawnAt?: number; cancelledBy?: string; cancelledAt?: number; cancelNote?: string }[];
   coverOffers: { id: string; requestId: string; personId: string; createdAt: number; withdrawnAt?: number }[];
 }
 
@@ -195,7 +196,10 @@ function coverView(c: State["cover"][number]): CoverRequest | undefined {
     id: c.id, shiftId: c.shiftId, siteId: c.siteId, siteName: S().sites.find((s) => s.id === c.siteId)?.name ?? c.siteId, personId: c.personId,
     personName: nameOf(c.personId) ?? "", section: c.section, note: c.note, status: c.status, createdAt: c.createdAt,
     coveredBy: c.coveredBy, coveredByName: nameOf(c.coveredBy), decidedBy: c.decidedBy, decidedByName: nameOf(c.decidedBy), decidedAt: c.decidedAt, decisionNote: c.decisionNote,
+    cancelledByName: nameOf(c.cancelledBy), cancelledAt: c.cancelledAt, cancelNote: c.cancelNote,
     date: sh.date, start: sh.start, end: sh.end, shiftCancelled: sh.cancelled, shiftPersonId: sh.personId,
+    covererOnRota: !!c.coveredBy && S().shifts.some((x) => x.personId === c.coveredBy && x.siteId === c.siteId && !x.cancelled
+      && shiftStart(x) < shiftEnd(sh) && shiftStart(sh) < shiftEnd(x)),
     offers: S().coverOffers.filter((o) => o.requestId === c.id).sort((a, b) => a.createdAt - b.createdAt)
       .map((o) => ({ id: o.id, personId: o.personId, personName: nameOf(o.personId) ?? "", createdAt: o.createdAt, withdrawnAt: o.withdrawnAt })),
   };
@@ -553,8 +557,9 @@ export const demoStore: Store = {
     return Array.from(S().runs.values()).filter((r) => lists.has(r.listId)).map((r) => r.date).sort()[0];
   },
   async coverRequests(f) {
-    return S().cover.filter((c) => (!f.siteIds || f.siteIds.includes(c.siteId)) && (!f.personId || c.personId === f.personId) && (f.since === undefined || c.createdAt >= f.since)
-      && (!f.live || c.status === "open" || c.status === "approved")).sort((a, b) => b.createdAt - a.createdAt).map(coverView).filter((x): x is CoverRequest => !!x);
+    return S().cover.filter((c) => (!f.siteIds || f.siteIds.includes(c.siteId)) && (!f.personId || c.personId === f.personId)
+      && (!f.live || c.status === "open" || c.status === "approved")).sort((a, b) => b.createdAt - a.createdAt).map(coverView)
+      .filter((x): x is CoverRequest => !!x && (f.shiftEndsAfter === undefined || shiftEnd(x) > f.shiftEndsAfter));
   },
   async coverRequest(id) { const c = S().cover.find((x) => x.id === id); return c ? coverView(c) : undefined; },
   async addCoverRequest(r) {
@@ -564,6 +569,12 @@ export const demoStore: Store = {
     return id;
   },
   async decideCover(id, d) {
+    if (d.status === "cancelled") {
+      const a = S().cover.find((x) => x.id === id && x.status === "approved");
+      if (!a) return false;
+      Object.assign(a, { status: "cancelled", cancelledBy: d.personId, cancelledAt: Date.now(), cancelNote: d.note });
+      return true;
+    }
     const c = S().cover.find((x) => x.id === id && x.status === "open");
     if (!c) return false;
     if (d.status === "withdrawn") { if (c.personId !== d.personId) return false; Object.assign(c, { status: "withdrawn", withdrawnAt: Date.now() }); return true; }
@@ -572,16 +583,18 @@ export const demoStore: Store = {
     return true;
   },
   async addCoverOffer(requestId, personId) {
+    if (!S().cover.some((c) => c.id === requestId && c.status === "open")) return undefined;
     if (S().coverOffers.some((o) => o.requestId === requestId && o.personId === personId && !o.withdrawnAt)) return undefined;
     const id = randomUUID();
     S().coverOffers.push({ id, requestId, personId, createdAt: Date.now() });
     return id;
   },
   async withdrawCoverOffer(requestId, personId) {
+    if (!S().cover.some((c) => c.id === requestId && c.status === "open")) return undefined;
     const o = S().coverOffers.find((x) => x.requestId === requestId && x.personId === personId && !x.withdrawnAt);
-    if (!o) return false;
+    if (!o) return undefined;
     o.withdrawnAt = Date.now();
-    return true;
+    return o.id;
   },
   async gasChecks(siteIds, from, to) {
     return S().gasChecks.filter((g) => siteIds.includes(g.siteId) && g.date >= from && g.date <= to)
