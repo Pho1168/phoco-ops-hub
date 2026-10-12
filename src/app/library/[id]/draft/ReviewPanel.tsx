@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { moveSop, publishSop } from "@/app/actions";
+import { moveDraft, publishVersion } from "@/app/actions";
 
 const CHANGED = "It has changed since you opened it. This is the latest: check it again before you approve it";
 
@@ -10,7 +10,14 @@ const CHANGED = "It has changed since you opened it. This is the latest: check i
  * An approver: approve and publish (minor or major change, and when to review it next), or send it back with a note.
  * Both name the revision on screen (`rev`); if it has changed meanwhile, the page shows the latest instead.
  */
-export function ReviewPanel({ docId, versionId, rev, hasPublished, reviewBy: suggested, tomorrow }: { docId: string; versionId: string; rev: number; hasPublished: boolean; reviewBy: string; tomorrow: string }) {
+export function ReviewPanel({ docId, versionId, rev, hasPublished, reviewBy: suggested, tomorrow, asks = "Everyone it's for will be asked to read it.",
+  changeNote = "Either way, everyone it's for reads it again. A major change is marked as one, so managers go through it with the team." }: {
+  docId: string; versionId: string; rev: number; hasPublished: boolean; reviewBy: string; tomorrow: string;
+  /** What publishing asks of staff, for the confirmation. */
+  asks?: string;
+  /** What minor and major mean for staff. */
+  changeNote?: string;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [change, setChange] = useState<"" | "minor" | "major">("");
@@ -20,10 +27,10 @@ export function ReviewPanel({ docId, versionId, rev, hasPublished, reviewBy: sug
 
   const publish = () => {
     if (hasPublished && !change) { setErr("Say whether it's a minor update or a major change"); return; }
-    if (!confirm("Approve and publish? Everyone it's for will be asked to read it.")) return;
+    if (!confirm(`Approve and publish?${asks ? ` ${asks}` : ""}`)) return;
     start(async () => {
       setErr("");
-      const r = await publishSop(versionId, { rev, change: change || undefined, reviewBy });
+      const r = await publishVersion(versionId, { rev, change: change || undefined, reviewBy });
       if (r.ok) router.push(`/library/${docId}`);
       else if (r.stale) { setErr(CHANGED); router.refresh(); }
       else setErr(r.error);
@@ -31,7 +38,7 @@ export function ReviewPanel({ docId, versionId, rev, hasPublished, reviewBy: sug
   };
   const sendBack = () => start(async () => {
     setErr("");
-    const r = await moveSop(versionId, "send_back", rev, note);
+    const r = await moveDraft(versionId, "send_back", rev, note);
     if (r.ok) router.refresh();
     else if (r.stale) { setErr(CHANGED); router.refresh(); }
     else setErr(r.error);
@@ -48,7 +55,7 @@ export function ReviewPanel({ docId, versionId, rev, hasPublished, reviewBy: sug
               <button type="button" aria-pressed={change === "minor"} onClick={() => setChange("minor")}>Minor update</button>
               <button type="button" aria-pressed={change === "major"} onClick={() => setChange("major")}>Major change</button>
             </div>
-            <span className="muted">Either way, everyone it&apos;s for reads it again. A major change is marked as one, so managers go through it with the team.</span>
+            <span className="muted">{changeNote}</span>
           </fieldset>
         )}
         <label className="stack" style={{ gap: 6 }}><span className="strong">Review it by</span>
@@ -75,7 +82,7 @@ export function TakeBack({ versionId, rev }: { versionId: string; rev: number })
     <>
       <button type="button" className="btn ghost" disabled={pending} onClick={() => start(async () => {
         setErr("");
-        const r = await moveSop(versionId, "withdraw", rev);
+        const r = await moveDraft(versionId, "withdraw", rev);
         if (r.ok || r.stale) router.refresh(); // changed meanwhile: show where it is now
         if (!r.ok && !r.stale) setErr(r.error);
       })}>Take it back to change it</button>

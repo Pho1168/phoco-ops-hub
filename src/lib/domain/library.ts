@@ -3,16 +3,20 @@ import { addMonths } from "./equipment";
 import { sectionsFor } from "./staff";
 import { addDays, isIsoDate } from "./time";
 import type { Area, Person, Site, SiteId } from "./types";
+import type { DishBody, PrepBody } from "./recipes";
 
 /**
- * The library: SOPs as versioned, approved documents (recipes use the same steps). Managers, operations managers and
- * owners write drafts; an owner or operations manager approves and publishes, never a version they wrote or sent for
- * approval (an owner may, so they're never stuck). Only published versions reach staff. A published version is never
- * changed: an edit is a new draft, and publishing it replaces the old one, which is kept. Documents are retired, never
- * deleted. Everyone a published version is for reads it and confirms they have, once per version.
+ * The library: SOPs, prep recipes and dish specs as versioned, approved documents (recipe rules in recipes.ts).
+ * Managers, operations managers and owners write drafts; an owner or operations manager approves and publishes, never
+ * a version they wrote or sent for approval (an owner may, so they're never stuck). Only published versions reach
+ * staff. A published version is never changed: an edit is a new draft, and publishing it replaces the old one, which
+ * is kept. Documents are retired, never deleted. Everyone a published SOP is for reads it and confirms they have, once
+ * per version.
  */
 
-export type LibraryKind = "sop";
+/** sop: a standard operating procedure; prep: a batch recipe (broth, marinade, sauce); dish: how a menu item is built. */
+export type LibraryKind = "sop" | "prep" | "dish";
+export const KIND_TEXT: Record<LibraryKind, string> = { sop: "SOP", prep: "Prep recipe", dish: "Dish" };
 export type VersionStatus = "draft" | "in_review" | "published" | "superseded" | "discarded";
 /** What publishing a version means for staff: a new SOP, an update to re-read, or a major change to re-learn. */
 export type ChangeKind = "new" | "minor" | "major";
@@ -21,12 +25,14 @@ export interface Photo { id: string; w: number; h: number }
 export interface SopStep { text: string; warning?: string; photo?: Photo }
 /** `sections`: who it's for (none: everyone). */
 export interface SopBody { sections: Area[]; purpose: string; steps: SopStep[] }
+export type LibraryBody = SopBody | PrepBody | DishBody;
+export type BodyOf<K extends LibraryKind> = K extends "sop" ? SopBody : K extends "prep" ? PrepBody : DishBody;
 
-export interface LibraryVersion {
+export interface LibraryVersion<B extends LibraryBody = LibraryBody> {
   id: string; docId: string; status: VersionStatus;
   /** 1, 2, 3 … once published. */
   version?: number;
-  title: string; body: SopBody;
+  title: string; body: B;
   authorId: string; authorName: string; createdAt: number; updatedAt: number;
   /** Everyone who wrote, changed or sent this version: none of them can approve it (owners excepted). */
   contributors: string[];
@@ -40,16 +46,21 @@ export interface LibraryVersion {
   /** London date the published version should be reviewed by. */
   reviewBy?: string;
   supersededAt?: number;
+  /** Dishes: when its allergens last changed (set when a version that changes them is published, and kept by later ones). */
+  allergensChangedAt?: number;
 }
 
-export interface LibraryDoc {
+export interface LibraryDoc<B extends LibraryBody = LibraryBody> {
   id: string; kind: LibraryKind; code: string; createdAt: number;
   retiredAt?: number; retiredBy?: string; retiredNote?: string;
   /** The version staff see. */
-  published?: LibraryVersion;
+  published?: LibraryVersion<B>;
   /** The draft or the version waiting for approval, if any (one at a time). */
-  open?: LibraryVersion;
+  open?: LibraryVersion<B>;
 }
+
+/** Narrows a document to its kind, so its versions' bodies are typed. */
+export const isKind = <K extends LibraryKind>(doc: LibraryDoc, kind: K): doc is LibraryDoc<BodyOf<K>> => doc.kind === kind;
 
 export const SOP_LIMITS = { title: 100, purpose: 600, step: 800, warning: 300, steps: 40 } as const;
 export const REVIEW_MONTHS = 12;
@@ -156,8 +167,9 @@ export function canReinstate(p: Actor, doc: Pick<LibraryDoc, "retiredAt" | "publ
   return yes;
 }
 
-/** SOP-BOH-…, SOP-FOH-…, SOP-PROD-…; for several sections or everyone, SOP-GEN-…. The code never changes. */
-export const sopPrefix = (sections: Area[]) => `SOP-${sections.length === 1 ? sections[0] : "GEN"}-`;
+/** SOP-BOH-…, PREP-PROD-…, DISH-BOH-…; for several sections or everyone, …-GEN-…. The code never changes. */
+export const codePrefix = (kind: LibraryKind, sections: Area[]) => `${kind.toUpperCase()}-${sections.length === 1 ? sections[0] : "GEN"}-`;
+export const sopPrefix = (sections: Area[]) => codePrefix("sop", sections);
 
 /** The next free code with this prefix: SOP-BOH-003 after SOP-BOH-002. */
 export function nextCode(prefix: string, codes: string[]): string {
@@ -166,28 +178,31 @@ export function nextCode(prefix: string, codes: string[]): string {
 }
 
 export interface SopInput { title: string; sections: string[]; purpose: string; steps: { text: string; warning?: string; photo?: Photo }[] }
-type Cleaned<T> = { ok: true; value: T } | { ok: false; error: string };
+export type Cleaned<T> = { ok: true; value: T } | { ok: false; error: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SECTIONS: Area[] = ["FOH", "BOH", "PROD"];
-const text = (s: string | undefined) => (s ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
-const isPhoto = (p: Photo | undefined): p is Photo => !!p && UUID.test(p.id) && [p.w, p.h].every((n) => Number.isInteger(n) && n > 0 && n <= 10_000);
+/** Text as typed: line endings tidied, trailing spaces and blank edges removed. */
+export const cleanText = (s: string | undefined) => (s ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
+export const isPhoto = (p: Photo | undefined): p is Photo => !!p && UUID.test(p.id) && [p.w, p.h].every((n) => Number.isInteger(n) && n > 0 && n <= 10_000);
 
 /**
  * Cleans a draft and checks the limits. A draft may be unfinished (`readyForReview` says when it isn't); steps with
  * nothing in them are dropped.
  */
-export function cleanSop(input: SopInput): Cleaned<{ title: string; body: SopBody }> {
-  const title = input.title.replace(/\s+/g, " ").trim();
+/** A title: spaces tidied, within the limit. */
+export function cleanTitle(raw: string): Cleaned<string> {
+  const title = raw.replace(/\s+/g, " ").trim();
   if (!title) return { ok: false, error: "Give it a title" };
   if (title.length > SOP_LIMITS.title) return { ok: false, error: `Keep the title under ${SOP_LIMITS.title} characters` };
-  const sections = SECTIONS.filter((s) => input.sections.includes(s));
-  if (input.sections.some((s) => !SECTIONS.includes(s as Area))) return { ok: false, error: "Unknown section" };
-  const purpose = text(input.purpose);
-  if (purpose.length > SOP_LIMITS.purpose) return { ok: false, error: `Keep the purpose under ${SOP_LIMITS.purpose} characters` };
+  return { ok: true, value: title };
+}
+
+/** Steps as written in an editor: trimmed, empty ones dropped; error messages number them as the editor does. */
+export function cleanSteps(input: SopInput["steps"]): Cleaned<SopStep[]> {
   const steps: SopStep[] = [];
-  for (const [i, s] of input.steps.entries()) {
-    const t = text(s.text), w = text(s.warning);
+  for (const [i, s] of input.entries()) {
+    const t = cleanText(s.text), w = cleanText(s.warning);
     if (s.photo && !isPhoto(s.photo)) return { ok: false, error: "That photo didn't upload properly. Add it again" };
     if (!t && !w && !s.photo) continue;
     const n = i + 1; // as numbered in the editor
@@ -195,8 +210,20 @@ export function cleanSop(input: SopInput): Cleaned<{ title: string; body: SopBod
     if (w.length > SOP_LIMITS.warning) return { ok: false, error: `The warning in step ${n} is too long: keep it under ${SOP_LIMITS.warning} characters` };
     steps.push({ text: t, ...(w ? { warning: w } : {}), ...(s.photo ? { photo: { id: s.photo.id, w: s.photo.w, h: s.photo.h } } : {}) });
   }
-  if (steps.length > SOP_LIMITS.steps) return { ok: false, error: `At most ${SOP_LIMITS.steps} steps: split it into two SOPs` };
-  return { ok: true, value: { title, body: { sections, purpose, steps } } };
+  if (steps.length > SOP_LIMITS.steps) return { ok: false, error: `At most ${SOP_LIMITS.steps} steps: split it into two` };
+  return { ok: true, value: steps };
+}
+
+export function cleanSop(input: SopInput): Cleaned<{ title: string; body: SopBody }> {
+  const title = cleanTitle(input.title);
+  if (!title.ok) return title;
+  const sections = SECTIONS.filter((s) => input.sections.includes(s));
+  if (input.sections.some((s) => !SECTIONS.includes(s as Area))) return { ok: false, error: "Unknown section" };
+  const purpose = cleanText(input.purpose);
+  if (purpose.length > SOP_LIMITS.purpose) return { ok: false, error: `Keep the purpose under ${SOP_LIMITS.purpose} characters` };
+  const steps = cleanSteps(input.steps);
+  if (!steps.ok) return steps;
+  return { ok: true, value: { title: title.value, body: { sections, purpose, steps: steps.value } } };
 }
 
 /** Ready to send for approval: a purpose, at least one step, and words in every step. */
@@ -208,16 +235,20 @@ export function readyForReview(body: SopBody): Checked {
   return yes;
 }
 
-/** Photo ids used in a body, to check they were uploaded. */
-export const photoIds = (body: SopBody) => body.steps.flatMap((s) => (s.photo ? [s.photo.id] : []));
+type WithPhotos = { steps: SopStep[]; photo?: Photo };
+
+/** Photo ids used in a body (its steps' photos, and a recipe's finished photo), to check they were uploaded. */
+export const photoIds = (body: WithPhotos) => [...body.steps.flatMap((s) => (s.photo ? [s.photo.id] : [])), ...(body.photo ? [body.photo.id] : [])];
 
 /** The body without these photos (ones the owner erased): each step keeps its words, and a step left empty goes. */
-export function dropPhotos(body: SopBody, gone: Set<string>): SopBody {
+export function dropPhotos<B extends WithPhotos>(body: B, gone: Set<string>): B {
   const steps = body.steps.flatMap((s): SopStep[] => {
     if (!s.photo || !gone.has(s.photo.id)) return [s];
     return s.text || s.warning ? [{ text: s.text, ...(s.warning ? { warning: s.warning } : {}) }] : [];
   });
-  return { ...body, steps };
+  const out = { ...body, steps };
+  if (out.photo && gone.has(out.photo.id)) delete out.photo;
+  return out;
 }
 
 export const defaultReviewBy = (today: string) => addMonths(today, REVIEW_MONTHS);

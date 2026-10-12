@@ -19,7 +19,7 @@ import { gasFor, readyFor } from "@/lib/daily-service";
 import { readyShownUntil } from "@/lib/domain/daily";
 import { londonHM } from "@/lib/domain/time";
 import { MustRead } from "@/components/MustRead";
-import { sopsToRead } from "@/lib/library-service";
+import { allergenChangesToConfirm, sopsToRead } from "@/lib/library-service";
 
 export const dynamic = "force-dynamic";
 
@@ -67,10 +67,11 @@ export default async function Today() {
     others.forEach((l, i) => seen.set(l.id, !!runs[i].signedAt));
     return all.map((l) => ({ name: l.name, due: l.due, signed: seen.get(l.id)! }));
   };
-  const [ready, gas, toRead] = await Promise.all([
+  const [ready, gas, toRead, allergenChanges] = await Promise.all([
     readyShown ? readyLists().then((lists) => readyFor(ctx.site, now, db, { lists, kit, openFaults: kitOpen, alerts }, { forStaff: !ctx.isManager })) : undefined,
     gasFor(ctx.site, now, db),
     sopsToRead(ctx.person, db),
+    allergenChangesToConfirm(ctx.person, db),
   ]);
   const showReady = readyShown && ready;
   const down = kit.map((eq) => ({ eq, f: faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down") }))
@@ -116,7 +117,7 @@ export default async function Today() {
             <div className="grow"><div className="strong">{r.name}: {r.status?.text}</div><div style={{ fontSize: 13 }}>{r.time} · {r.section}</div></div>
           </div>
         ))}
-        <MustRead docs={toRead} />
+        <MustRead docs={toRead} allergens={allergenChanges} />
         {(toDo.length > 0 || prepOn) && (
           <Link href={toDo.length || !prepOn ? "/handover" : "/handover/prep"} className={toDo.length ? "alert" : "list-btn"} style={{ textDecoration: "none" }}>
             <Icon name="handover" />

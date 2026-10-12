@@ -14,7 +14,8 @@ import type { Task } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
 import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
-import { nextCode, type LibraryDoc, type LibraryVersion } from "@/lib/domain/library";
+import { nextCode, type BodyOf, type LibraryDoc, type LibraryVersion } from "@/lib/domain/library";
+import { ALLERGEN_KEYS } from "@/lib/domain/recipes";
 import { shiftEnd, shiftStart } from "@/lib/domain/reminders";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
@@ -89,16 +90,47 @@ interface State {
   coverOffers: { id: string; requestId: string; personId: string; createdAt: number; withdrawnAt?: number }[];
   libDocs: (Omit<LibraryDoc, "published" | "open"> & { createdBy: string })[];
   libVersions: Omit<LibraryVersion, "authorName" | "reviewedByName" | "approvedByName">[];
-  libAcks: LibraryAck[];
+  libAcks: Omit<LibraryAck, "docId">[];
   media: Map<string, { mime: string; bytes: Uint8Array; width: number; height: number; createdBy: string; createdAt: number; erasedAt?: number; erasedBy?: string }>;
 }
 
-/** One sample SOP, published, so the library has something to show in demo mode. */
+const DEMO_FREE = Object.fromEntries(ALLERGEN_KEYS.map((k) => [k, "free" as const]));
+
+/** A sample SOP, prep recipe and dish, published, so the library has something to show in demo mode. */
 function demoLibrary(): Pick<State, "libDocs" | "libVersions" | "libAcks" | "media"> {
   const at = Date.now() - 3 * 86_400_000;
+  const published = { authorId: "DEMO-MGR", contributors: ["DEMO-MGR"], rev: 3, createdAt: at, updatedAt: at, submittedBy: "DEMO-MGR", submittedAt: at,
+    approvedBy: "DEMO-OWN", publishedAt: at, change: "new" as const, reviewBy: addDaysIso(londonDate(at), 365), status: "published" as const, version: 1 };
   return {
-    libDocs: [{ id: "demo-sop-1", kind: "sop", code: "SOP-GEN-001", createdAt: at, createdBy: "DEMO-MGR" }],
+    libDocs: [
+      { id: "demo-sop-1", kind: "sop", code: "SOP-GEN-001", createdAt: at, createdBy: "DEMO-MGR" },
+      { id: "demo-prep-1", kind: "prep", code: "PREP-PROD-001", createdAt: at, createdBy: "DEMO-MGR" },
+      { id: "demo-dish-1", kind: "dish", code: "DISH-BOH-001", createdAt: at, createdBy: "DEMO-MGR" },
+    ],
     libVersions: [{
+      ...published, id: "demo-prep-1-v1", docId: "demo-prep-1", title: "Pho broth (demo)",
+      body: { sections: ["PROD"], category: "Broth", makes: { qty: 60, unit: "L" }, ingredients: [
+        { qty: 25, unit: "kg", name: "Beef marrow bones" }, { qty: 30, unit: "kg", name: "Beef bones" }, { qty: 3, unit: "kg", name: "Rock sugar" },
+        { qty: 900, unit: "g", name: "Coriander seed", note: "toasted" }, { qty: 100, unit: "g", name: "Star anise", note: "toasted" },
+        { qty: 600, unit: "g", name: "Ginger", note: "charred" }, { qty: 5, unit: "bottle", name: "Fish sauce", note: "added at the end" },
+      ], steps: [
+        { text: "Blanch the bones for 10 minutes, drain and rinse." },
+        { text: "Cover with fresh water, bring up and simmer for 12 hours, skimming." , warning: "Never let it boil hard: the broth turns cloudy." },
+        { text: "Add the toasted spices and charred ginger for the last 2 hours, then season with rock sugar and fish sauce." },
+        { text: "Strain, then cool to below 8°C within 90 minutes in the blast chiller." },
+      ], storage: "Chilled at 0–5°C in lidded tubs, labelled with the date", shelfLife: { qty: 3, unit: "days" },
+      allergens: { ...DEMO_FREE, fish: "contains" }, notes: "" },
+    }, {
+      ...published, id: "demo-dish-1-v1", docId: "demo-dish-1", title: "Pho beef brisket (demo)",
+      body: { sections: ["BOH"], category: "Pho", components: [
+        { qty: 330, unit: "g", name: "Rice noodles", note: "blanched" }, { qty: 80, unit: "g", name: "Beef brisket", note: "sliced thin" },
+        { qty: 500, unit: "ml", name: "Pho broth", prep: "demo-prep-1" }, { qty: 1, unit: "portion", name: "Herb plate", note: "basil, lime, chilli, bean sprouts" },
+      ], steps: [
+        { text: "Noodles in a warm bowl, brisket on top." },
+        { text: "Ladle the broth over at a rolling boil, so it's piping hot.", warning: "The broth must be at least 75°C." },
+        { text: "Serve with the herb plate on the side." },
+      ], allergens: { ...DEMO_FREE, fish: "contains" }, modifications: "Fish sauce is in the broth: it can't be left out.", dietary: [] },
+    }, {
       id: "demo-sop-1-v1", docId: "demo-sop-1", status: "published", version: 1, title: "Hand washing (demo)",
       body: { sections: [], purpose: "Clean hands stop bacteria and allergens spreading to food. Wash before starting work, after breaks, raw food, bins and cleaning, and after touching your face or phone.", steps: [
         { text: "Wet your hands with warm running water." },
@@ -235,7 +267,9 @@ function coverView(c: State["cover"][number]): CoverRequest | undefined {
 const taskView = (t: Task): Task => ({ ...t, createdByName: nameOf(t.createdBy) ?? "", assigneeName: nameOf(t.assigneeId), doneByName: nameOf(t.doneBy) });
 const libVersionView = (v: State["libVersions"][number], light = false): LibraryVersion => {
   const copy = structuredClone(v);
-  if (light) copy.body = { sections: copy.body.sections, purpose: "", steps: [] };
+  // Light: who it's for and its category only, the rest empty (like the SQL store).
+  if (light) copy.body = { sections: copy.body.sections, category: "category" in copy.body ? copy.body.category : "", purpose: "", steps: [], ingredients: [], components: [],
+    allergens: {}, dietary: [] } as unknown as LibraryVersion["body"];
   return { ...copy, authorName: nameOf(v.authorId) ?? "", reviewedByName: nameOf(v.reviewedBy), approvedByName: nameOf(v.approvedBy) };
 };
 function libDocView(d: State["libDocs"][number], light = false): LibraryDoc {
@@ -597,7 +631,7 @@ export const demoStore: Store = {
   },
   // ---------- library ----------
   async libraryDocs(kind, opts) {
-    return S().libDocs.filter((d) => d.kind === kind).sort((a, b) => a.code.localeCompare(b.code)).map((d) => libDocView(d, !!opts?.light));
+    return S().libDocs.filter((d) => d.kind === kind).sort((a, b) => a.code.localeCompare(b.code)).map((d) => libDocView(d, !!opts?.light)) as LibraryDoc<BodyOf<typeof kind>>[];
   },
   async libraryDoc(id) {
     const d = S().libDocs.find((x) => x.id === id);
@@ -659,9 +693,11 @@ export const demoStore: Store = {
     if (!p.ownerApproving && (v.authorId === p.approverId || v.submittedBy === p.approverId || v.contributors.includes(p.approverId))) return undefined;
     const now = Date.now();
     const versions = S().libVersions.filter((x) => x.docId === v.docId);
+    const prev = versions.find((x) => x.status === "published");
+    const allergensChangedAt = p.allergens === "changed" ? now : p.allergens === "same" ? prev?.allergensChangedAt : undefined;
     for (const old of versions.filter((x) => x.status === "published")) Object.assign(old, { status: "superseded", supersededAt: now });
     const n = Math.max(0, ...versions.map((x) => x.version ?? 0)) + 1;
-    Object.assign(v, { status: "published", version: n, approvedBy: p.approverId, publishedAt: now, change: p.change, reviewBy: p.reviewBy, updatedAt: now, rev: v.rev + 1 });
+    Object.assign(v, { status: "published", version: n, approvedBy: p.approverId, publishedAt: now, change: p.change, reviewBy: p.reviewBy, updatedAt: now, rev: v.rev + 1, allergensChangedAt });
     if (!S().libAcks.some((a) => a.versionId === v.id && a.personId === p.approverId)) S().libAcks.push({ versionId: v.id, personId: p.approverId, at: now });
     return n;
   },
@@ -680,7 +716,9 @@ export const demoStore: Store = {
     return true;
   },
   async libraryAcks(f) {
-    return S().libAcks.filter((a) => (!f.versionIds || f.versionIds.includes(a.versionId)) && (!f.personId || a.personId === f.personId)).map((a) => ({ ...a }));
+    const docOf = (versionId: string) => S().libVersions.find((v) => v.id === versionId)?.docId ?? "";
+    return S().libAcks.map((a) => ({ ...a, docId: docOf(a.versionId) }))
+      .filter((a) => (!f.versionIds || f.versionIds.includes(a.versionId)) && (!f.personId || a.personId === f.personId) && (!f.docId || a.docId === f.docId));
   },
   async ackLibraryVersion(versionId, personId) {
     if (!S().libVersions.some((v) => v.id === versionId && v.status === "published")) return false;

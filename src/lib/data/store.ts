@@ -11,7 +11,7 @@ import type { Task, TaskInput, TaskStatus } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
 import type { CoverRequest } from "@/lib/domain/cover";
-import type { ChangeKind, LibraryDoc, LibraryKind, LibraryVersion, SopBody } from "@/lib/domain/library";
+import type { BodyOf, ChangeKind, LibraryBody, LibraryDoc, LibraryKind, LibraryVersion } from "@/lib/domain/library";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
@@ -47,7 +47,7 @@ export interface RecordsData {
 }
 export interface AuditEntry { at: number; actorId?: string; siteId?: SiteId; action: string; detail: string }
 /** "I've read it" for one version of a library document. */
-export interface LibraryAck { versionId: string; personId: string; at: number }
+export interface LibraryAck { versionId: string; docId: string; personId: string; at: number }
 /** submit: draft → waiting for approval; withdraw: taken back to draft; send_back: an approver returns it with a note; discard: draft → discarded. */
 export type LibraryMove = "submit" | "withdraw" | "send_back" | "discard";
 
@@ -181,23 +181,24 @@ export interface Store {
   /** Records the day's gas check. False if someone has already done it (the first tap counts). */
   addGasCheck(c: { siteId: SiteId; date: string; personId: string; onTablet: boolean }): Promise<boolean>;
 
-  // Library: SOPs. A published version never changes; documents are retired; versions and confirmations are never deleted.
-  // Every change to a version takes the revision (`rev`) the person was shown, and fails if it has moved on since.
+  // Library: SOPs, prep recipes and dish specs. A published version never changes; documents are retired; versions and
+  // confirmations are never deleted. Every change to a version takes the revision (`rev`) the person was shown, and
+  // fails if it has moved on since.
   /**
    * Every document of a kind (by code), each with its published version and its open one (draft or waiting for approval).
-   * `light`: versions carry only `body.sections` (no purpose or steps), for counts and "to read" lists.
+   * `light`: versions carry only `body.sections` and `body.category` (no steps, ingredients or allergens), for counts and lists.
    */
-  libraryDocs(kind: LibraryKind, opts?: { light?: boolean }): Promise<LibraryDoc[]>;
+  libraryDocs<K extends LibraryKind>(kind: K, opts?: { light?: boolean }): Promise<LibraryDoc<BodyOf<K>>[]>;
   libraryDoc(id: string): Promise<LibraryDoc | undefined>;
   /** Every version of a document, newest first. */
   libraryVersions(docId: string): Promise<LibraryVersion[]>;
   libraryVersion(id: string): Promise<LibraryVersion | undefined>;
   /** A new document and its first draft. The code is the next free one starting with `prefix` (nextCode). */
-  createLibraryDoc(d: { kind: LibraryKind; prefix: string; title: string; body: SopBody; authorId: string }): Promise<{ docId: string; versionId: string; code: string }>;
+  createLibraryDoc(d: { kind: LibraryKind; prefix: string; title: string; body: LibraryBody; authorId: string }): Promise<{ docId: string; versionId: string; code: string }>;
   /** A new draft copied from the published version. Undefined if a draft is already open, nothing is published, or it's retired. */
   startLibraryDraft(docId: string, authorId: string): Promise<string | undefined>;
   /** Saves a draft's title and body; the person joins its contributors. The new revision, or undefined if it isn't that draft any more. */
-  saveLibraryDraft(versionId: string, rev: number, d: { title: string; body: SopBody }, personId: string): Promise<number | undefined>;
+  saveLibraryDraft(versionId: string, rev: number, d: { title: string; body: LibraryBody }, personId: string): Promise<number | undefined>;
   /**
    * Moves a version along (see LibraryMove); sending it adds the person to its contributors. Discarding the only draft
    * of a document that was never published also retires the document. False if it changed meanwhile.
@@ -206,13 +207,14 @@ export interface Store {
   /**
    * Waiting for approval → published, replacing the published version (kept as superseded); the approver counts as
    * having read it. Refused if it changed meanwhile, the document is retired, or the approver is one of its
-   * contributors (unless `ownerApproving`). Returns the new version number.
+   * contributors (unless `ownerApproving`). Dishes: `allergens` "changed" marks the change now (everyone at its sites
+   * confirms it); "same" keeps the version it replaces' last change. Returns the new version number.
    */
-  publishLibraryVersion(versionId: string, rev: number, p: { approverId: string; change: ChangeKind; reviewBy: string; ownerApproving: boolean }): Promise<number | undefined>;
+  publishLibraryVersion(versionId: string, rev: number, p: { approverId: string; change: ChangeKind; reviewBy: string; ownerApproving: boolean; allergens?: "changed" | "same" }): Promise<number | undefined>;
   /** Retires a document; a draft or version waiting for approval is discarded with it. */
   retireLibraryDoc(docId: string, personId: string, note: string): Promise<boolean>;
   reinstateLibraryDoc(docId: string): Promise<boolean>;
-  libraryAcks(filter: { versionIds?: string[]; personId?: string }): Promise<LibraryAck[]>;
+  libraryAcks(filter: { versionIds?: string[]; personId?: string; docId?: string }): Promise<LibraryAck[]>;
   /** Records "I've read it" for a published version. False if already recorded (or it isn't published). */
   ackLibraryVersion(versionId: string, personId: string): Promise<boolean>;
 

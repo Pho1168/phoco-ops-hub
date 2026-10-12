@@ -7,7 +7,7 @@ const TILES = [
   { href: "/manage/tasks", icon: "prep", title: "Task centre", text: "Everything open at your sites in one list, most urgent first", count: "urgent" as const, countLabel: "urgent" },
   { href: "/manage/report", icon: "report", title: "Weekly report", text: "Checks, temperatures, handovers and hours per site" },
   { href: "/manage/records", icon: "records", title: "Inspection records", text: "Temperature logs, sign-offs and corrective actions to show an inspector" },
-  { href: "/library", icon: "book", title: "SOPs", text: "Write, approve and publish SOPs, and see who has read them", count: "libraryToDo" as const, countLabel: "to do" },
+  { href: "/library", icon: "book", title: "SOPs and recipes", text: "Write, approve and publish SOPs, recipes and dish allergens, and see who has read them", count: "libraryToDo" as const, countLabel: "to do" },
   { href: "/manage/notices", icon: "notice", title: "Team notices", text: "Post a notice and see who has read it", count: "noticesActive" as const, countLabel: "live" },
   { href: "/manage/time-off", icon: "timeoff", title: "Time off", text: "Holiday requests to approve or decline", count: "timeOffPending" as const, countLabel: "to decide" },
   { href: "/manage/cover", icon: "handover", title: "Shift cover", text: "Who can cover a shift: approve, then update the rota sheet", count: "coverToDo" as const, countLabel: "to do" },
