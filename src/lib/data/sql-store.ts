@@ -1,6 +1,12 @@
 import postgres from "postgres";
 import type { Answer, Area, Checklist, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
+import type { RawAnswer } from "@/lib/domain/records";
+import type { TeamNotice } from "@/lib/domain/notices";
+import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
+import type { Certificate, CertKind } from "@/lib/domain/certificates";
+import type { Equipment, EquipmentEvent, EquipmentKind, EventKind, Severity } from "@/lib/domain/equipment";
+import type { Priority, Task, TaskCategory, TaskStatus } from "@/lib/domain/tasks";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -30,6 +36,39 @@ const isUuid = (s: string) => UUID.test(s);
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : undefined);
 const num = (v: string | null) => (v === null ? undefined : Number(v));
 const opt = <T,>(v: T | null) => (v === null ? undefined : v);
+
+interface TaskRow { id: string; site_id: SiteId; title: string; detail: string | null; priority: number; category: TaskCategory; assignee_id: string | null; assignee_name: string | null;
+  section: Area | null; due_on: string | null; status: TaskStatus; created_by: string; created_by_name: string; created_at: Date; done_by: string | null; done_by_name: string | null;
+  done_at: Date | null; done_note: string | null; cancelled_by: string | null; cancelled_at: Date | null }
+const taskSelect = (q: postgres.Sql) => q`
+  select t.id, t.site_id, t.title, t.detail, t.priority, t.category, t.assignee_id, a.display_name as assignee_name, t.section, to_char(t.due_on, 'YYYY-MM-DD') as due_on,
+    t.status, t.created_by, c.display_name as created_by_name, t.created_at, t.done_by, d.display_name as done_by_name, t.done_at, t.done_note, t.cancelled_by, t.cancelled_at
+  from tasks t join people c on c.id = t.created_by left join people a on a.id = t.assignee_id left join people d on d.id = t.done_by`;
+const taskFrom = (r: TaskRow): Task => ({
+  id: r.id, siteId: r.site_id, title: r.title, detail: opt(r.detail), priority: r.priority as Priority, category: r.category, assigneeId: opt(r.assignee_id),
+  assigneeName: opt(r.assignee_name), section: opt(r.section), dueOn: opt(r.due_on), status: r.status, createdBy: r.created_by, createdByName: r.created_by_name,
+  createdAt: r.created_at.getTime(), doneBy: opt(r.done_by), doneByName: opt(r.done_by_name), doneAt: ms(r.done_at), doneNote: opt(r.done_note),
+  cancelledBy: opt(r.cancelled_by), cancelledAt: ms(r.cancelled_at),
+});
+
+interface EqRow { id: string; site_id: SiteId; name: string; kind: EquipmentKind; location: string | null; make_model: string | null; serial: string | null;
+  service_every_months: number | null; service_contact: string | null; instructions: string | null; created_at: Date; retired_at: Date | null }
+const eqFrom = (r: EqRow): Equipment => ({
+  id: r.id, siteId: r.site_id, name: r.name, kind: r.kind, location: opt(r.location), makeModel: opt(r.make_model), serial: opt(r.serial),
+  serviceEveryMonths: opt(r.service_every_months), serviceContact: opt(r.service_contact), instructions: opt(r.instructions),
+  createdAt: r.created_at.getTime(), retiredAt: ms(r.retired_at),
+});
+
+interface CertRow { id: string; person_id: string; kind: CertKind; issued_on: string | null; expires_on: string | null; provider: string | null; reference: string | null;
+  note: string | null; created_by: string; created_by_name: string; created_at: Date }
+const certSelect = (q: postgres.Sql) => q`
+  select c.id, c.person_id, c.kind, to_char(c.issued_on, 'YYYY-MM-DD') as issued_on, to_char(c.expires_on, 'YYYY-MM-DD') as expires_on,
+    c.provider, c.reference, c.note, c.created_by, p.display_name as created_by_name, c.created_at
+  from staff_certificates c join people p on p.id = c.created_by`;
+const certFrom = (r: CertRow): Certificate => ({
+  id: r.id, personId: r.person_id, kind: r.kind, issuedOn: opt(r.issued_on), expiresOn: opt(r.expires_on), provider: opt(r.provider), reference: opt(r.reference),
+  note: opt(r.note), createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(),
+});
 // The database stores an un-ticked item as 'cleared'; the app calls it 'todo'.
 const toDbOutcome = (o: Outcome) => (o === "todo" ? "cleared" : o);
 const fromDbOutcome = (o: string): Outcome => (o === "cleared" ? "todo" : (o as Outcome));
@@ -89,8 +128,8 @@ async function loadChecklists(filter: postgres.PendingQuery<postgres.Row[]>): Pr
   }));
 }
 
-interface NoticeDbRow { id: string; person_id: string; kind: NoticeRow["kind"]; title: string; body: string; send_after: Date; sent_at: Date | null; created_at: Date }
-const toNotice = (r: NoticeDbRow): NoticeRow => ({ id: r.id, personId: r.person_id, kind: r.kind, title: r.title, body: r.body, sendAfter: r.send_after.getTime(), sentAt: ms(r.sent_at), createdAt: r.created_at.getTime() });
+interface NoticeDbRow { id: string; person_id: string; kind: NoticeRow["kind"]; title: string; body: string; send_after: Date; sent_at: Date | null; created_at: Date; url: string | null }
+const toNotice = (r: NoticeDbRow): NoticeRow => ({ id: r.id, personId: r.person_id, kind: r.kind, title: r.title, body: r.body, sendAfter: r.send_after.getTime(), sentAt: ms(r.sent_at), createdAt: r.created_at.getTime(), url: opt(r.url) });
 
 interface DeviceRow { id: string; site_id: SiteId; label: string; status: Device["status"]; last_seen: Date | null; created_at: Date }
 const toDevice = (r: DeviceRow): Device => ({ id: r.id, siteId: r.site_id, label: r.label, status: r.status, lastSeen: ms(r.last_seen), createdAt: r.created_at.getTime() });
@@ -356,6 +395,50 @@ export const sqlStore: Store = {
             where id = ${id} and resolved_at is null`;
   },
 
+  async recordsData(siteId, from, to) {
+    const q = sql();
+    const lists = await loadChecklists(q`t.site_id = ${siteId}`);
+    const runs = await q<{ list_id: string; d: string; signed_at: Date | null; signed_by_name: string | null; total: number; answered: number }[]>`
+      select r.template_id as list_id, to_char(r.business_date, 'YYYY-MM-DD') as d, r.signed_at, p.display_name as signed_by_name,
+        (select count(*)::int from checklist_items i where i.version_id = r.version_id) as total,
+        (select count(*)::int from (select distinct on (a.item_id) a.outcome from run_answers a where a.run_id = r.id
+                                    order by a.item_id, a.captured_at desc, a.synced_at desc) x where x.outcome <> 'cleared') as answered
+      from checklist_runs r left join people p on p.id = r.signed_by
+      where r.site_id = ${siteId} and r.business_date between ${from} and ${to}`;
+    const answers = await q<{ list_id: string; list_name: string; d: string; item_id: string; item_text: string; answer_type: RawAnswer["itemType"]; rule_code: string | null;
+      value: string | null; outcome: string; by_name: string; captured_at: Date; action: string | null; action_by: string | null }[]>`
+      select r.template_id as list_id, t.name as list_name, to_char(r.business_date, 'YYYY-MM-DD') as d, a.item_id, i.text as item_text, i.answer_type, i.rule_code,
+        a.value, a.outcome, p.display_name as by_name, a.captured_at, c.action, cp.display_name as action_by
+      from run_answers a
+        join checklist_runs r on r.id = a.run_id
+        join checklist_templates t on t.id = r.template_id
+        join checklist_items i on i.id = a.item_id
+        join people p on p.id = a.recorded_by
+        left join lateral (select c.action, c.recorded_by from corrective_actions c where c.answer_id = a.id order by c.recorded_at desc limit 1) c on true
+        left join people cp on cp.id = c.recorded_by
+      where r.site_id = ${siteId} and r.business_date between ${from} and ${to}
+      order by a.captured_at, a.synced_at`;
+    const alerts = await q<{ id: string; site_id: SiteId; level: Alert["level"]; title: string; detail: string | null; dedupe_key: string; created_at: Date; resolved_at: Date | null; resolved_by: string | null; resolution_note: string | null; resolved_by_name: string | null }[]>`
+      select a.id, a.site_id, a.level, a.title, a.detail, a.dedupe_key, a.created_at, a.resolved_at, a.resolved_by, a.resolution_note, p.display_name as resolved_by_name
+      from alerts a left join people p on p.id = a.resolved_by
+      where a.site_id = ${siteId} and a.created_at >= ${new Date(londonToUtc(from, "00:00"))} and a.created_at < ${new Date(londonToUtc(addDays(to, 1), "00:00"))}
+      order by a.created_at`;
+    const [first] = await q<{ d: string | null }[]>`select to_char(min(business_date), 'YYYY-MM-DD') as d from checklist_runs where site_id = ${siteId}`;
+    return {
+      lists: lists.map((l) => ({ id: l.id, name: l.name, area: l.area, due: l.due })),
+      runs: runs.map((r) => ({ listId: r.list_id, date: r.d, signedAt: ms(r.signed_at), signedByName: opt(r.signed_by_name), total: r.total, answered: r.answered })),
+      answers: answers.map((a) => ({
+        listId: a.list_id, listName: a.list_name, date: a.d, itemId: a.item_id, itemText: a.item_text, itemType: a.answer_type, ruleCode: opt(a.rule_code),
+        value: a.value ?? "", outcome: fromDbOutcome(a.outcome), byName: a.by_name, at: a.captured_at.getTime(), action: opt(a.action), actionByName: opt(a.action_by),
+      })),
+      alerts: alerts.map((r) => ({
+        id: r.id, siteId: r.site_id, level: r.level, title: r.title, detail: r.detail ?? "", dedupeKey: r.dedupe_key, createdAt: r.created_at.getTime(),
+        resolvedAt: ms(r.resolved_at), resolvedBy: opt(r.resolved_by), resolutionNote: opt(r.resolution_note), resolvedByName: opt(r.resolved_by_name),
+      })),
+      trackingFrom: first?.d ?? undefined,
+    };
+  },
+
   async handover(siteId, createdSince = Date.now() - 7 * 86_400_000) {
     const q = sql();
     const rows = await q<{ id: string; site_id: SiteId; category: string; body: string; needs_action: boolean; created_by: string; created_by_name: string | null; created_at: Date; closed_at: Date | null; closed_by: string | null; closed_by_name: string | null }[]>`
@@ -476,6 +559,220 @@ export const sqlStore: Store = {
     return rows.length > 0;
   },
 
+  // ---------- team notices ----------
+  async teamNotices(recentEnded = 10) {
+    const q = sql();
+    const today = londonDate(Date.now());
+    const rows = await q<{ id: string; site_id: SiteId | null; sections: Area[]; title: string; body: string; important: boolean; created_by: string; created_by_name: string;
+      created_at: Date; show_until: string | null; ended_at: Date | null; reads: { person_id: string; read_at: string }[] | null }[]>`
+      select a.id, a.site_id, a.sections, a.title, a.body, a.important, a.created_by, p.display_name as created_by_name, a.created_at,
+        to_char(a.show_until, 'YYYY-MM-DD') as show_until, a.ended_at,
+        (select json_agg(json_build_object('person_id', r.person_id, 'read_at', r.read_at)) from announcement_reads r where r.announcement_id = a.id) as reads
+      from announcements a join people p on p.id = a.created_by
+      where (a.ended_at is null and (a.show_until is null or a.show_until >= ${today}))
+         or a.id in (select id from announcements where ended_at is not null or show_until < ${today} order by created_at desc limit ${recentEnded})
+      order by a.created_at desc`;
+    return rows.map((r): TeamNotice => ({
+      id: r.id, siteId: opt(r.site_id), sections: r.sections, title: r.title, body: r.body, important: r.important,
+      createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(), showUntil: opt(r.show_until), endedAt: ms(r.ended_at),
+      reads: (r.reads ?? []).map((x) => ({ personId: x.person_id, readAt: new Date(x.read_at).getTime() })),
+    }));
+  },
+  async addTeamNotice(n) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into announcements (site_id, sections, title, body, important, created_by, show_until)
+      values (${n.siteId ?? null}, ${n.sections}, ${n.title}, ${n.body}, ${n.important}, ${n.createdBy}, ${n.showUntil ?? null}) returning id`;
+    return r.id;
+  },
+  async endTeamNotice(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update announcements set ended_at = now(), ended_by = ${personId} where id = ${id} and ended_at is null returning id`).length > 0;
+  },
+  async readTeamNotice(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    const [a] = await q`select id from announcements where id = ${id}`;
+    if (!a) return false;
+    await q`insert into announcement_reads (announcement_id, person_id) values (${id}, ${personId}) on conflict do nothing`;
+    return true;
+  },
+
+  // ---------- time off ----------
+  async timeOff(f) {
+    const q = sql();
+    if (f.personId && !isUuid(f.personId)) return [];
+    const rows = await q<{ id: string; person_id: string; person_name: string; site_id: SiteId; starts_on: string; ends_on: string; kind: TimeOffKind; note: string | null;
+      status: TimeOffStatus; created_at: Date; decided_by: string | null; decided_by_name: string | null; decided_at: Date | null; decision_note: string | null }[]>`
+      select t.id, t.person_id, p.display_name as person_name, t.site_id, to_char(t.starts_on, 'YYYY-MM-DD') as starts_on, to_char(t.ends_on, 'YYYY-MM-DD') as ends_on,
+        t.kind, t.note, t.status, t.created_at, t.decided_by, d.display_name as decided_by_name, t.decided_at, t.decision_note
+      from time_off t join people p on p.id = t.person_id left join people d on d.id = t.decided_by
+      where true
+        ${f.personId ? q`and t.person_id = ${f.personId}` : q``}
+        ${f.siteIds ? q`and t.site_id = any(${f.siteIds}::text[])` : q``}
+        ${f.from ? q`and t.ends_on >= ${f.from}` : q``}
+        ${f.to ? q`and t.starts_on <= ${f.to}` : q``}
+        ${f.statuses ? q`and t.status = any(${f.statuses}::text[])` : q``}
+      order by t.created_at desc limit 300`;
+    return rows.map((r): TimeOff => ({
+      id: r.id, personId: r.person_id, personName: r.person_name, siteId: r.site_id, startsOn: r.starts_on, endsOn: r.ends_on, kind: r.kind, note: opt(r.note),
+      status: r.status, createdAt: r.created_at.getTime(), decidedBy: opt(r.decided_by), decidedByName: opt(r.decided_by_name), decidedAt: ms(r.decided_at), decisionNote: opt(r.decision_note),
+    }));
+  },
+  async requestTimeOff(t) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into time_off (person_id, site_id, starts_on, ends_on, kind, note)
+      values (${t.personId}, ${t.siteId}, ${t.startsOn}, ${t.endsOn}, ${t.kind}, ${t.note ?? null}) returning id`;
+    return r.id;
+  },
+  async decideTimeOff(id, decision, personId, note) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update time_off set status = ${decision}, decided_by = ${personId}, decided_at = now(), decision_note = ${note ?? null}
+                    where id = ${id} and status = 'pending' returning id`).length > 0;
+  },
+  async cancelTimeOff(id, from) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update time_off set status = 'cancelled', cancelled_at = now() where id = ${id} and status = ${from} returning id`).length > 0;
+  },
+
+  // ---------- staff certificates ----------
+  async certificates(f = {}) {
+    if (f.personIds && !f.personIds.every(isUuid)) return [];
+    const q = sql();
+    const rows = await q<CertRow[]>`
+      ${certSelect(q)} where c.removed_at is null ${f.personIds ? q`and c.person_id = any(${f.personIds}::uuid[])` : q``}
+      order by c.created_at`;
+    return rows.map(certFrom);
+  },
+  async certificate(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<CertRow[]>`${certSelect(q)} where c.id = ${id} and c.removed_at is null`;
+    return r && certFrom(r);
+  },
+  async addCertificate(c) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into staff_certificates (person_id, kind, issued_on, expires_on, provider, reference, note, created_by)
+      values (${c.personId}, ${c.kind}, ${c.issuedOn ?? null}, ${c.expiresOn ?? null}, ${c.provider ?? null}, ${c.reference ?? null}, ${c.note ?? null}, ${c.createdBy})
+      returning id`;
+    return r.id;
+  },
+  async removeCertificate(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update staff_certificates set removed_at = now(), removed_by = ${personId} where id = ${id} and removed_at is null returning id`).length > 0;
+  },
+
+  // ---------- equipment ----------
+  async equipment(siteId, includeRetired = false) {
+    const q = sql();
+    const rows = await q<EqRow[]>`select * from equipment where site_id = ${siteId} ${includeRetired ? q`` : q`and retired_at is null`} order by lower(name)`;
+    return rows.map(eqFrom);
+  },
+  async equipmentItem(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<EqRow[]>`select * from equipment where id = ${id}`;
+    return r && eqFrom(r);
+  },
+  async addEquipment(e) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into equipment (site_id, name, kind, location, make_model, serial, service_every_months, service_contact, instructions, created_by)
+      values (${e.siteId}, ${e.name}, ${e.kind}, ${e.location ?? null}, ${e.makeModel ?? null}, ${e.serial ?? null}, ${e.serviceEveryMonths ?? null},
+              ${e.serviceContact ?? null}, ${e.instructions ?? null}, ${e.createdBy}) returning id`;
+    return r.id;
+  },
+  async updateEquipment(id, e) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update equipment set name = ${e.name}, kind = ${e.kind}, location = ${e.location ?? null}, make_model = ${e.makeModel ?? null}, serial = ${e.serial ?? null},
+                      service_every_months = ${e.serviceEveryMonths ?? null}, service_contact = ${e.serviceContact ?? null}, instructions = ${e.instructions ?? null}, updated_at = now()
+                    where id = ${id} and retired_at is null returning id`).length > 0;
+  },
+  async retireEquipment(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update equipment set retired_at = now(), retired_by = ${personId} where id = ${id} and retired_at is null returning id`).length > 0;
+  },
+  async equipmentEvents(f) {
+    if (f.equipmentId && !isUuid(f.equipmentId)) return [];
+    const q = sql();
+    const rows = await q<{ id: string; equipment_id: string; site_id: SiteId; kind: EventKind; fault_id: string | null; severity: Severity | null; body: string;
+      done_on: string | null; created_by: string; created_by_name: string; created_at: Date }[]>`
+      select e.id, e.equipment_id, e.site_id, e.kind, e.fault_id, e.severity, e.body, to_char(e.done_on, 'YYYY-MM-DD') as done_on,
+        e.created_by, p.display_name as created_by_name, e.created_at
+      from equipment_events e join people p on p.id = e.created_by
+      where true
+        ${f.equipmentId ? q`and e.equipment_id = ${f.equipmentId}` : q``}
+        ${f.siteId ? q`and e.site_id = ${f.siteId}` : q``}
+        ${f.since ? q`and e.created_at >= ${new Date(f.since)}` : q``}
+        ${f.openFaultsOnly ? q`and ((e.kind = 'fault' and not exists (select 1 from equipment_events x where x.fault_id = e.id and x.kind = 'fixed'))
+                                 or (e.kind = 'update' and not exists (select 1 from equipment_events x where x.fault_id = e.fault_id and x.kind = 'fixed')))` : q``}
+      order by e.created_at`;
+    return rows.map((r): EquipmentEvent => ({
+      id: r.id, equipmentId: r.equipment_id, siteId: r.site_id, kind: r.kind, faultId: opt(r.fault_id), severity: opt(r.severity), body: r.body,
+      doneOn: opt(r.done_on), createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(),
+    }));
+  },
+  async addEquipmentEvent(e) {
+    const q = sql();
+    const rows = await q<{ id: string }[]>`
+      insert into equipment_events (equipment_id, site_id, kind, fault_id, severity, body, done_on, created_by)
+      values (${e.equipmentId}, ${e.siteId}, ${e.kind}, ${e.faultId ?? null}, ${e.severity ?? null}, ${e.body}, ${e.doneOn ?? null}, ${e.createdBy})
+      on conflict (fault_id) where kind = 'fixed' do nothing returning id`;
+    return rows[0]?.id;
+  },
+
+  // ---------- tasks ----------
+  async tasks(f) {
+    if (!f.siteIds.length) return [];
+    const q = sql();
+    const rows = await q<TaskRow[]>`
+      ${taskSelect(q)} where t.site_id = any(${f.siteIds}::text[])
+        ${f.statuses ? q`and t.status = any(${f.statuses}::text[])`
+          : f.closedSince !== undefined ? q`and (t.status = 'open' or t.done_at >= ${new Date(f.closedSince)} or t.cancelled_at >= ${new Date(f.closedSince)})`
+          : q`and t.status = 'open'`}
+      order by t.created_at desc limit 500`;
+    return rows.map(taskFrom);
+  },
+  async task(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<TaskRow[]>`${taskSelect(q)} where t.id = ${id}`;
+    return r && taskFrom(r);
+  },
+  async addTask(t) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into tasks (site_id, title, detail, priority, category, assignee_id, section, due_on, created_by)
+      values (${t.siteId}, ${t.title}, ${t.detail ?? null}, ${t.priority}, ${t.category}, ${t.assigneeId ?? null}, ${t.section ?? null}, ${t.dueOn ?? null}, ${t.createdBy})
+      returning id`;
+    return r.id;
+  },
+  async completeTask(id, personId, note) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update tasks set status = 'done', done_by = ${personId}, done_at = now(), done_note = ${note ?? null}
+                    where id = ${id} and status = 'open' returning id`).length > 0;
+  },
+  async reopenTask(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update tasks set status = 'open', done_by = null, done_at = null, done_note = null
+                    where id = ${id} and status = 'done' and done_by = ${personId} returning id`).length > 0;
+  },
+  async cancelTask(id, personId) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update tasks set status = 'cancelled', cancelled_by = ${personId}, cancelled_at = now() where id = ${id} and status = 'open' returning id`).length > 0;
+  },
+
   // ---------- rota ----------
   async rotaSources() {
     const q = sql();
@@ -589,29 +886,29 @@ export const sqlStore: Store = {
   // ---------- messages and push ----------
   async queueNotice(n) {
     const q = sql();
-    const r = await q`insert into notifications (person_id, kind, title, body, dedupe_key, send_after)
-                      values (${n.personId}, ${n.kind}, ${n.title}, ${n.body}, ${n.dedupeKey ?? null}, ${new Date(n.sendAfter)})
+    const r = await q`insert into notifications (person_id, kind, title, body, dedupe_key, send_after, url)
+                      values (${n.personId}, ${n.kind}, ${n.title}, ${n.body}, ${n.dedupeKey ?? null}, ${new Date(n.sendAfter)}, ${n.url ?? null})
                       on conflict (dedupe_key) do nothing`;
     return r.count > 0;
   },
-  async dueNotices(now, limit) {
+  async dueNotices(now, limit, personIds) {
+    if (personIds && (!personIds.length || !personIds.every(isUuid))) return [];
     const q = sql();
+    // Claim and mark in one statement; rows another sender has locked are skipped, not sent twice.
     const rows = await q<NoticeDbRow[]>`
-      select id, person_id, kind, title, body, send_after, sent_at, created_at from notifications
-      where sent_at is null and send_after <= ${new Date(now)} order by send_after limit ${limit}`;
+      update notifications set sent_at = now()
+      where id in (select id from notifications where sent_at is null and send_after <= ${new Date(now)}
+                   ${personIds ? q`and person_id = any(${personIds}::uuid[])` : q``}
+                   order by send_after limit ${limit} for update skip locked)
+      returning id, person_id, kind, title, body, send_after, sent_at, created_at, url`;
     return rows.map(toNotice);
-  },
-  async markNoticeSent(id) {
-    if (!isUuid(id)) return;
-    const q = sql();
-    await q`update notifications set sent_at = now() where id = ${id}`;
   },
   async notices(personId, limit) {
     if (!isUuid(personId)) return [];
     const q = sql();
     const rows = await q<NoticeDbRow[]>`
-      select id, person_id, kind, title, body, send_after, sent_at, created_at from notifications
-      where person_id = ${personId} and send_after <= now() order by send_after desc limit ${limit}`;
+      select id, person_id, kind, title, body, send_after, sent_at, created_at, url from notifications
+      where person_id = ${personId} order by created_at desc limit ${limit}`;
     return rows.map(toNotice);
   },
   async savePushSub(sub) {

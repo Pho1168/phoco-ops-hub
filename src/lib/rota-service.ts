@@ -1,9 +1,15 @@
 import { store } from "@/lib/data";
 import { buildEveningNotices, buildImportNotices, EVENING_REMINDER_AT, parseExport, parseStaffTab, parseWeekTable, planSync } from "@/lib/domain/rota";
 import { addDays, afterQuietHours, londonDate, londonHM, QUIET_START } from "@/lib/domain/time";
-import type { RotaResult } from "@/lib/data/store";
+import type { RotaResult, Store } from "@/lib/data/store";
 import type { SiteId } from "@/lib/domain/types";
 import { pushToPerson } from "@/lib/push";
+import { certReminderMessages, CERT_REMINDER_FROM, CERT_REMINDER_UNTIL } from "@/lib/domain/certificates";
+import { serviceReminderMessages } from "@/lib/domain/equipment";
+import { canManage } from "@/lib/domain/access";
+import { weeklyDigest, type SiteWeekReport } from "@/lib/domain/report";
+import { weekStartOf } from "@/lib/domain/rota";
+import { loadSiteReport } from "@/lib/report-service";
 import { normalizeStaffCode } from "@/lib/domain/staff";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
@@ -54,7 +60,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   return result;
 }
 
-/** Runs every few minutes (Supabase schedule). Queues the evening-before reminders, then sends anything due. */
+/** Runs every 10 minutes (Supabase schedule). Queues the evening-before shift reminders and, in the morning, certificate reminders; then sends anything due. */
 export async function tick(now = Date.now()): Promise<{ queued: number; sent: number }> {
   const db = store();
   let queued = 0;
@@ -68,16 +74,66 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
       if (await db.queueNotice({ personId, kind: "evening", title: n.title, body: n.body, dedupeKey: `evening|${personId}|${tomorrow}`, sendAfter: now })) queued++;
     }
   }
+  if (hm >= CERT_REMINDER_FROM && hm < CERT_REMINDER_UNTIL) {
+    // Each morning job on its own: one failing mustn't stop the others or the sending below.
+    for (const job of [queueCertReminders, queueServiceReminders, queueWeeklyReport]) {
+      try { queued += await job(now); } catch (e) { console.error(`tick: ${job.name} failed`, e); }
+    }
+  }
   return { queued, sent: await deliverDue(now) };
 }
 
-/** Sends queued messages as push notifications. They stay visible under My shifts either way. */
-export async function deliverDue(now = Date.now()): Promise<number> {
+/** Certificates running out (30 and 7 days before) or just run out. Each message has a key, so it's only queued once. */
+export async function queueCertReminders(now = Date.now(), db: Store = store()): Promise<number> {
+  const [people, certs] = await Promise.all([db.people(), db.certificates()]);
+  let queued = 0;
+  for (const m of certReminderMessages(people, certs, londonDate(now))) {
+    if (await db.queueNotice({ personId: m.personId, kind: "cert", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) queued++;
+  }
+  return queued;
+}
+
+/**
+ * Sends queued messages as push notifications. They stay visible under My shifts either way. An action passes the
+ * people it just messaged, so it only sends theirs; the scheduler sends everything due.
+ */
+export async function deliverDue(now = Date.now(), personIds?: string[]): Promise<number> {
   const db = store();
   let sent = 0;
-  for (const n of await db.dueNotices(now, 200)) {
-    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: "/me" });
-    await db.markNoticeSent(n.id);
+  for (const n of await db.dueNotices(now, personIds ? 50 : 200, personIds)) {
+    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: n.url ?? "/me", tag: `${n.kind}-${n.id}` });
   }
   return sent;
+}
+
+/** Equipment services due within two weeks, or overdue: managers of the site are told once per due date. */
+export async function queueServiceReminders(now = Date.now(), db: Store = store()): Promise<number> {
+  const sites = (await db.sites()).filter((s) => s.status === "open");
+  const people = await db.people();
+  let queued = 0;
+  for (const site of sites) {
+    const [kit, events] = await Promise.all([db.equipment(site.id), db.equipmentEvents({ siteId: site.id })]);
+    for (const m of serviceReminderMessages(kit, events, people, { [site.id]: site.name }, londonDate(now))) {
+      if (await db.queueNotice({ personId: m.personId, kind: "service", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) queued++;
+    }
+  }
+  return queued;
+}
+
+/** Mondays: last week's report in a few lines for each owner and manager, about the open sites they run. */
+export async function queueWeeklyReport(now = Date.now(), db: Store = store()): Promise<number> {
+  const today = londonDate(now);
+  if (weekStartOf(today) !== today) return 0;
+  const week = addDays(today, -7);
+  const sites = (await db.sites()).filter((s) => s.status === "open");
+  const reports = new Map<SiteId, SiteWeekReport>();
+  let queued = 0;
+  for (const p of (await db.people()).filter((x) => x.status === "active")) {
+    const mine = sites.filter((s) => canManage(p, s.id));
+    if (!mine.length) continue;
+    for (const s of mine) if (!reports.has(s.id)) reports.set(s.id, (await loadSiteReport(s, week, now, db)).week);
+    const d = weeklyDigest(week, mine.map((s) => ({ name: s.name, r: reports.get(s.id)! })));
+    if (await db.queueNotice({ personId: p.id, kind: "report", title: d.title, body: d.body, dedupeKey: `report|${week}|${p.id}`, sendAfter: afterQuietHours(now), url: `/manage/report?week=${week}` })) queued++;
+  }
+  return queued;
 }

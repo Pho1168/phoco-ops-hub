@@ -18,6 +18,18 @@ export function canSignIn(person: Person, site: Site, now: number): SignInCheck 
   return { allowed: true };
 }
 
+/**
+ * Sites where the person is an owner or a manager. That's where they can see reports and inspection records,
+ * post team notices, decide time off and keep staff certificates.
+ */
+export function managedSites(person: Pick<Person, "access">): SiteId[] {
+  return person.access.filter((a) => a.role === "owner" || a.role === "manager").map((a) => a.siteId);
+}
+
+export function canManage(person: Pick<Person, "access">, siteId: SiteId): boolean {
+  return managedSites(person).includes(siteId);
+}
+
 /** True while an account is locked out after too many wrong PINs (sign-in and sign-off share the count). */
 export function isPinLocked(person: Pick<Person, "pinLockedUntil">, now: number): boolean {
   return !!person.pinLockedUntil && person.pinLockedUntil > now;

@@ -2,12 +2,20 @@ import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/do
 import type { Device } from "@/lib/domain/devices";
 import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib/domain/rota";
 import type { PrepEntry, PrepItem, PrepShift, SubmitPlan } from "@/lib/domain/prep";
+import type { ListInfo, RawAnswer, RunInfo } from "@/lib/domain/records";
+import type { TeamNotice } from "@/lib/domain/notices";
+import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
+import type { Certificate } from "@/lib/domain/certificates";
+import type { Equipment, EquipmentEvent, EquipmentInput } from "@/lib/domain/equipment";
+import type { Task, TaskInput, TaskStatus } from "@/lib/domain/tasks";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
-export interface NoticeRow { id: string; personId: string; kind: Notice["kind"]; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number }
+/** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task";
+export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number; url?: string }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
 export interface RotaSource { siteId: SiteId; createdAt: number; lastImportAt?: number; lastResult?: RotaResult }
@@ -22,6 +30,16 @@ export interface PrepHandover {
   createdBy: string; createdByName: string; createdAt: number; updatedAt: number;
   submittedBy?: string; submittedByName?: string; submittedAt?: number; stockedCount?: number;
   entries: PrepEntryView[];
+}
+/** Raw food-safety records for one site and date range (London dates, inclusive). */
+export interface RecordsData {
+  lists: ListInfo[]; runs: RunInfo[];
+  /** Every answer in the range's checklist runs, oldest first. */
+  answers: RawAnswer[];
+  /** Alerts raised in the range. */
+  alerts: (Alert & { resolvedByName?: string })[];
+  /** The first day the site recorded any checklist: days before it aren't counted as missed. */
+  trackingFrom?: string;
 }
 export interface AuditEntry { at: number; actorId?: string; siteId?: SiteId; action: string; detail: string }
 
@@ -68,6 +86,9 @@ export interface Store {
   resolveAlert(id: string, personId: string, note: string): Promise<void>;
 
   /** The site's open notes, plus every note written since `createdSince` (default: the last 7 days). */
+  /** Checklist runs, answers and alerts for inspection records and reports. */
+  recordsData(siteId: SiteId, from: string, to: string): Promise<RecordsData>;
+
   handover(siteId: SiteId, createdSince?: number): Promise<HandoverItem[]>;
   addHandover(h: Omit<HandoverItem, "id" | "createdAt" | "createdByName">): Promise<void>;
   /** Ticks a note done. Returns false if it isn't at that site or is already done. */
@@ -96,6 +117,55 @@ export interface Store {
   /** Marks an outstanding entry done (or back to outstanding). Returns false if it isn't at that site or not in that state. */
   prepSetDone(entryId: string, siteId: SiteId, personId: string, done: boolean): Promise<boolean>;
 
+  // Team notices
+  /** Live notices plus the most recent finished ones (taken down or past their last day), newest first, with who has read them. */
+  teamNotices(recentEnded?: number): Promise<TeamNotice[]>;
+  addTeamNotice(n: Omit<TeamNotice, "id" | "createdAt" | "createdByName" | "reads" | "endedAt">): Promise<string>;
+  endTeamNotice(id: string, personId: string): Promise<boolean>;
+  /** Records "Got it". Returns false if the notice doesn't exist. */
+  readTeamNotice(id: string, personId: string): Promise<boolean>;
+
+  // Time off
+  /** Requests matching the filter (dates: any overlap with from..to), newest first. */
+  timeOff(filter: { personId?: string; siteIds?: SiteId[]; from?: string; to?: string; statuses?: TimeOffStatus[] }): Promise<TimeOff[]>;
+  requestTimeOff(t: { personId: string; siteId: SiteId; startsOn: string; endsOn: string; kind: TimeOffKind; note?: string }): Promise<string>;
+  /** Approve or decline a pending request. False if it isn't pending any more. */
+  decideTimeOff(id: string, decision: "approved" | "declined", personId: string, note?: string): Promise<boolean>;
+  /** Withdraw a request that is still in the given status (pending or approved). False if it has changed. */
+  cancelTimeOff(id: string, from: "pending" | "approved"): Promise<boolean>;
+
+  // Staff certificates (removed records are kept in the database but never returned)
+  /** Current records, oldest first; for some people or everyone. */
+  certificates(filter?: { personIds?: string[] }): Promise<Certificate[]>;
+  certificate(id: string): Promise<Certificate | undefined>;
+  addCertificate(c: Omit<Certificate, "id" | "createdAt" | "createdByName">): Promise<string>;
+  /** Marks a record removed (added by mistake). False if it isn't there or is already removed. */
+  removeCertificate(id: string, personId: string): Promise<boolean>;
+
+  // Equipment (retired, never deleted) and its append-only history
+  /** The site's equipment by name; retired kit only when asked. */
+  equipment(siteId: SiteId, includeRetired?: boolean): Promise<Equipment[]>;
+  equipmentItem(id: string): Promise<Equipment | undefined>;
+  addEquipment(e: EquipmentInput & { siteId: SiteId; createdBy: string }): Promise<string>;
+  updateEquipment(id: string, e: EquipmentInput): Promise<boolean>;
+  retireEquipment(id: string, personId: string): Promise<boolean>;
+  /** History, oldest first: for one item or a site, optionally since a time, or only faults still open (with their updates). */
+  equipmentEvents(filter: { equipmentId?: string; siteId?: SiteId; since?: number; openFaultsOnly?: boolean }): Promise<EquipmentEvent[]>;
+  /** Adds to the history. Returns undefined if the fault has already been fixed (a fault is fixed once). */
+  addEquipmentEvent(e: Omit<EquipmentEvent, "id" | "createdAt" | "createdByName">): Promise<string | undefined>;
+
+  // Tasks (done or cancelled, never deleted)
+  /** Tasks at these sites: open ones, plus done or cancelled since a time when asked. Newest first. */
+  tasks(filter: { siteIds: SiteId[]; statuses?: TaskStatus[]; closedSince?: number }): Promise<Task[]>;
+  task(id: string): Promise<Task | undefined>;
+  addTask(t: TaskInput & { siteId: SiteId; createdBy: string }): Promise<string>;
+  /** Open → done. False if it isn't open. */
+  completeTask(id: string, personId: string, note?: string): Promise<boolean>;
+  /** Done → open again (a mis-tap), only by the person who ticked it. False otherwise. */
+  reopenTask(id: string, personId: string): Promise<boolean>;
+  /** Open → cancelled. False if it isn't open. */
+  cancelTask(id: string, personId: string): Promise<boolean>;
+
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;
   rotaSourceByToken(tokenHash: string): Promise<SiteId | undefined>;
@@ -113,9 +183,14 @@ export interface Store {
   shiftsOnDate(date: string): Promise<(ShiftView & { personId: string; staffCode: string })[]>;
 
   // Messages and push
-  queueNotice(n: { personId: string; kind: Notice["kind"]; title: string; body: string; dedupeKey?: string; sendAfter: number }): Promise<boolean>;
-  dueNotices(now: number, limit: number): Promise<NoticeRow[]>;
-  markNoticeSent(id: string): Promise<void>;
+  /** `url`: the app page the phone notification opens (default My shifts). */
+  queueNotice(n: { personId: string; kind: MessageKind; title: string; body: string; dedupeKey?: string; sendAfter: number; url?: string }): Promise<boolean>;
+  /**
+   * Takes messages due to go to phones and marks them sent in the same step, so two senders (the scheduler and
+   * someone's action) never push the same one. Optionally only for some people.
+   */
+  dueNotices(now: number, limit: number, personIds?: string[]): Promise<NoticeRow[]>;
+  /** A person's messages, newest first. They show in the app at once; quiet hours only hold back the phone alert. */
   notices(personId: string, limit: number): Promise<NoticeRow[]>;
   savePushSub(sub: PushSub): Promise<void>;
   pushSubs(personId: string): Promise<PushSub[]>;

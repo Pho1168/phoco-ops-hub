@@ -2,10 +2,15 @@ import Link from "next/link";
 import { store } from "@/lib/data";
 import { progress, runState } from "@/lib/domain/checklist";
 import { canUsePrep } from "@/lib/domain/prep";
+import { faultsOf, sinceText } from "@/lib/domain/equipment";
+import { dueText, isForPerson, priorityCode, taskOrder } from "@/lib/domain/tasks";
+import { TaskDone, UndoTask } from "@/components/TaskDone";
 import { currentNotes } from "@/lib/domain/handover";
 import { londonNow, requireCtx } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { Icon } from "@/components/Icon";
+import { NoticeBanner } from "@/components/NoticeBanner";
+import { unreadFor } from "@/lib/domain/notices";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +38,14 @@ export default async function Today() {
   const notesOpen = currentNotes(await db.handover(ctx.site.id), sent, Date.now()).filter((n) => n.needsAction);
   const toDo = [...prepOpen, ...notesOpen];
   const urgent = prepOpen.filter((e) => e.urgent).length + notesOpen.filter((n) => n.category === "Food safety").length;
+  const unread = unreadFor(await db.teamNotices(0), ctx.person, date);
+  const [kit, kitOpen] = await Promise.all([db.equipment(ctx.site.id), db.equipmentEvents({ siteId: ctx.site.id, openFaultsOnly: true })]);
+  const now = Date.now();
+  const siteTasks = await db.tasks({ siteIds: [ctx.site.id], closedSince: now - 10 * 60_000 });
+  const myTasks = siteTasks.filter((t) => t.status === "open" && isForPerson(t, ctx.person)).sort(taskOrder(date));
+  const justDone = siteTasks.filter((t) => t.status === "done" && t.doneBy === ctx.person.id);
+  const down = kit.map((eq) => ({ eq, f: faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down") }))
+    .filter((x) => x.f.length).map(({ eq, f }) => ({ eq, since: Math.min(...f.map((x) => x.fault.createdAt)), body: f[f.length - 1].fault.body }));
 
   return (
     <>
@@ -49,11 +62,19 @@ export default async function Today() {
           </div>
         </div>
 
+        <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName,
+          when: new Date(n.createdAt).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }) }))} />
         {alerts.map((a) => (
           <div key={a.id} className={`alert ${a.level === "critical" ? "bad" : ""}`} role="status">
             <Icon name="alert" />
             <div className="grow"><div className="strong">{a.title}</div><div style={{ fontSize: 13 }}>{a.detail}</div></div>
           </div>
+        ))}
+        {down.map(({ eq, since, body }) => (
+          <Link key={eq.id} href={`/equipment/${eq.id}`} className="alert bad" style={{ textDecoration: "none" }}>
+            <Icon name="wrench" />
+            <div className="grow"><div className="strong">Not working: {eq.name}</div><div style={{ fontSize: 13 }}>{body} · reported {sinceText(since, now)} ago</div></div>
+          </Link>
         ))}
         {(toDo.length > 0 || prepOn) && (
           <Link href={toDo.length || !prepOn ? "/handover" : "/handover/prep"} className={toDo.length ? "alert" : "list-btn"} style={{ textDecoration: "none" }}>
@@ -63,6 +84,31 @@ export default async function Today() {
               <div style={{ fontSize: 13 }}>{toDo.length ? (urgent ? `${urgent} urgent · ` : "") + "Open Handover and tick them off" : "Closing? Tap what the next shift needs to prep"}</div>
             </div>
           </Link>
+        )}
+        {(myTasks.length > 0 || justDone.length > 0) && (
+          <section className="stack" aria-label="Tasks">
+            <h2 className="h-sec">Tasks</h2>
+            {myTasks.map((t) => {
+              const due = dueText(t.dueOn, date);
+              return (
+                <div key={t.id} className="card stack" style={{ gap: 6 }}>
+                  <div className="row wrap" style={{ gap: 6 }}>
+                    <span className={`chip ${t.priority === 1 ? "bad" : t.priority === 2 ? "late" : t.priority === 3 ? "warn" : ""}`}>{priorityCode(t.priority)}</span>
+                    <span className="strong grow" style={{ fontSize: 15 }}>{t.title}</span>
+                    {t.dueOn && <span className={due.overdue ? "err" : "muted"} style={{ fontSize: 13 }}>{due.text}</span>}
+                  </div>
+                  {t.detail && <div className="muted" style={{ whiteSpace: "pre-wrap" }}>{t.detail}</div>}
+                  <div className="muted" style={{ fontSize: 13 }}>{t.assigneeName ? `For ${t.assigneeName}` : t.section ? `For ${t.section}` : "For anyone on shift"} · from {t.createdByName}</div>
+                  <TaskDone id={t.id} title={t.title} />
+                </div>
+              );
+            })}
+            {justDone.map((t) => (
+              <div key={t.id} className="row wrap card" style={{ gap: 8, padding: "10px 14px" }}>
+                <span className="chip done">Done</span><span className="grow">{t.title}</span><UndoTask id={t.id} />
+              </div>
+            ))}
+          </section>
         )}
         {overdue.length > 0 && (
           <div className="alert">
@@ -91,6 +137,10 @@ export default async function Today() {
             </section>
           );
         })}
+        <Link href="/equipment" className="list-btn" style={{ textDecoration: "none" }}>
+          <Icon name="wrench" />
+          <span className="grow"><span className="strong" style={{ display: "block" }}>Equipment</span><span className="muted">Something not working? Report it here</span></span>
+        </Link>
         <div className="foot-links"><Link href="/me">My shifts</Link><Link href="/pin">Change my PIN</Link></div>
       </main>
       <BottomNav ctx={ctx} current="today" />

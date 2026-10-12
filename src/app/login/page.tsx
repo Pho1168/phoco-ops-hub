@@ -3,16 +3,18 @@ import { DEMO_PINS } from "@/lib/data/demo-store";
 import { currentDevice } from "@/lib/device";
 import { LoginForm } from "./LoginForm";
 import { SetupScreen } from "./SetupScreen";
+import { safeNextPath } from "@/lib/domain/equipment";
 
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage() {
+export default async function LoginPage({ searchParams }: { searchParams: { next?: string } }) {
+  const next = safeNextPath(searchParams.next);
   const db = store();
   const device = await currentDevice();
 
   // Not a registered (active) tablet: no names are shown. Owners sign in with staff ID; tablets pair with a code.
   if (!DEMO_MODE && (!device || device.status !== "active")) {
-    return <SetupScreen removed={device?.status === "locked"} />;
+    return <SetupScreen removed={device?.status === "locked"} returnTo={next} />;
   }
 
   const allSites = (await db.sites()).filter((s) => s.id !== "SYD" || s.status === "open");
@@ -29,7 +31,7 @@ export default async function LoginPage() {
   return (
     <>
       {DEMO_MODE && <div className="banner">Demo mode with sample data · PINs: owner {DEMO_PINS.owner} · everyone else {DEMO_PINS.staff}</div>}
-      <LoginForm deviceLabel={device?.label}
+      <LoginForm deviceLabel={device?.label} returnTo={next}
         sites={sites.map((s) => ({ id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason }))} people={people} />
     </>
   );

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { requireCtx } from "@/lib/session";
@@ -16,7 +17,10 @@ export default async function EditPerson({ params, searchParams }: { params: { i
     <>
       <TopBar ctx={ctx} />
       <main>
-        <div><div className="eyebrow">Owner · staff · {p.staffCode}</div><h1 className="h-display">{p.name}</h1></div>
+        <div className="row wrap" style={{ alignItems: "flex-end" }}>
+          <div className="grow"><div className="eyebrow">Owner · staff · {p.staffCode}</div><h1 className="h-display">{p.name}</h1></div>
+          <Link className="btn ghost small" href={`/manage/certificates/${p.id}`}>Certificates</Link>
+        </div>
         {searchParams.added && (
           <div className="alert good" role="status"><div><div className="strong">{p.name} added</div>
             <div style={{ fontSize: 13 }}>Give them the temporary PIN in person. They&apos;ll choose their own when they first sign in.</div></div></div>

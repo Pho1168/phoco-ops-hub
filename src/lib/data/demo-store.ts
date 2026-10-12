@@ -3,7 +3,14 @@ import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
+import { latestAnswers } from "@/lib/domain/checklist";
+import { londonDate, londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
 import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
+import type { TeamNotice } from "@/lib/domain/notices";
+import type { TimeOff } from "@/lib/domain/timeoff";
+import type { Certificate } from "@/lib/domain/certificates";
+import type { Equipment, EquipmentEvent } from "@/lib/domain/equipment";
+import type { Task } from "@/lib/domain/tasks";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -64,6 +71,62 @@ interface State {
   prepItems: PrepItem[]; prepSites: SiteId[];
   prepHandovers: Omit<PrepHandover, "entries" | "createdByName" | "submittedByName">[];
   prepEntries: PrepEntry[];
+  teamNotices: TeamNotice[];
+  timeOff: TimeOff[];
+  certificates: (Certificate & { removedAt?: number; removedBy?: string })[];
+  equipment: Equipment[];
+  equipmentEvents: EquipmentEvent[];
+  tasks: Task[];
+}
+
+/** Sample records so the certificates screens have something to show in demo mode. */
+function demoCertificates(): Certificate[] {
+  const today = londonDate(Date.now());
+  const d = (n: number) => addDaysIso(today, n);
+  let i = 0;
+  const c = (personId: string, kind: Certificate["kind"], issued: number, expires?: number, provider?: string): Certificate =>
+    ({ id: `demo-cert-${++i}`, personId, kind, issuedOn: d(issued), expiresOn: expires === undefined ? undefined : d(expires), provider, createdBy: "DEMO-OWN", createdAt: Date.now() - 86_400_000 + i });
+  return [
+    c("DEMO-FOH", "food_hygiene_l2", -400, 695, "Highfield e-learning"), c("DEMO-FOH", "allergen", -1080, 15, "Food Standards Agency"),
+    c("DEMO-BOH", "food_hygiene_l2", -1100, -5, "Highfield e-learning"), c("DEMO-BOH", "allergen", -200, 895, "Food Standards Agency"), c("DEMO-BOH", "first_aid", -300, 795, "St John Ambulance"),
+    c("DEMO-MGR", "food_hygiene_l2", -500, 595), c("DEMO-MGR", "food_hygiene_l3", -500, 595, "CIEH"), c("DEMO-MGR", "allergen", -100, 995), c("DEMO-MGR", "fire_marshal", -60, 1035), c("DEMO-MGR", "right_to_work", -700),
+    c("DEMO-PRD", "food_hygiene_l2", -90, 1005), c("DEMO-PRD", "right_to_work", -340, 20),
+  ];
+}
+
+/** Sample kit for demo mode: a fridge with a fault, a fryer that's had its service. */
+function demoEquipment(): { equipment: Equipment[]; equipmentEvents: EquipmentEvent[] } {
+  const now = Date.now();
+  const today = londonDate(now);
+  const eq = (id: string, siteId: SiteId, name: string, kind: Equipment["kind"], location: string, serviceEveryMonths?: number, serviceContact?: string): Equipment =>
+    ({ id, siteId, name, kind, location, serviceEveryMonths, serviceContact, createdAt: now - 30 * 86_400_000 });
+  return {
+    equipment: [
+      eq("demo-eq-1", "EAS", "Walk-in fridge", "fridge", "Kitchen, back wall", 6, "Cold Co Refrigeration (demo)"),
+      eq("demo-eq-2", "EAS", "Fryer 2", "cooking", "Kitchen, hot line", 12, "Fry Fix Ltd (demo)"),
+      eq("demo-eq-3", "EAS", "Glasswasher", "dishwasher", "Bar"),
+      eq("demo-eq-4", "EAS", "Probe thermometer", "probe", "Pass"),
+      eq("demo-eq-5", "WEM", "Blast chiller", "fridge", "Production room", 6, "Cold Co Refrigeration (demo)"),
+    ],
+    equipmentEvents: [
+      { id: "demo-ev-1", equipmentId: "demo-eq-2", siteId: "EAS", kind: "service", body: "Annual service. Thermostat checked", doneOn: addDaysIso(today, -355), createdBy: "DEMO-MGR", createdAt: now - 355 * 86_400_000 },
+      { id: "demo-ev-2", equipmentId: "demo-eq-1", siteId: "EAS", kind: "service", body: "Gaskets replaced", doneOn: addDaysIso(today, -100), createdBy: "DEMO-MGR", createdAt: now - 100 * 86_400_000 },
+      { id: "demo-ev-3", equipmentId: "demo-eq-3", siteId: "EAS", kind: "fault", severity: "attention", body: "Leaking a little from the door", createdBy: "DEMO-FOH", createdAt: now - 26 * 3_600_000 },
+    ],
+  };
+}
+
+/** Sample tasks for demo mode. */
+function demoTasks(): Task[] {
+  const now = Date.now();
+  const today = londonDate(now);
+  const t = (id: string, title: string, priority: Task["priority"], category: Task["category"], over: Partial<Task> = {}): Task =>
+    ({ id, siteId: "EAS", title, priority, category, status: "open", createdBy: "DEMO-MGR", createdByName: "", createdAt: now - 3_600_000, ...over });
+  return [
+    t("demo-task-1", "Deep clean the extraction hood filters", 3, "cleaning", { section: "BOH", dueOn: addDaysIso(today, 3) }),
+    t("demo-task-2", "Order more takeaway boxes", 2, "stock", { assigneeId: "DEMO-FOH", dueOn: addDaysIso(today, 1) }),
+    t("demo-task-3", "Update the allergen matrix for the new lunch menu", 2, "food_safety", { dueOn: addDaysIso(today, 2) }),
+  ];
 }
 
 function seed(): State {
@@ -94,7 +157,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [],
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(),
   };
 }
 
@@ -111,6 +174,13 @@ function prepFull(id: string): PrepHandover | undefined {
 }
 const prepOpen = (siteId: SiteId) => S().prepEntries.filter((e) => e.siteId === siteId && e.status === "outstanding"
   && S().prepHandovers.find((h) => h.id === e.handoverId)?.status === "submitted");
+
+const certView = (c: State["certificates"][number]): Certificate => ({
+  id: c.id, personId: c.personId, kind: c.kind, issuedOn: c.issuedOn, expiresOn: c.expiresOn, provider: c.provider, reference: c.reference,
+  note: c.note, createdBy: c.createdBy, createdByName: nameOf(c.createdBy) ?? "", createdAt: c.createdAt,
+});
+
+const taskView = (t: Task): Task => ({ ...t, createdByName: nameOf(t.createdBy) ?? "", assigneeName: nameOf(t.assigneeId), doneByName: nameOf(t.doneBy) });
 
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
@@ -196,6 +266,34 @@ export const demoStore: Store = {
     if (a && !a.resolvedAt) { a.resolvedAt = Date.now(); a.resolvedBy = personId; a.resolutionNote = note; }
   },
 
+  async recordsData(siteId, from, to) {
+    const lists = S().lists.filter((l) => l.siteId === siteId);
+    const runs = Array.from(S().runs.values()).filter((r) => lists.some((l) => l.id === r.listId));
+    const inRange = runs.filter((r) => r.date >= from && r.date <= to);
+    const answers = inRange.flatMap((r) => {
+      const list = lists.find((l) => l.id === r.listId)!;
+      return r.answers.map((a) => {
+        const item = list.items.find((i) => i.id === a.itemId);
+        return { listId: list.id, listName: list.name, date: r.date, itemId: a.itemId, itemText: item?.text ?? a.itemId, itemType: item?.type ?? "tick",
+          ruleCode: item?.ruleCode, value: a.value, outcome: a.outcome, byName: nameOf(a.recordedBy) ?? "", at: a.capturedAt,
+          action: a.action, actionByName: a.action ? nameOf(a.recordedBy) : undefined };
+      });
+    }).sort((a, b) => a.at - b.at);
+    const start = londonToUtc(from, "00:00"), end = londonToUtc(addDaysIso(to, 1), "00:00");
+    return {
+      lists: lists.map((l) => ({ id: l.id, name: l.name, area: l.area, due: l.due })),
+      runs: inRange.map((r) => {
+        const list = lists.find((l) => l.id === r.listId)!;
+        const latest = latestAnswers(r.answers);
+        return { listId: r.listId, date: r.date, signedAt: r.signedAt, signedByName: nameOf(r.signedBy), total: list.items.length,
+          answered: list.items.filter((i) => { const a = latest.get(i.id); return a && a.outcome !== "todo"; }).length };
+      }),
+      answers,
+      alerts: S().alerts.filter((a) => a.siteId === siteId && a.createdAt >= start && a.createdAt < end).map((a) => ({ ...a, resolvedByName: nameOf(a.resolvedBy) })),
+      trackingFrom: runs.map((r) => r.date).sort()[0],
+    };
+  },
+
   async handover(siteId, createdSince = Date.now() - 7 * 86_400_000) {
     return S().handover.filter((h) => h.siteId === siteId && (!h.closedAt || h.createdAt >= createdSince))
       .map((h) => ({ ...h, closedByName: h.closedBy ? nameOf(h.closedBy) : undefined }));
@@ -255,6 +353,138 @@ export const demoStore: Store = {
     return true;
   },
 
+  async teamNotices(recentEnded = 10) {
+    const today = londonDate(Date.now());
+    const all = [...S().teamNotices].sort((a, b) => b.createdAt - a.createdAt);
+    const live = (n: TeamNotice) => !n.endedAt && (!n.showUntil || n.showUntil >= today);
+    return [...all.filter(live), ...all.filter((n) => !live(n)).slice(0, recentEnded)]
+      .map((n) => ({ ...n, createdByName: nameOf(n.createdBy) ?? "", reads: [...n.reads] }));
+  },
+  async addTeamNotice(n) {
+    const id = randomUUID();
+    S().teamNotices.push({ ...n, id, createdAt: Date.now(), createdByName: "", reads: [] });
+    return id;
+  },
+  async endTeamNotice(id) {
+    const n = S().teamNotices.find((x) => x.id === id && !x.endedAt);
+    if (!n) return false;
+    n.endedAt = Date.now(); return true;
+  },
+  async readTeamNotice(id, personId) {
+    const n = S().teamNotices.find((x) => x.id === id);
+    if (!n) return false;
+    if (!n.reads.some((r) => r.personId === personId)) n.reads.push({ personId, readAt: Date.now() });
+    return true;
+  },
+
+  async timeOff(f) {
+    return S().timeOff.filter((t) => (!f.personId || t.personId === f.personId) && (!f.siteIds || f.siteIds.includes(t.siteId))
+      && (!f.from || t.endsOn >= f.from) && (!f.to || t.startsOn <= f.to) && (!f.statuses || f.statuses.includes(t.status)))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((t) => ({ ...t, personName: nameOf(t.personId) ?? "", decidedByName: nameOf(t.decidedBy) }));
+  },
+  async requestTimeOff(t) {
+    const id = randomUUID();
+    S().timeOff.push({ ...t, id, personName: "", status: "pending", createdAt: Date.now() });
+    return id;
+  },
+  async decideTimeOff(id, decision, personId, note) {
+    const t = S().timeOff.find((x) => x.id === id && x.status === "pending");
+    if (!t) return false;
+    Object.assign(t, { status: decision, decidedBy: personId, decidedAt: Date.now(), decisionNote: note });
+    return true;
+  },
+  async cancelTimeOff(id, from) {
+    const t = S().timeOff.find((x) => x.id === id && x.status === from);
+    if (!t) return false;
+    t.status = "cancelled"; return true;
+  },
+
+  async certificates(f = {}) {
+    return S().certificates.filter((c) => !c.removedAt && (!f.personIds || f.personIds.includes(c.personId)))
+      .sort((a, b) => a.createdAt - b.createdAt).map(certView);
+  },
+  async certificate(id) {
+    const c = S().certificates.find((x) => x.id === id && !x.removedAt);
+    return c && certView(c);
+  },
+  async addCertificate(c) {
+    const id = randomUUID();
+    S().certificates.push({ ...c, id, createdAt: Date.now() });
+    return id;
+  },
+  async removeCertificate(id, personId) {
+    const c = S().certificates.find((x) => x.id === id && !x.removedAt);
+    if (!c) return false;
+    c.removedAt = Date.now(); c.removedBy = personId; return true;
+  },
+
+  async equipment(siteId, includeRetired = false) {
+    return S().equipment.filter((e) => e.siteId === siteId && (includeRetired || !e.retiredAt)).sort((a, b) => a.name.localeCompare(b.name)).map((e) => ({ ...e }));
+  },
+  async equipmentItem(id) { const e = S().equipment.find((x) => x.id === id); return e && { ...e }; },
+  async addEquipment(e) {
+    const id = randomUUID();
+    S().equipment.push({ id, siteId: e.siteId, name: e.name, kind: e.kind, location: e.location, makeModel: e.makeModel, serial: e.serial,
+      serviceEveryMonths: e.serviceEveryMonths, serviceContact: e.serviceContact, instructions: e.instructions, createdAt: Date.now() });
+    return id;
+  },
+  async updateEquipment(id, e) {
+    const x = S().equipment.find((y) => y.id === id && !y.retiredAt);
+    if (!x) return false;
+    Object.assign(x, { name: e.name, kind: e.kind, location: e.location, makeModel: e.makeModel, serial: e.serial, serviceEveryMonths: e.serviceEveryMonths, serviceContact: e.serviceContact, instructions: e.instructions });
+    return true;
+  },
+  async retireEquipment(id) {
+    const x = S().equipment.find((y) => y.id === id && !y.retiredAt);
+    if (!x) return false;
+    x.retiredAt = Date.now(); return true;
+  },
+  async equipmentEvents(f) {
+    const all = S().equipmentEvents;
+    const fixed = new Set(all.filter((e) => e.kind === "fixed").map((e) => e.faultId));
+    return all.filter((e) => (!f.equipmentId || e.equipmentId === f.equipmentId) && (!f.siteId || e.siteId === f.siteId) && (!f.since || e.createdAt >= f.since)
+      && (!f.openFaultsOnly || (e.kind === "fault" && !fixed.has(e.id)) || (e.kind === "update" && !fixed.has(e.faultId))))
+      .sort((a, b) => a.createdAt - b.createdAt).map((e) => ({ ...e, createdByName: nameOf(e.createdBy) ?? "" }));
+  },
+  async addEquipmentEvent(e) {
+    if (e.kind === "fixed" && S().equipmentEvents.some((x) => x.kind === "fixed" && x.faultId === e.faultId)) return undefined;
+    const id = randomUUID();
+    S().equipmentEvents.push({ ...e, id, createdAt: Date.now() });
+    return id;
+  },
+
+  async tasks(f) {
+    return S().tasks.filter((t) => f.siteIds.includes(t.siteId) && (f.statuses ? f.statuses.includes(t.status) : t.status === "open"
+      || (f.closedSince !== undefined && ((t.doneAt ?? 0) >= f.closedSince || (t.cancelledAt ?? 0) >= f.closedSince))))
+      .sort((a, b) => b.createdAt - a.createdAt).map(taskView);
+  },
+  async task(id) { const t = S().tasks.find((x) => x.id === id); return t && taskView(t); },
+  async addTask(t) {
+    const id = randomUUID();
+    S().tasks.push({ id, siteId: t.siteId, title: t.title, detail: t.detail, priority: t.priority, category: t.category, assigneeId: t.assigneeId, section: t.section,
+      dueOn: t.dueOn, status: "open", createdBy: t.createdBy, createdByName: "", createdAt: Date.now() });
+    return id;
+  },
+  async completeTask(id, personId, note) {
+    const t = S().tasks.find((x) => x.id === id && x.status === "open");
+    if (!t) return false;
+    Object.assign(t, { status: "done", doneBy: personId, doneAt: Date.now(), doneNote: note });
+    return true;
+  },
+  async reopenTask(id, personId) {
+    const t = S().tasks.find((x) => x.id === id && x.status === "done" && x.doneBy === personId);
+    if (!t) return false;
+    Object.assign(t, { status: "open", doneBy: undefined, doneAt: undefined, doneNote: undefined });
+    return true;
+  },
+  async cancelTask(id, personId) {
+    const t = S().tasks.find((x) => x.id === id && x.status === "open");
+    if (!t) return false;
+    Object.assign(t, { status: "cancelled", cancelledBy: personId, cancelledAt: Date.now() });
+    return true;
+  },
+
   async rotaSources() { return S().rotaSources.map((r) => ({ siteId: r.siteId, createdAt: r.createdAt, lastImportAt: r.lastImportAt, lastResult: r.lastResult })); },
   async rotaSourceByToken(tokenHash) { return S().rotaSources.find((r) => r.tokenHash === tokenHash)?.siteId; },
   async setRotaToken(siteId, tokenHash) {
@@ -299,13 +529,16 @@ export const demoStore: Store = {
   },
   async queueNotice(n) {
     if (n.dedupeKey && S().notices.some((x) => x.dedupeKey === n.dedupeKey)) return false;
-    S().notices.push({ id: randomUUID(), personId: n.personId, kind: n.kind, title: n.title, body: n.body, dedupeKey: n.dedupeKey, sendAfter: n.sendAfter, createdAt: Date.now() });
+    S().notices.push({ id: randomUUID(), personId: n.personId, kind: n.kind, title: n.title, body: n.body, dedupeKey: n.dedupeKey, sendAfter: n.sendAfter, createdAt: Date.now(), url: n.url });
     return true;
   },
-  async dueNotices(now, limit) { return S().notices.filter((n) => !n.sentAt && n.sendAfter <= now).slice(0, limit); },
-  async markNoticeSent(id) { const n = S().notices.find((x) => x.id === id); if (n) n.sentAt = Date.now(); },
+  async dueNotices(now, limit, personIds) {
+    const due = S().notices.filter((n) => !n.sentAt && n.sendAfter <= now && (!personIds || personIds.includes(n.personId))).slice(0, limit);
+    for (const n of due) n.sentAt = Date.now();
+    return due.map((n) => ({ ...n }));
+  },
   async notices(personId, limit) {
-    return S().notices.filter((n) => n.personId === personId && n.sendAfter <= Date.now()).sort((a, b) => b.sendAfter - a.sendAfter).slice(0, limit);
+    return S().notices.filter((n) => n.personId === personId).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
   },
   async savePushSub(sub) { S().pushSubs = [...S().pushSubs.filter((p) => p.endpoint !== sub.endpoint), sub]; },
   async pushSubs(personId) { return S().pushSubs.filter((p) => p.personId === personId); },
