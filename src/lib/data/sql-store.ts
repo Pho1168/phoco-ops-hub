@@ -269,13 +269,15 @@ async function prepHandoversWhere(where: postgres.PendingQuery<postgres.Row[]>, 
 // ---------- training ----------
 interface SkillRow {
   id: string; section: Area; grp: string; position: number; title: string; about: string; hands_on: boolean; induction: boolean; links: string[] | null;
-  video_url: string | null; refresher_months: number | null; pass_mark: number; created_at: Date; updated_at: Date; rules_changed_at: Date | null; rev: number;
-  retired_at: Date | null;
+  video_url: string | null; refresher_months: number | null; pass_mark: number; created_at: Date; updated_at: Date; added_at: Date; induction_from: Date | null;
+  refresher_from: Date | null; refresher_was: number | null; link_since: Record<string, number> | null; rev: number; retired_at: Date | null;
 }
 const toSkill = (r: SkillRow): Skill => ({
   id: r.id, section: r.section, group: r.grp, position: r.position, title: r.title, about: r.about, handsOn: r.hands_on, induction: r.induction,
   links: r.links ?? [], videoUrl: opt(r.video_url), refresherMonths: opt(r.refresher_months), passMark: r.pass_mark,
-  createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), rulesChangedAt: ms(r.rules_changed_at), rev: r.rev, retiredAt: ms(r.retired_at),
+  createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), addedAt: r.added_at.getTime(), inductionFrom: ms(r.induction_from),
+  refresherFrom: ms(r.refresher_from), refresherWas: opt(r.refresher_was), linkedAt: Object.fromEntries(Object.entries(r.link_since ?? {}).map(([k, v]) => [k, Number(v)])),
+  rev: r.rev, retiredAt: ms(r.retired_at),
 });
 interface QuestionRow { id: string; skill_id: string; position: number; text: string; options: string[]; answer: number; approved_at: Date | null; created_at: Date; updated_at: Date }
 const toQuestion = (r: QuestionRow): Question => ({
@@ -289,17 +291,21 @@ const toTrainingEvent = (r: TrainingEventRow): TrainingEvent => ({
 });
 /** One position change at a time in the skill list (adding, moving, bringing back). */
 const lockSkillOrder = (tx: postgres.ReservedSql) => tx`select pg_advisory_xact_lock(hashtext('training_skills.position'))`;
-/** The sections someone trains in now (the rule is trainingSections), read inside a transaction. */
+/**
+ * The sections someone trains in now (the rule is trainingSections), read inside a transaction. A freeze on its own
+ * (not a site closure) doesn't stop training, so unfreezing doesn't start it again.
+ */
 async function traineeSections(tx: postgres.ReservedSql, personId: string): Promise<Area[]> {
   const [p] = await tx<{ status: Person["status"] }[]>`select status from people where id = ${personId}`;
   if (!p) return [];
   const access = await tx<{ site_id: SiteId; role: Role; sections: Area[] }[]>`select site_id, role, sections from person_sites where person_id = ${personId}`;
   const sites = await tx<{ id: SiteId; status: Site["status"] }[]>`select id, status from sites`;
-  return trainingSections({ status: p.status, access: access.map((a) => ({ siteId: a.site_id, role: a.role, sections: a.sections })) }, sites);
+  const status = p.status === "frozen" ? "active" : p.status;
+  return trainingSections({ status, access: access.map((a) => ({ siteId: a.site_id, role: a.role, sections: a.sections })) }, sites);
 }
 /**
  * Makes a change to people, their access or a site, then starts training today in each section someone trains in now
- * that they didn't before: given a new section, back from leaving or a freeze, or their site reopened.
+ * that they didn't before: given a new section, back from leaving, or their site reopened.
  */
 async function withStarts<T>(tx: postgres.ReservedSql, personIds: string[], change: () => Promise<T>): Promise<T> {
   const before = new Map<string, Area[]>();
@@ -1248,14 +1254,16 @@ export const sqlStore: Store = {
   async trainingSkills() {
     const q = sql();
     return (await q<SkillRow[]>`
-      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, rules_changed_at, rev, retired_at
+      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, added_at,
+        induction_from, refresher_from, refresher_was, link_since, rev, retired_at
       from training_skills order by case section when 'FOH' then 1 when 'BOH' then 2 else 3 end, position, title`).map(toSkill);
   },
   async trainingSkill(id) {
     if (!isUuid(id)) return undefined;
     const q = sql();
     const [r] = await q<SkillRow[]>`
-      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, rules_changed_at, rev, retired_at
+      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, added_at,
+        induction_from, refresher_from, refresher_was, link_since, rev, retired_at
       from training_skills where id = ${id}`;
     return r ? toSkill(r) : undefined;
   },
@@ -1263,9 +1271,11 @@ export const sqlStore: Store = {
     return withTx(async (tx) => {
       await lockSkillOrder(tx);
       const [r] = await tx<{ id: string }[]>`
-        insert into training_skills (section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_by)
+        insert into training_skills (section, grp, position, title, about, hands_on, induction, links, link_since, video_url, refresher_months, pass_mark, created_by)
         values (${s.section}, ${s.group}, (select coalesce(max(position), 0) + 1 from training_skills where section = ${s.section}), ${s.title}, ${s.about},
-          ${s.handsOn}, ${s.induction}, ${s.links}::uuid[], ${s.videoUrl ?? null}, ${s.refresherMonths ?? null}, ${s.passMark}, ${by})
+          ${s.handsOn}, ${s.induction}, ${s.links}::uuid[],
+          (select coalesce(jsonb_object_agg(l::text, (extract(epoch from now()) * 1000)::bigint), '{}'::jsonb) from unnest(${s.links}::uuid[]) as l),
+          ${s.videoUrl ?? null}, ${s.refresherMonths ?? null}, ${s.passMark}, ${by})
         returning id`;
       return r.id;
     });
@@ -1274,16 +1284,21 @@ export const sqlStore: Store = {
     if (!isUuid(id)) return undefined;
     return withTx(async (tx) => {
       await lockSkillOrder(tx);
-      // In SET, every column on the right is the value before the update: a new pathway puts it last there, and a change
-      // to its rules (pathway, induction, hands-on, links, refresher) is dated.
+      // In SET, every column on the right is the value before the update. A new pathway puts it last there and counts as
+      // joining it; becoming part of induction and a changed refresher are dated (with the refresher it had); a newly
+      // linked document is dated, the others keep their dates.
+      const refresher = s.refresherMonths ?? null;
       const [r] = await tx<{ rev: number }[]>`
         update training_skills set grp = ${s.group}, title = ${s.title}, about = ${s.about}, hands_on = ${s.handsOn}, induction = ${s.induction},
-          links = ${s.links}::uuid[], video_url = ${s.videoUrl ?? null}, refresher_months = ${s.refresherMonths ?? null}, pass_mark = ${s.passMark},
+          links = ${s.links}::uuid[], video_url = ${s.videoUrl ?? null}, refresher_months = ${refresher}, pass_mark = ${s.passMark},
           position = case when section = ${s.section} then position
             else (select coalesce(max(o.position), 0) + 1 from training_skills o where o.section = ${s.section}) end,
-          rules_changed_at = case when section <> ${s.section} or induction <> ${s.induction} or hands_on <> ${s.handsOn}
-              or refresher_months is distinct from ${s.refresherMonths ?? null}::integer
-              or not (links @> ${s.links}::uuid[] and links <@ ${s.links}::uuid[]) then now() else rules_changed_at end,
+          added_at = case when section = ${s.section} then added_at else now() end,
+          induction_from = case when not induction and ${s.induction} then now() else induction_from end,
+          refresher_from = case when refresher_months is distinct from ${refresher}::integer then now() else refresher_from end,
+          refresher_was = case when refresher_months is distinct from ${refresher}::integer then refresher_months else refresher_was end,
+          link_since = (select coalesce(jsonb_object_agg(l::text, coalesce(link_since -> (l::text), to_jsonb((extract(epoch from now()) * 1000)::bigint))), '{}'::jsonb)
+            from unnest(${s.links}::uuid[]) as l),
           section = ${s.section}, updated_at = now(), rev = rev + 1
         where id = ${id} and rev = ${rev} and retired_at is null returning rev`;
       return r?.rev;
@@ -1314,8 +1329,8 @@ export const sqlStore: Store = {
     if (!isUuid(id)) return false;
     return withTx(async (tx) => {
       await lockSkillOrder(tx);
-      // Back in everyone's training: anyone it puts behind gets at least two weeks (rules_changed_at).
-      const r = await tx`update training_skills k set retired_at = null, retired_by = null, rules_changed_at = now(), rev = rev + 1,
+      // Back in everyone's training: it joins its pathway again now (deadlines run from then at the earliest).
+      const r = await tx`update training_skills k set retired_at = null, retired_by = null, added_at = now(), rev = rev + 1,
           position = (select coalesce(max(o.position), 0) + 1 from training_skills o where o.section = k.section and o.retired_at is null)
         where k.id = ${id} and k.retired_at is not null`;
       return r.count === 1;

@@ -11,11 +11,13 @@ import type { Area, Person, Site } from "./types";
  * - A knowledge skill is done when its quiz is passed (or, while it has no quiz, when the person marks it done).
  * - A hands-on skill is done when a manager confirms it after watching them do it (once the quiz is passed, if it has one).
  * Each person's skills passport is worked out from append-only training events. A completion stops counting when its
- * refresher falls due (it can be done again from 30 days before), when a linked SOP or recipe gets a major change after
- * it, or when a manager takes it back; the last two leave two weeks to do it again. Deadlines run from the day someone
- * (re)started training in that section, and a change to a skill's rules never leaves anyone less than two weeks. The
- * owner and operations managers set the skills, quizzes and deadlines; a drafted question is only asked once one of
- * them has approved it.
+ * refresher falls due (it can be done again from 30 days before), when an SOP or recipe it links to gets a major change
+ * after it (only changes made while it was linked), or when a manager takes it back; the last two leave two weeks to do
+ * it again. Deadlines run from the day someone (re)started training in that section or the skill joined their pathway.
+ * Tightening a skill later (making it part of induction, a shorter refresher, a first quiz for someone who'd said they
+ * were ready) never makes anyone due sooner than two weeks (a week for induction) from the change, nor sooner than they
+ * were. The owner and operations managers set the skills, quizzes and deadlines; a drafted question is only asked once
+ * one of them has approved it.
  */
 
 export const PATHWAYS: Area[] = ["FOH", "BOH", "PROD"];
@@ -44,11 +46,15 @@ export interface Skill {
   passMark: number;
   createdAt: number;
   updatedAt: number;
-  /**
-   * When its rules last changed: its pathway, induction, hands-on, links or refresher (or it was brought back). Anyone
-   * the change puts behind has at least REDO_DAYS from then.
-   */
-  rulesChangedAt?: number;
+  /** When it joined its pathway: added, moved to another pathway or brought back. Nobody is due before it plus the pathway's days. */
+  addedAt: number;
+  /** When it was last made part of induction (after it was added). */
+  inductionFrom?: number;
+  /** When its refresher last changed, and what it was before (months; none if unset). */
+  refresherFrom?: number;
+  refresherWas?: number;
+  /** When each linked SOP or recipe was linked: only a major change after that counts. */
+  linkedAt: Record<string, number>;
   rev: number;
   retiredAt?: number;
 }
@@ -168,8 +174,11 @@ export interface Progress {
   dueOn?: string;
   /** Not done and past its deadline (never while it's waiting for a manager: they've done their part). */
   overdue: boolean;
-  /** Why it has to be done again: its refresher fell due, a linked SOP or recipe changed, or a manager took it back. */
-  why?: "expired" | "changed" | "reset";
+  /**
+   * Why it has to be done (again): its refresher fell due, a linked SOP or recipe changed, a manager took it back, or
+   * it got a quiz after they'd said they were ready.
+   */
+  why?: "expired" | "changed" | "reset" | "quiz";
   /** The day it had to be done again from (with `why`). */
   whyOn?: string;
 }
@@ -182,13 +191,14 @@ export interface ProgressInput {
   pathway: Pick<Pathway, "inductionDays" | "allDays">;
   /** The latest major change to an SOP or recipe it links to. */
   changedAt?: number;
-  /** It has a quiz (approved questions) now. */
+  /** It has a quiz (approved questions) now, asked since this time (its earliest approved question). */
   hasQuiz: boolean;
+  quizSince?: number;
   today: string;
 }
 
 /** Where someone stands on one skill (see the module notes for the rules). */
-export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresherMonths" | "createdAt" | "rulesChangedAt">, x: ProgressInput): Progress {
+export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresherMonths" | "addedAt" | "inductionFrom" | "refresherFrom" | "refresherWas">, x: ProgressInput): Progress {
   const evs = [...x.events].sort((a, b) => a.at - b.at);
   const lastReset = Math.max(0, ...evs.filter((e) => e.kind === "reset").map((e) => e.at));
   const cutoff = Math.max(lastReset, x.changedAt ?? 0);
@@ -207,10 +217,11 @@ export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresher
   };
   const finish = (p: Progress): Progress => ({ ...p, overdue: p.state !== "done" && p.state !== "ready" && !!p.dueOn && p.dueOn < x.today });
   const who = (e: TrainingEvent) => ({ doneAt: e.at, doneBy: e.byName, doneKind: e.kind as Progress["doneKind"] });
-  // A change to the skill's rules leaves anyone it puts behind at least REDO_DAYS from the change.
-  const changed = skill.rulesChangedAt ? londonDate(skill.rulesChangedAt) : undefined;
-  const atLeast = (due: string, from: string) => { const d = addDays(from, REDO_DAYS); return d > due ? d : due; };
-  const fair = (due: string) => (changed ? atLeast(due, changed) : due);
+  // Back after leaving or a site closure (a new start): at least REDO_DAYS from then for anything to do again.
+  const back = (due: { dueOn: string; whyOn: string }) => {
+    const d = x.startedOn ? addDays(x.startedOn, REDO_DAYS) : undefined;
+    return d && d > due.dueOn ? { dueOn: d, whyOn: x.startedOn! } : due;
+  };
 
   if (done) {
     const expires = skill.refresherMonths ? addMonths(londonDate(done.at), skill.refresherMonths) : undefined;
@@ -220,24 +231,48 @@ export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresher
     const opens = Math.max(done.at, londonToUtc(addDays(expires, -REFRESHER_SOON_DAYS), "00:00"));
     const readyAt = readyAfter(opens);
     if (expires > x.today) return finish(base("done", { ...who(done), dueOn: expires, readyAt, renewal: daysBetween(x.today, expires) <= REFRESHER_SOON_DAYS }));
-    const dueOn = fair(expires);
-    return finish(base(readyAt ? "ready" : "refresher", { ...who(done), readyAt, dueOn, why: "expired", whyOn: dueOn === expires ? expires : changed }));
+    // Its refresher has fallen due. If the refresher was changed after they did it: no sooner than under the old one
+    // (none: never), or two weeks after the change, whichever comes first.
+    let due = { dueOn: expires, whyOn: expires };
+    if (skill.refresherFrom && done.at < skill.refresherFrom) {
+      const from = londonDate(skill.refresherFrom), grace = addDays(from, REDO_DAYS);
+      const was = skill.refresherWas ? addMonths(londonDate(done.at), skill.refresherWas) : undefined;
+      const cap = was && was < grace ? { dueOn: was, whyOn: was } : { dueOn: grace, whyOn: from };
+      if (cap.dueOn > due.dueOn) due = cap;
+    }
+    return finish(base(readyAt ? "ready" : "refresher", { ...who(done), readyAt, ...back(due), why: "expired" }));
   }
   const readyAt = readyAfter(cutoff);
   if (prior) {
     const why = lastReset >= (x.changedAt ?? 0) ? "reset" : "changed";
-    const from = londonDate(cutoff), dueOn = fair(addDays(from, REDO_DAYS));
-    return finish(base(readyAt ? "ready" : "refresher", { ...who(prior), readyAt, dueOn, why, whyOn: dueOn === addDays(from, REDO_DAYS) ? from : changed }));
+    const from = londonDate(cutoff);
+    return finish(base(readyAt ? "ready" : "refresher", { ...who(prior), readyAt, ...back({ dueOn: addDays(from, REDO_DAYS), whyOn: from }), why }));
   }
-  // Never done: due a set time after they started in the section, or after the skill was added. If a manager took
-  // back their readiness, at least two weeks from then.
-  const added = londonDate(skill.createdAt);
+  // Never done: due a set time after they started in the section or it joined their pathway, whichever is later.
+  const added = londonDate(skill.addedAt);
   const start = x.startedOn && x.startedOn > added ? x.startedOn : added;
-  let dueOn = fair(addDays(start, skill.induction ? x.pathway.inductionDays : x.pathway.allDays));
-  const reset = lastReset ? { why: "reset" as const, whyOn: londonDate(lastReset) } : {};
-  if (lastReset) dueOn = atLeast(dueOn, londonDate(lastReset));
-  if (readyAt) return finish(base("ready", { readyAt, dueOn, ...reset }));
-  return finish(base(attemptsSince(cutoff).length ? "in_training" : "not_started", { dueOn, ...reset }));
+  let dueOn = addDays(start, skill.induction ? x.pathway.inductionDays : x.pathway.allDays);
+  // Made part of induction after they started: the induction days from the change, but no later than before.
+  if (skill.induction && skill.inductionFrom) {
+    const change = addDays(londonDate(skill.inductionFrom), x.pathway.inductionDays), before = addDays(start, x.pathway.allDays);
+    const cap = change < before ? change : before;
+    if (cap > dueOn) dueOn = cap;
+  }
+  let why: Progress["why"], whyOn: string | undefined;
+  // A manager took back their readiness: at least two weeks from then.
+  if (lastReset) {
+    whyOn = londonDate(lastReset); why = "reset";
+    if (addDays(whyOn, REDO_DAYS) > dueOn) dueOn = addDays(whyOn, REDO_DAYS);
+  }
+  // They'd said they were ready before it had a quiz: now the quiz comes first, with two weeks from when it was added.
+  if (!readyAt && skill.handsOn && x.hasQuiz && x.quizSince && evs.some((e) => e.kind === "done" && e.at > cutoff && e.at < x.quizSince!)) {
+    const q = londonDate(x.quizSince);
+    if (addDays(q, REDO_DAYS) > dueOn) dueOn = addDays(q, REDO_DAYS);
+    if (!whyOn || q >= whyOn) { why = "quiz"; whyOn = q; }
+  }
+  const extra = why ? { dueOn, why, whyOn } : { dueOn };
+  if (readyAt) return finish(base("ready", { readyAt, ...extra }));
+  return finish(base(attemptsSince(cutoff).length ? "in_training" : "not_started", extra));
 }
 
 /**
@@ -261,12 +296,22 @@ export const WHY_TEXT: Record<NonNullable<Progress["why"]>, string> = {
   expired: "Its refresher has fallen due",
   changed: "An SOP or recipe it covers has had a major change",
   reset: "A manager asked for it to be done again",
+  quiz: "It now has a quiz: pass it, then a manager watches you do it",
 };
 
-/** The latest major change among the SOPs and recipes a skill links to. */
-export function changedAt(skill: Pick<Skill, "links">, majorChanges: Map<string, number>): number | undefined {
-  const times = skill.links.map((id) => majorChanges.get(id)).filter((t): t is number => t !== undefined);
+/**
+ * The latest major change among the SOPs and recipes a skill links to, if it came after the document was linked
+ * (linking one accepts it as it is).
+ */
+export function changedAt(skill: Pick<Skill, "links" | "linkedAt">, majorChanges: Map<string, number>): number | undefined {
+  const times = skill.links.map((id) => majorChanges.get(id)).filter((t, i): t is number => t !== undefined && t > (skill.linkedAt[skill.links[i]] ?? 0));
   return times.length ? Math.max(...times) : undefined;
+}
+
+/** When a skill's quiz started being asked: its earliest approved question. */
+export function quizSince(skillId: string, questions: Pick<Question, "skillId" | "approved" | "approvedAt">[]): number | undefined {
+  const times = questions.filter((q) => q.skillId === skillId && q.approved && q.approvedAt).map((q) => q.approvedAt!);
+  return times.length ? Math.min(...times) : undefined;
 }
 
 /** The questions asked in a skill's quiz: approved ones, in order. */
@@ -438,7 +483,7 @@ export function passport(p: Pick<Person, "id" | "status" | "access">, sites: Pic
       skill, hasQuiz, drafted: drafted.has(skill.id),
       progress: progress(skill, {
         events: mine.filter((e) => e.skillId === skill.id), startedOn: startedOn(d.starts, p.id, skill.section),
-        pathway: pathwayOf(d.pathways, skill.section), changedAt: changedAt(skill, d.majorChanges), hasQuiz, today,
+        pathway: pathwayOf(d.pathways, skill.section), changedAt: changedAt(skill, d.majorChanges), hasQuiz, quizSince: quizSince(skill.id, d.questions), today,
       }),
     };
   });
@@ -454,7 +499,7 @@ export function tally(rows: PassportRow[]): { total: number; done: number; overd
     done: rows.filter((r) => r.progress.state === "done").length,
     overdue: rows.filter((r) => r.progress.overdue).length,
     ready: rows.filter((r) => !!r.progress.readyAt).length,
-    again: rows.filter((r) => r.progress.state === "refresher" || (r.progress.why === "reset" && (r.progress.state === "not_started" || r.progress.state === "in_training"))).length,
+    again: rows.filter((r) => r.progress.state === "refresher" || (!!r.progress.why && (r.progress.state === "not_started" || r.progress.state === "in_training"))).length,
   };
 }
 
@@ -483,6 +528,7 @@ const AGAIN_TEXT: Record<NonNullable<Progress["why"]>, string> = {
   expired: "Its refresher has fallen due",
   changed: "An SOP or recipe it covers has changed",
   reset: "Your manager asked for it to be done again",
+  quiz: "It now has a quiz to pass before a manager checks you",
 };
 
 /**
@@ -504,7 +550,7 @@ export function trainingReminders(people: Pick<Person, "id" | "status" | "access
       } else if (pr.why === "expired" && pr.dueOn <= today) {
         if (recent(pr.dueOn)) out.push({ personId: p.id, title: `Refresher due: ${skill.title}`, body: `It was due on ${dayMonthYear(pr.dueOn)}. Open it in Library → Training to do it again.`, dedupeKey: key(`due|${pr.dueOn}`), url });
       } else if (pr.why && pr.whyOn && recent(pr.whyOn)) {
-        out.push({ personId: p.id, title: `Do it again: ${skill.title}`, body: `${AGAIN_TEXT[pr.why]}. Please do it by ${dayMonthYear(pr.dueOn)}.`, dedupeKey: key(`again|${pr.whyOn}`), url });
+        out.push({ personId: p.id, title: `${pr.why === "quiz" ? "New quiz" : "Do it again"}: ${skill.title}`, body: `${AGAIN_TEXT[pr.why]}. Please do it by ${dayMonthYear(pr.dueOn)}.`, dedupeKey: key(`again|${pr.whyOn}`), url });
       }
     }
   }

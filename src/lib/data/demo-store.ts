@@ -161,7 +161,8 @@ function demoTraining(): Pick<State, "trainingSkills" | "trainingQuestions" | "t
   const started = londonDate(at);
   const id = (n: number) => `00000000-0000-4000-8000-0000000000c${n}`;
   const sk = (n: number, s: Partial<Skill> & Pick<Skill, "section" | "group" | "position" | "title">): State["trainingSkills"][number] =>
-    ({ id: id(n), about: "", handsOn: false, induction: false, links: [], passMark: 80, createdAt: at, updatedAt: at, rev: 1, createdBy: "DEMO-OWN", ...s });
+    ({ id: id(n), about: "", handsOn: false, induction: false, links: [], passMark: 80, createdAt: at, updatedAt: at, addedAt: at, rev: 1, createdBy: "DEMO-OWN",
+      ...s, linkedAt: Object.fromEntries((s.links ?? []).map((l) => [l, at])) });
   const qn = (skill: number, position: number, text: string, options: string[], answer: number, approved = true): State["trainingQuestions"][number] =>
     ({ id: `00000000-0000-4000-8000-00000000d${skill}${position}0`.slice(0, 36), skillId: id(skill), position, text, options, answer, approved,
       approvedAt: approved ? at : undefined, approvedBy: approved ? "DEMO-OWN" : undefined, createdBy: "DEMO-OWN", createdAt: at, updatedAt: at });
@@ -339,11 +340,14 @@ function libDocView(d: State["libDocs"][number], light = false): LibraryDoc {
 
 /**
  * Makes a change to people, their access or a site, then starts training today in each section someone trains in now
- * that they didn't before (the rule is trainingSections): given a new section, back from leaving or a freeze, or their
- * site reopened.
+ * that they didn't before (the rule is trainingSections): given a new section, back from leaving, or their site
+ * reopened. A freeze on its own doesn't stop training, so unfreezing doesn't start it again.
  */
 function withStarts(personIds: string[], change: () => void) {
-  const now = (id: string) => { const p = S().people.find((x) => x.id === id); return p ? trainingSections(p, S().sites) : []; };
+  const now = (id: string) => {
+    const p = S().people.find((x) => x.id === id);
+    return p ? trainingSections({ access: p.access, status: p.status === "frozen" ? "active" : p.status }, S().sites) : [];
+  };
   const before = new Map(personIds.map((id) => [id, now(id)]));
   change();
   const today = londonDate(Date.now());
@@ -361,7 +365,8 @@ const questionView = (q: State["trainingQuestions"][number]): Question => ({
 const skillView = (k: State["trainingSkills"][number]): Skill => ({
   id: k.id, section: k.section, group: k.group, position: k.position, title: k.title, about: k.about, handsOn: k.handsOn, induction: k.induction,
   links: [...k.links], videoUrl: k.videoUrl, refresherMonths: k.refresherMonths, passMark: k.passMark, createdAt: k.createdAt, updatedAt: k.updatedAt,
-  rulesChangedAt: k.rulesChangedAt, rev: k.rev, retiredAt: k.retiredAt,
+  addedAt: k.addedAt, inductionFrom: k.inductionFrom, refresherFrom: k.refresherFrom, refresherWas: k.refresherWas, linkedAt: { ...k.linkedAt },
+  rev: k.rev, retiredAt: k.retiredAt,
 });
 const lastPosition = (section: Skill["section"], liveOnly = false) =>
   Math.max(0, ...S().trainingSkills.filter((k) => k.section === section && (!liveOnly || !k.retiredAt)).map((k) => k.position));
@@ -858,18 +863,24 @@ export const demoStore: Store = {
   async trainingSkill(id) { const k = S().trainingSkills.find((x) => x.id === id); return k && skillView(k); },
   async createTrainingSkill(s, by) {
     const id = randomUUID(), now = Date.now();
-    S().trainingSkills.push({ ...structuredClone(s), id, position: lastPosition(s.section) + 1, createdAt: now, updatedAt: now, rev: 1, createdBy: by });
+    S().trainingSkills.push({ ...structuredClone(s), id, position: lastPosition(s.section) + 1, createdAt: now, updatedAt: now, addedAt: now,
+      linkedAt: Object.fromEntries(s.links.map((l) => [l, now])), rev: 1, createdBy: by });
     return id;
   },
   async saveTrainingSkill(id, rev, s) {
     const k = S().trainingSkills.find((x) => x.id === id);
     if (!k || k.rev !== rev || k.retiredAt) return undefined;
+    const now = Date.now();
     const position = k.section === s.section ? k.position : lastPosition(s.section) + 1;
-    const sameLinks = new Set(k.links).size === new Set(s.links).size && s.links.every((l) => k.links.includes(l));
-    const rules = k.section !== s.section || k.induction !== s.induction || k.handsOn !== s.handsOn || k.refresherMonths !== s.refresherMonths || !sameLinks;
+    // As the SQL store: a new pathway counts as joining it; induction and refresher changes are dated; new links too.
+    const dates = {
+      addedAt: k.section === s.section ? k.addedAt : now,
+      inductionFrom: !k.induction && s.induction ? now : k.inductionFrom,
+      ...(k.refresherMonths !== s.refresherMonths ? { refresherFrom: now, refresherWas: k.refresherMonths } : {}),
+      linkedAt: Object.fromEntries(s.links.map((l) => [l, k.linkedAt[l] ?? now])),
+    };
     Object.assign(k, { group: s.group, title: s.title, about: s.about, handsOn: s.handsOn, induction: s.induction, links: [...s.links], videoUrl: s.videoUrl,
-      refresherMonths: s.refresherMonths, passMark: s.passMark, section: s.section, position, updatedAt: Date.now(), rev: k.rev + 1,
-      rulesChangedAt: rules ? Date.now() : k.rulesChangedAt });
+      refresherMonths: s.refresherMonths, passMark: s.passMark, section: s.section, position, updatedAt: now, rev: k.rev + 1, ...dates });
     return k.rev;
   },
   async moveTrainingSkill(id, dir) {
@@ -891,7 +902,7 @@ export const demoStore: Store = {
   async reinstateTrainingSkill(id) {
     const k = S().trainingSkills.find((x) => x.id === id && x.retiredAt);
     if (!k) return false;
-    Object.assign(k, { position: lastPosition(k.section, true) + 1, retiredAt: undefined, retiredBy: undefined, rulesChangedAt: Date.now(), rev: k.rev + 1 });
+    Object.assign(k, { position: lastPosition(k.section, true) + 1, retiredAt: undefined, retiredBy: undefined, addedAt: Date.now(), rev: k.rev + 1 });
     return true;
   },
   async trainingQuestions(skillIds) {

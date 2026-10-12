@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, changedAt, cleanPathway, cleanQuestion, cleanSkill, cleanVideoUrl, gradeQuiz, managesTraining,
-  passport, progress, progressText, quizOf, quizVersion, REDO_DAYS, shuffled, skillsFor, tally, trainingReminders, trainingSections, trainingToDo,
+  passport, progress, progressText, quizOf, quizSince, quizVersion, REDO_DAYS, shuffled, skillsFor, tally, trainingReminders, trainingSections, trainingToDo,
   type Question, type Skill, type SkillInput, type TrainingData, type TrainingEvent,
 } from "./training";
 import { londonToUtc } from "./time";
@@ -24,13 +24,14 @@ const SITES: Site[] = [
 const T = (date: string, hm = "12:00") => londonToUtc(date, hm);
 const skill = (id: string, over: Partial<Skill> = {}): Skill => ({
   id, section: "FOH", group: "Operations", position: 1, title: id, about: "", handsOn: false, induction: false, links: [], passMark: 80,
-  createdAt: T("2026-10-01"), updatedAt: T("2026-10-01"), rev: 1, ...over,
+  createdAt: T("2026-10-01"), updatedAt: T("2026-10-01"), addedAt: T("2026-10-01"), linkedAt: {}, rev: 1, ...over,
 });
 let n = 0;
 const ev = (kind: TrainingEvent["kind"], date: string, over: Partial<TrainingEvent> = {}): TrainingEvent =>
   ({ id: `e${++n}`, personId: "srv", skillId: "s", kind, at: T(date), byId: "srv", byName: "srv", ...(kind === "quiz" ? { score: 100, passed: true } : {}), ...over });
 const PATH = { inductionDays: 7, allDays: 42 };
 const base = { startedOn: "2026-10-05", pathway: PATH, today: "2026-10-12", hasQuiz: false };
+const long = { ...base, startedOn: "2024-01-01" }; // working here all along
 
 describe("training: who trains and who decides", () => {
   it("follows pathways for their sections as staff or manager at open sites; never owners or ops", () => {
@@ -71,7 +72,7 @@ describe("training: the passport", () => {
     expect(progress(s, { ...base, events: [passed, failed] })).toMatchObject({ state: "done", doneKind: "quiz", doneAt: passed.at, overdue: false });
     expect(progress(s, { ...base, events: [passed] }).dueOn).toBeUndefined(); // no refresher: done for good
     // A skill added after they started: its deadline runs from when it was added.
-    expect(progress({ ...s, createdAt: T("2026-10-10") }, { ...base, events: [] }).dueOn).toBe("2026-11-21");
+    expect(progress({ ...s, addedAt: T("2026-10-10") }, { ...base, events: [] }).dueOn).toBe("2026-11-21");
     // With no quiz yet, marking it done completes it.
     expect(progress(s, { ...base, events: [ev("done", "2026-10-08")] })).toMatchObject({ state: "done", doneKind: "done" });
   });
@@ -114,23 +115,23 @@ describe("training: the passport", () => {
   it("a refresher falls due its months after it was done; shown as coming up for the last 30 days", () => {
     const s = skill("s", { refresherMonths: 12 });
     const done = ev("quiz", "2025-10-20");
-    const soon = progress(s, { ...base, events: [done] });
+    const soon = progress(s, { ...long, events: [done] });
     expect(soon).toMatchObject({ state: "done", dueOn: "2026-10-20" });
     expect(progressText(soon, base.today)).toBe("Done 20 Oct 2025 · refresher due in 8 days");
-    expect(progressText(progress(s, { ...base, events: [ev("quiz", "2026-10-01")] }), base.today)).toBe("Done 1 Oct 2026 · refresher by 1 Oct 2027");
-    const due = progress(s, { ...base, events: [ev("quiz", "2025-10-12")] });
+    expect(progressText(progress(s, { ...long, events: [ev("quiz", "2026-10-01")] }), base.today)).toBe("Done 1 Oct 2026 · refresher by 1 Oct 2027");
+    const due = progress(s, { ...long, events: [ev("quiz", "2025-10-12")] });
     expect(due).toMatchObject({ state: "refresher", why: "expired", dueOn: "2026-10-12", overdue: false });
-    expect(progress(s, { ...base, events: [ev("quiz", "2025-10-11")] })).toMatchObject({ overdue: true });
-    expect(progressText(progress(s, { ...base, events: [ev("quiz", "2025-10-11")] }), base.today)).toBe("Overdue since 11 Oct 2026");
+    expect(progress(s, { ...long, events: [ev("quiz", "2025-10-11")] })).toMatchObject({ overdue: true });
+    expect(progressText(progress(s, { ...long, events: [ev("quiz", "2025-10-11")] }), base.today)).toBe("Overdue since 11 Oct 2026");
     // Passing again puts it back in date.
-    expect(progress(s, { ...base, events: [ev("quiz", "2025-10-11"), ev("quiz", "2026-10-12")] })).toMatchObject({ state: "done", dueOn: "2027-10-12" });
+    expect(progress(s, { ...long, events: [ev("quiz", "2025-10-11"), ev("quiz", "2026-10-12")] })).toMatchObject({ state: "done", dueOn: "2027-10-12" });
     // A hands-on refresher: the quiz again makes it ready for a manager.
     const h = skill("h", { handsOn: true, refresherMonths: 12 });
     const old = ev("confirmed", "2025-10-01", { byId: "chef" });
-    expect(progress(h, { ...base, events: [old] }).state).toBe("refresher");
-    expect(progress(h, { ...base, events: [old, ev("quiz", "2026-10-10")] })).toMatchObject({ state: "ready", why: "expired" });
+    expect(progress(h, { ...long, events: [old] }).state).toBe("refresher");
+    expect(progress(h, { ...long, events: [old, ev("quiz", "2026-10-10")] })).toMatchObject({ state: "ready", why: "expired" });
     // …but a quiz from before its refresher opened (30 days before it fell due) doesn't count.
-    expect(progress(h, { ...base, events: [old, ev("quiz", "2025-10-02")] })).toMatchObject({ state: "refresher", readyAt: undefined });
+    expect(progress(h, { ...long, events: [old, ev("quiz", "2025-10-02")] })).toMatchObject({ state: "refresher", readyAt: undefined });
   });
   it("a refresher can be renewed in its last 30 days: hands-on, the quiz again then a manager, before it lapses", () => {
     const h = skill("h", { handsOn: true, refresherMonths: 12 });
@@ -171,19 +172,43 @@ describe("training: the passport", () => {
     expect(progress({ ...h, induction: true }, { ...base, startedOn: "2026-09-01", events: [ev("quiz", "2026-09-05"), ev("reset", "2026-10-08", { note: "Practise more" })] }))
       .toMatchObject({ dueOn: "2026-10-22", overdue: false });
   });
-  it("a change to a skill's rules leaves anyone it puts behind at least two weeks", () => {
-    const changed = T("2026-10-10");
-    // An SOP linked after its major change, which came after they did the skill.
-    const s = skill("s", { links: ["d1"], rulesChangedAt: changed });
-    expect(progress(s, { ...base, events: [ev("quiz", "2026-03-01")], changedAt: T("2026-04-01") }))
-      .toMatchObject({ state: "refresher", why: "changed", whyOn: "2026-10-10", dueOn: "2026-10-24", overdue: false });
-    // A refresher added to a skill done long ago.
-    const r = skill("r", { refresherMonths: 12, rulesChangedAt: changed });
-    expect(progress(r, { ...base, events: [ev("quiz", "2024-01-01")] })).toMatchObject({ state: "refresher", why: "expired", whyOn: "2026-10-10", dueOn: "2026-10-24", overdue: false });
-    // Made part of induction after they started.
-    expect(progress(skill("i", { induction: true, rulesChangedAt: changed }), { ...base, startedOn: "2026-09-01", events: [] })).toMatchObject({ dueOn: "2026-10-24", overdue: false });
-    // Without a recent change, the usual dates.
-    expect(progress(skill("i", { induction: true, createdAt: T("2026-01-01"), rulesChangedAt: T("2026-01-01") }), { ...base, startedOn: "2026-09-01", events: [] })).toMatchObject({ dueOn: "2026-09-08", overdue: true });
+  it("tightening a skill later never makes anyone due sooner than is fair, nor clears what's already overdue", () => {
+    const old = T("2025-01-01"), change = T("2026-10-10");
+    // Linking an SOP accepts it as it is: only a major change after the link counts.
+    const linked = skill("s", { links: ["d1", "d2"], linkedAt: { d1: T("2026-05-01"), d2: old } });
+    expect(changedAt(linked, new Map([["d1", T("2026-04-01")]]))).toBeUndefined();
+    expect(changedAt(linked, new Map([["d1", T("2026-06-01")], ["d2", T("2026-03-01")]]))).toBe(T("2026-06-01"));
+    // A refresher added to a skill done long ago: two weeks from the change.
+    const r = (over: Partial<Skill>) => skill("r", { refresherMonths: 12, refresherFrom: change, ...over });
+    expect(progress(r({}), { ...long, events: [ev("quiz", "2024-01-01")] })).toMatchObject({ state: "refresher", why: "expired", whyOn: "2026-10-10", dueOn: "2026-10-24", overdue: false });
+    // Shortened from 24 months: no later than the old one would have fallen due…
+    expect(progress(r({ refresherWas: 24 }), { ...long, events: [ev("quiz", "2025-06-01")] })).toMatchObject({ dueOn: "2026-10-24", overdue: false });
+    // …so someone already overdue under the old one stays overdue.
+    expect(progress(r({ refresherWas: 24 }), { ...long, events: [ev("quiz", "2024-09-01")] })).toMatchObject({ dueOn: "2026-09-01", whyOn: "2026-09-01", overdue: true });
+    // Done after the change: the usual date.
+    expect(progress(r({ refresherFrom: T("2025-01-01") }), { ...long, events: [ev("quiz", "2025-10-11")] })).toMatchObject({ dueOn: "2026-10-11", overdue: true });
+    // Made part of induction after they started: a week from the change, but no later than their old deadline.
+    const i = skill("i", { induction: true, addedAt: old, inductionFrom: change });
+    expect(progress(i, { ...base, startedOn: "2026-09-01", events: [] })).toMatchObject({ dueOn: "2026-10-13", overdue: false });
+    expect(progress(i, { ...base, startedOn: "2026-09-20", events: [] })).toMatchObject({ dueOn: "2026-10-17", overdue: false });
+    expect(progress(i, { ...base, startedOn: "2026-08-01", events: [] })).toMatchObject({ dueOn: "2026-09-12", overdue: true });
+    // Moved to another pathway or brought back: it joins the pathway again, with the usual days from then.
+    expect(progress(skill("m", { addedAt: change }), { ...base, startedOn: "2026-01-01", events: [] }).dueOn).toBe("2026-11-21");
+    // An edit that doesn't tighten anything changes nothing (no dates move).
+    expect(progress(skill("e", { induction: true, addedAt: old }), { ...base, startedOn: "2026-09-01", events: [] })).toMatchObject({ dueOn: "2026-09-08", overdue: true });
+  });
+  it("back after leaving or a closure: two weeks for anything to do again; a first quiz after 'ready' gives two weeks too", () => {
+    const r = skill("r", { refresherMonths: 12 });
+    expect(progress(r, { ...base, startedOn: "2026-10-10", events: [ev("quiz", "2025-06-01")] })).toMatchObject({ state: "refresher", dueOn: "2026-10-24", whyOn: "2026-10-10", overdue: false });
+    const s = skill("s", { links: ["d1"] });
+    expect(progress(s, { ...base, startedOn: "2026-10-10", events: [ev("quiz", "2026-03-01")], changedAt: T("2026-06-01") })).toMatchObject({ why: "changed", dueOn: "2026-10-24", overdue: false });
+    // They'd said they were ready, then the skill got its first quiz: the quiz first, two weeks from when it came.
+    const h = skill("h", { handsOn: true, addedAt: T("2026-08-01") });
+    const p = progress(h, { ...base, startedOn: "2026-08-01", hasQuiz: true, quizSince: T("2026-10-11"), events: [ev("done", "2026-09-10")] });
+    expect(p).toMatchObject({ state: "not_started", why: "quiz", whyOn: "2026-10-11", dueOn: "2026-10-25", overdue: false });
+    expect(canConfirmNow(h, p, true)).toMatchObject({ ok: false, error: "They need to pass the quiz first" });
+    // Nobody who hadn't said they were ready is affected.
+    expect(progress(h, { ...base, startedOn: "2026-08-01", hasQuiz: true, quizSince: T("2026-10-11"), events: [] })).toMatchObject({ dueOn: "2026-09-12", overdue: true });
   });
 });
 
@@ -214,6 +239,10 @@ describe("training: quizzes", () => {
     expect(quizVersion([q("a", 1), q("b", 3)])).not.toBe(v);
     expect(quizVersion([q("a", 1)])).not.toBe(v);
     expect(quizVersion([q("a", 1), q("b", 2), q("c", 2)])).not.toBe(v);
+    // When its quiz started being asked: its earliest approved question.
+    const a = (skillId: string, approved: boolean, approvedAt?: number) => ({ skillId, approved, approvedAt });
+    expect(quizSince("s", [a("s", true, 5), a("s", true, 3), a("s", false), a("t", true, 1)])).toBe(3);
+    expect(quizSince("s", [a("s", false)])).toBeUndefined();
   });
 });
 
@@ -268,7 +297,7 @@ describe("training: managers and messages", () => {
   const q = (skillId: string, approved: boolean): Question => ({ id: `q-${skillId}-${approved}`, skillId, position: 1, text: "?", options: ["a", "b"], answer: 0, approved, createdAt: 0, updatedAt: 0 });
   const data = (events: TrainingEvent[], over: Partial<TrainingData> = {}): TrainingData => ({
     skills, questions: [q("pho", true), q("knife", false)], events,
-    starts: [{ personId: "cook", section: "BOH", startedOn: "2026-10-01" }, { personId: "srv", section: "FOH", startedOn: "2026-09-01" }],
+    starts: [{ personId: "cook", section: "BOH", startedOn: "2025-01-01" }, { personId: "srv", section: "FOH", startedOn: "2026-09-01" }],
     pathways: [{ section: "FOH", inductionDays: 7, allDays: 42 }], majorChanges: new Map(), ...over,
   });
   it("a passport and its tally; managers see what they can confirm, who is overdue, and (owner, ops) questions to approve", () => {
@@ -301,7 +330,7 @@ describe("training: managers and messages", () => {
     // Nothing while they're waiting for a manager (the refresher is being renewed).
     expect(keys([cookEv("confirmed", "2025-11-01"), ev("quiz", "2026-10-05", { personId: "cook", skillId: "knife", byId: "cook" })], "2026-10-12")).toEqual([]);
     // A refresher added to a skill done long ago: "do it again" by two weeks from the change.
-    const added = { skills: skills.map((s) => (s.id === "knife" ? { ...s, rulesChangedAt: T("2026-10-10") } : s)) };
+    const added = { skills: skills.map((s) => (s.id === "knife" ? { ...s, refresherFrom: T("2026-10-10") } : s)) };
     const m = trainingReminders([cook], SITES, data([cookEv("confirmed", "2024-01-01")], added), "2026-10-12");
     expect(m.map((x) => [x.dedupeKey, x.body])).toEqual([["training|cook|knife|again|2026-10-10", "Its refresher has fallen due. Please do it by 24 Oct 2026."]]);
     // A manager took back a skill that was only ready: asked to do it again.

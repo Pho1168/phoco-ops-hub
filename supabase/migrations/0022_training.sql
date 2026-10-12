@@ -19,13 +19,17 @@ create table if not exists training_skills (
   created_by       uuid not null references people(id),
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
-  rules_changed_at timestamptz,                            -- its pathway, induction, hands-on, links or refresher changed (or it came back)
+  -- When its rules changed, so a change never makes anyone due sooner than is fair (rules in src/lib/domain/training.ts):
+  added_at         timestamptz not null default now(),     -- joined its pathway: added, moved to another or brought back
+  induction_from   timestamptz,                            -- last made part of induction
+  refresher_from   timestamptz,                            -- its refresher last changed…
+  refresher_was    integer,                                -- …from this many months (none: null)
+  link_since       jsonb not null default '{}' check (jsonb_typeof(link_since) = 'object'), -- each linked document: when (epoch ms)
   rev              integer not null default 1 check (rev > 0),
   retired_at       timestamptz,
   retired_by       uuid references people(id),
   check ((retired_at is null) = (retired_by is null))
 );
-alter table training_skills add column if not exists rules_changed_at timestamptz;
 create index if not exists training_skills_order on training_skills (section, position);
 alter table training_skills enable row level security;
 

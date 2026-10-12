@@ -65,7 +65,7 @@ export interface Store {
 
   people(): Promise<Person[]>;
   person(id: string): Promise<Person | undefined>;
-  /** Changes a person. Back from leaving or a freeze, their training starts again today. */
+  /** Changes a person. Back from leaving, their training starts again today (not after a freeze on its own). */
   updatePerson(id: string, patch: Partial<Person>): Promise<void>;
   /**
    * Creates a person with their site access; returns the new id. Their training starts today in each section they
@@ -247,15 +247,16 @@ export interface Store {
   /** A new skill, last in its pathway. */
   createTrainingSkill(s: SkillFields, by: string): Promise<string>;
   /**
-   * Saves a live skill if it's still at revision `rev` (a new pathway puts it last there; a change to its rules dates
-   * `rulesChangedAt`). The new revision, or undefined (changed meanwhile, or retired).
+   * Saves a live skill if it's still at revision `rev`. A new pathway puts it last there and dates `addedAt`; becoming
+   * part of induction dates `inductionFrom`; a changed refresher dates `refresherFrom` (keeping `refresherWas`); a newly
+   * linked document is dated in `linkedAt`. The new revision, or undefined (changed meanwhile, or retired).
    */
   saveTrainingSkill(id: string, rev: number, s: SkillFields): Promise<number | undefined>;
   /** Swaps a live skill with the live one before (-1) or after (1) it in its pathway. False if there's none. */
   moveTrainingSkill(id: string, dir: -1 | 1): Promise<boolean>;
   /** Retires a skill (a new revision, so an open form can't save over it). */
   retireTrainingSkill(id: string, by: string): Promise<boolean>;
-  /** Brings a retired skill back, last in its pathway (its rules count as changed now). */
+  /** Brings a retired skill back, last in its pathway (it joins it again now: `addedAt`). */
   reinstateTrainingSkill(id: string): Promise<boolean>;
   /** Questions not retired, approved or drafted, in order. */
   trainingQuestions(skillIds?: string[]): Promise<Question[]>;
@@ -270,8 +271,8 @@ export interface Store {
   trainingPathways(): Promise<Pathway[]>;
   saveTrainingPathway(p: Pathway, by: string): Promise<void>;
   /**
-   * When people last started training in each section: recorded when they're given it, come back from leaving or a
-   * freeze, or their site reopens (createPerson, setAccess, updatePerson, setSiteStatus). The latest per section.
+   * When people last started training in each section: recorded when they're given it, come back from leaving, or
+   * their site reopens (createPerson, setAccess, updatePerson, setSiteStatus). The latest per section.
    */
   trainingStarts(personIds?: string[]): Promise<TrainingStart[]>;
   /** Oldest first. */
