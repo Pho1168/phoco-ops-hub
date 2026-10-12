@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { managedSites } from "@/lib/domain/access";
-import { canApprove, canDraft, CHANGE_TEXT, readStats, readsAny, reviewState, STATUS_TEXT, versionLabel, type LibraryVersion } from "@/lib/domain/library";
+import { canDraft, canReinstate, canRetire, CHANGE_TEXT, docReach, readStats, readsAny, reviewState, STATUS_TEXT, versionLabel, type LibraryVersion } from "@/lib/domain/library";
 import { dayMonthYear, londonDate } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { erasedPhotos } from "@/lib/library-service";
@@ -28,7 +28,6 @@ export default async function SopPage(props: { params: Promise<{ id: string }>; 
   if (!doc) notFound();
   const full = ctx.scope === "full";
   const writer = full && canDraft(ctx.person);
-  const approver = full && canApprove(ctx.person);
   if (doc.retiredAt && !writer) notFound();
   let v: LibraryVersion | undefined = doc.published;
   if (wanted && writer) {
@@ -50,6 +49,8 @@ export default async function SopPage(props: { params: Promise<{ id: string }>; 
   const stats = writer ? readStats(v.body.sections, v.id, people, acks, watched).filter((s) => s.read.length + s.unread.length > 0) : [];
   const today = londonDate(Date.now());
   const review = writer && isCurrent ? reviewState(v.reviewBy, today) : undefined;
+  // Retiring or bringing back: approvers for every site it covers.
+  const retiring = full && (doc.retiredAt ? canReinstate : canRetire)(ctx.person, doc, docReach(doc, sites)).ok;
 
   return (
     <>
@@ -100,7 +101,7 @@ export default async function SopPage(props: { params: Promise<{ id: string }>; 
           <section className="card stack" aria-label="Versions">
             <div className="row wrap"><h2 className="h-sec grow">Versions</h2>
               {!doc.retiredAt && <EditButton docId={doc.id} hasDraft={!!doc.open} />}
-              {approver && <RetireButton docId={doc.id} retired={!!doc.retiredAt} title={v.title} />}
+              {retiring && <RetireButton docId={doc.id} retired={!!doc.retiredAt} title={v.title} hasDraft={!!doc.open} />}
             </div>
             <div className="log">
               {history.filter((h) => h.status !== "discarded").map((h) => (

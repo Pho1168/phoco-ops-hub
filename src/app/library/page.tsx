@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { store } from "@/lib/data";
-import { canApprove, canDraft, canReview, isContributor, mustRead, reachedSites, readsAny, reviewState, versionLabel, type LibraryDoc } from "@/lib/domain/library";
+import { canApprove, canDraft, canReview, docReach, isContributor, mustRead, readsAny, reviewState, versionLabel, type LibraryDoc } from "@/lib/domain/library";
 import { sectionsFor } from "@/lib/domain/staff";
 import { londonDate } from "@/lib/domain/time";
 import { current } from "@/lib/session";
@@ -51,7 +51,7 @@ export default async function Library() {
   /** For whoever looks: approve it, or who does. */
   const waitingChip = (d: LibraryDoc) => {
     const v = d.open!;
-    if (approver && canReview(ctx.person, v, reachedSites(v.body.sections, sites)).ok) return { text: d.published ? "New version" : "New SOP", tone: "late" };
+    if (approver && canReview(ctx.person, v, docReach(d, sites)).ok) return { text: d.published ? "New version" : "New SOP", tone: "late" };
     if (approver && isContributor(ctx.person, v)) return { text: "Another approver checks it", tone: "" };
     if (approver) return { text: "The owner approves it", tone: "" };
     return { text: "Waiting", tone: "" };

@@ -1049,6 +1049,10 @@ export const sqlStore: Store = {
     if (!isUuid(versionId)) return false;
     if (move === "discard") {
       return withTx(async (tx) => {
+        // The document first, then its versions, as publishing and retiring do (so they never deadlock).
+        const [ref] = await tx<{ doc_id: string }[]>`select doc_id from library_versions where id = ${versionId}`;
+        if (!ref) return false;
+        await tx`select id from library_docs where id = ${ref.doc_id} for update`;
         const [v] = await tx<{ doc_id: string }[]>`update library_versions set status = 'discarded', updated_at = now(), rev = rev + 1
           where id = ${versionId} and status = 'draft' and rev = ${rev} returning doc_id`;
         if (!v) return false;
@@ -1073,13 +1077,16 @@ export const sqlStore: Store = {
   async publishLibraryVersion(versionId, rev, p) {
     if (!isUuid(versionId)) return undefined;
     return withTx(async (tx) => {
+      // The document first, then its versions, as discarding and retiring do (so they never deadlock).
+      const [ref] = await tx<{ doc_id: string }[]>`select doc_id from library_versions where id = ${versionId}`;
+      if (!ref) return undefined;
+      const [doc] = await tx`select id from library_docs where id = ${ref.doc_id} and retired_at is null for update`;
+      if (!doc) return undefined;
       const [v] = await tx<{ doc_id: string; author_id: string; submitted_by: string | null; contributors: string[] }[]>`
         select doc_id, author_id, submitted_by, contributors::text[] as contributors from library_versions
         where id = ${versionId} and status = 'in_review' and rev = ${rev} for update`;
       if (!v) return undefined;
       if (!p.ownerApproving && (v.author_id === p.approverId || v.submitted_by === p.approverId || v.contributors.includes(p.approverId))) return undefined;
-      const [doc] = await tx`select id from library_docs where id = ${v.doc_id} and retired_at is null for update`;
-      if (!doc) return undefined;
       await tx`update library_versions set status = 'superseded', superseded_at = now() where doc_id = ${v.doc_id} and status = 'published'`;
       const [{ n }] = await tx<{ n: number }[]>`select coalesce(max(version), 0) + 1 as n from library_versions where doc_id = ${v.doc_id}`;
       await tx`update library_versions set status = 'published', version = ${n}, approved_by = ${p.approverId}, approved_at = now(), published_at = now(),
@@ -1123,11 +1130,17 @@ export const sqlStore: Store = {
   },
 
   // ---------- photos ----------
-  async addMedia(m) {
-    const q = sql();
-    const [r] = await q<{ id: string }[]>`insert into media (mime, bytes, size, width, height, created_by)
-      values ('image/jpeg', ${Buffer.from(m.bytes)}, ${m.bytes.byteLength}, ${m.width}, ${m.height}, ${m.createdBy}) returning id`;
-    return r.id;
+  async addMedia(m, cap) {
+    if (!isUuid(m.createdBy)) return undefined;
+    return withTx(async (tx) => {
+      // One upload at a time per person, so the daily cap holds even for uploads sent together.
+      await tx`select pg_advisory_xact_lock(hashtext(${"media:" + m.createdBy}))`;
+      const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from media where created_by = ${m.createdBy} and created_at >= ${new Date(cap.since)}`;
+      if (n >= cap.max) return undefined;
+      const [r] = await tx<{ id: string }[]>`insert into media (mime, bytes, size, width, height, created_by)
+        values ('image/jpeg', ${Buffer.from(m.bytes)}, ${m.bytes.byteLength}, ${m.width}, ${m.height}, ${m.createdBy}) returning id`;
+      return r.id;
+    });
   },
   async media(id) {
     if (!isUuid(id)) return undefined;
@@ -1162,7 +1175,7 @@ export const sqlStore: Store = {
   async deleteUnusedMedia(before) {
     const q = sql();
     const r = await q`delete from media m where m.created_at < ${new Date(before)}
-      and not exists (select 1 from library_versions v where strpos(v.body::text, m.id::text) > 0)`;
+      and not exists (select 1 from library_versions v where v.status <> 'discarded' and strpos(v.body::text, m.id::text) > 0)`;
     return r.count;
   },
 

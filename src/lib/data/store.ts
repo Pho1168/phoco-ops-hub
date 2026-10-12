@@ -217,7 +217,8 @@ export interface Store {
   ackLibraryVersion(versionId: string, personId: string): Promise<boolean>;
 
   // Photos (JPEG). In use: never changed, but the owner can erase one (privacy). Unused for a week: cleared away.
-  addMedia(m: { bytes: Uint8Array; width: number; height: number; createdBy: string }): Promise<string>;
+  /** Stores a photo, unless the person has already added `cap.max` since `cap.since` (checked and added as one step): undefined then. */
+  addMedia(m: { bytes: Uint8Array; width: number; height: number; createdBy: string }, cap: { max: number; since: number }): Promise<string | undefined>;
   media(id: string): Promise<{ mime: string; bytes: Uint8Array; erased: boolean } | undefined>;
   /** Without the bytes, for answering "not changed" quickly. */
   mediaInfo(id: string): Promise<{ mime: string; erased: boolean } | undefined>;
@@ -227,7 +228,7 @@ export interface Store {
   mediaCountSince(personId: string, since: number): Promise<number>;
   /** Empties a photo for good (it shows as removed). False if it's already erased or isn't there. */
   eraseMedia(id: string, personId: string): Promise<boolean>;
-  /** Deletes photos older than `before` that no library version uses. Returns how many. */
+  /** Deletes photos older than `before` that no library version uses (discarded drafts don't count). Returns how many. */
   deleteUnusedMedia(before: number): Promise<number>;
 
   // Shift cover (requests are withdrawn or decided, offers withdrawn; nothing is deleted)

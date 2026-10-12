@@ -36,6 +36,7 @@ export async function POST(req: Request) {
   if (!ctx || ctx.scope !== "full" || ctx.person.pinMustChange || !canDraft(ctx.person)) return fail(403, "Only managers can add photos");
   if (Number(req.headers.get("content-length") ?? 0) > PHOTO_MAX_BYTES) return fail(413, "That photo is too big");
   const db = store();
+  // A quick refusal before reading the photo; adding it checks again, as one step.
   if ((await db.mediaCountSince(ctx.person.id, Date.now() - 86_400_000)) >= PHOTO_DAILY_LIMIT) {
     return fail(429, `That's ${PHOTO_DAILY_LIMIT} photos in a day. Try again tomorrow`);
   }
@@ -45,6 +46,7 @@ export async function POST(req: Request) {
   const size = jpegSize(bytes);
   if (!size) return fail(415, "That isn't a photo the app can use. Take it again, or choose a JPEG or PNG");
   if (size.w > PHOTO_MAX_SIDE || size.h > PHOTO_MAX_SIDE) return fail(413, "That photo is too big");
-  const id = await db.addMedia({ bytes, width: size.w, height: size.h, createdBy: ctx.person.id });
+  const id = await db.addMedia({ bytes, width: size.w, height: size.h, createdBy: ctx.person.id }, { max: PHOTO_DAILY_LIMIT, since: Date.now() - 86_400_000 });
+  if (!id) return fail(429, `That's ${PHOTO_DAILY_LIMIT} photos in a day. Try again tomorrow`);
   return NextResponse.json({ ok: true, id, w: size.w, h: size.h });
 }

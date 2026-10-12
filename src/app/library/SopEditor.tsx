@@ -45,14 +45,39 @@ const editSteps = (body: SopBody): EditStep[] => body.steps.length
   : [blank()];
 
 /**
+ * Unsaved changes are also kept on this device (this browser tab only, for this person), so they can be put back if
+ * the page is left without saving: the back button, signing out, or the session ending.
+ */
+interface Backup { rev: number; at: number; title: string; sections: string[]; purpose: string; steps: { text: string; warning: string; showWarning: boolean; photo?: Photo }[] }
+const backupKey = (versionId: string | undefined, personId: string) => `sop-draft:${versionId ?? "new"}:${personId}`;
+function readBackup(key: string): Backup | undefined {
+  try { const raw = sessionStorage.getItem(key); return raw ? (JSON.parse(raw) as Backup) : undefined; } catch { return undefined; }
+}
+function writeBackup(key: string, b: Backup) {
+  try { sessionStorage.setItem(key, JSON.stringify(b)); } catch { /* storage full or blocked: leaving still asks first */ }
+}
+function dropBackup(key: string) {
+  try { sessionStorage.removeItem(key); } catch { /* nothing kept */ }
+}
+/** What would be saved, to tell whether a backup differs from what's on screen. */
+const sameContent = (a: Omit<Backup, "rev" | "at">, b: Omit<Backup, "rev" | "at">) => {
+  const norm = (x: Omit<Backup, "rev" | "at">) => JSON.stringify([x.title.trim(), [...x.sections].sort(), x.purpose.trim(),
+    x.steps.map((s) => [s.text.trim(), s.showWarning ? s.warning.trim() : "", s.photo?.id ?? ""]).filter((s) => s.some(Boolean))]);
+  return norm(a) === norm(b);
+};
+const timeOf = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+
+/**
  * Writing an SOP: title, who reads it, what it's for, and the steps (each with an optional warning and photo).
  * "new" creates the document and its first draft; "draft" saves the open draft (revision `rev`, as loaded) and can send
  * it for approval. If someone else saves it meanwhile, nothing is overwritten: the writer is offered the latest.
  */
-export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, initial, erased = [], canDiscard }: {
+export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, initial, erased = [], canDiscard, personId }: {
   mode: "new" | "draft"; docId?: string; versionId?: string; rev?: number; published?: boolean; initial: { title: string; body: SopBody };
   /** Photos the owner has erased: shown as removed, and left out when it's saved. */
   erased?: string[]; canDiscard?: boolean;
+  /** Who is writing: their unsaved changes are kept on this device under their name only. */
+  personId: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -63,24 +88,49 @@ export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, i
   const [rev, setRev] = useState(loadedRev ?? 1);
   const [dirty, setDirty] = useState(false);
   const [stale, setStale] = useState(false);
+  const [restore, setRestore] = useState<Backup>();
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const form = useRef<HTMLFormElement>(null);
   const edits = useRef(0); // counts changes, so a save doesn't undo typing done while it was saving
+  const key = backupKey(mode === "new" ? undefined : versionId, personId);
+  const snapshot = (): Omit<Backup, "rev" | "at"> => ({ title, sections, purpose, steps: steps.map((s) => ({ text: s.text, warning: s.warning, showWarning: s.showWarning, photo: s.photo })) });
+  const latest = useRef(snapshot);
+  latest.current = snapshot;
 
-  // Leaving with unsaved changes asks first: closing or reloading the page, or following a link in the app.
+  // Changes left unsaved last time (in this tab): offer to put them back.
+  useEffect(() => {
+    const b = readBackup(key);
+    if (!b) return;
+    const loaded = { title: initial.title, sections: initial.body.sections, purpose: initial.body.purpose,
+      steps: initial.body.steps.map((s) => ({ text: s.text, warning: s.warning ?? "", showWarning: !!s.warning, photo: s.photo })) };
+    if (sameContent(b, loaded)) dropBackup(key); else setRestore(b);
+  }, [key, initial]);
+
+  // Keep unsaved changes on the device as they're made.
+  useEffect(() => {
+    if (dirty) writeBackup(key, { rev, at: Date.now(), ...latest.current() });
+  }, [dirty, key, rev, title, sections, purpose, steps]);
+
+  // Leaving with unsaved changes asks first: closing or reloading the page, following a link, or signing out.
   useEffect(() => {
     if (!dirty) return;
     let leaving = false;
+    const ask = (e: Event) => {
+      if (confirm("Leave without saving your changes?")) { leaving = true; return; }
+      e.preventDefault(); e.stopPropagation();
+    };
     const stay = (e: BeforeUnloadEvent) => { if (!leaving) e.preventDefault(); };
     const onClick = (e: MouseEvent) => {
       const a = e.target instanceof Element ? e.target.closest("a[href]") : null;
       if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.getAttribute("target") === "_blank") return;
-      if (confirm("Leave without saving your changes?")) { leaving = true; return; }
-      e.preventDefault(); e.stopPropagation();
+      ask(e);
     };
+    const onSubmit = (e: SubmitEvent) => { if (e.target !== form.current) ask(e); }; // "Switch user" is a form
     window.addEventListener("beforeunload", stay);
     document.addEventListener("click", onClick, true);
-    return () => { window.removeEventListener("beforeunload", stay); document.removeEventListener("click", onClick, true); };
+    document.addEventListener("submit", onSubmit, true);
+    return () => { window.removeEventListener("beforeunload", stay); document.removeEventListener("click", onClick, true); document.removeEventListener("submit", onSubmit, true); };
   }, [dirty]);
 
   const touched = () => { edits.current++; setDirty(true); setMsg(""); };
@@ -103,6 +153,15 @@ export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, i
   const uploading = steps.some((s) => s.uploading);
   const payload = () => ({ title, sections, purpose, steps: steps.map((s) => ({ text: s.text, warning: s.showWarning ? s.warning : undefined, photo: s.photo })) });
 
+  const putBack = () => {
+    if (!restore) return;
+    setTitle(restore.title); setSections(restore.sections); setPurpose(restore.purpose);
+    setSteps(restore.steps.length ? restore.steps.map((s) => ({ key: newKey(), ...s })) : [blank()]);
+    setRestore(undefined);
+    touched();
+  };
+  const throwAway = () => { dropBackup(key); setRestore(undefined); };
+
   const addPhoto = async (key: string, file: File | undefined) => {
     if (!file) return;
     setErr("");
@@ -117,9 +176,13 @@ export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, i
 
   const save = (then?: "submit") => start(async () => {
     setErr(""); setMsg("");
+    const before = edits.current;
     if (mode === "new") {
       const r = await createSop(payload());
       if (!r.ok || !r.id) { setErr(r.ok ? "Something went wrong" : r.error); return; }
+      // Anything typed while it was being created goes with it, to put back on the draft.
+      if (edits.current !== before && r.versionId) writeBackup(backupKey(r.versionId, personId), { rev: 1, at: Date.now(), ...latest.current() });
+      dropBackup(key);
       setDirty(false);
       router.replace(`/library/${r.id}/draft`);
       return;
@@ -127,7 +190,6 @@ export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, i
     let at = rev;
     const saving = dirty;
     if (saving) {
-      const before = edits.current;
       const r = await saveSopDraft(versionId!, rev, payload());
       if (!r.ok) { if (r.stale) setStale(true); else setErr(r.error); return; }
       at = r.rev!;
@@ -139,10 +201,12 @@ export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, i
       // Carry on from what was saved (steps left empty are gone).
       if (r.saved) { setTitle(r.saved.title); setSections(r.saved.body.sections); setPurpose(r.saved.body.purpose); setSteps(editSteps(r.saved.body)); }
       setDirty(false);
+      dropBackup(key);
     }
     if (then === "submit") {
       const s = await moveSop(versionId!, "submit", at);
       if (!s.ok) { if (s.stale) setStale(true); else setErr(saving ? `Saved, but not sent yet: ${s.error}` : s.error); return; }
+      dropBackup(key);
       router.refresh();
       return;
     }
@@ -150,10 +214,11 @@ export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, i
   });
 
   const discard = () => {
-    if (!confirm("Discard this draft? It's kept in the history, marked discarded.")) return;
+    if (!confirm("Discard this draft? It can't be brought back.")) return;
     start(async () => {
       const r = await moveSop(versionId!, "discard", rev);
       if (!r.ok) { if (r.stale) setStale(true); else setErr(r.error); return; }
+      dropBackup(key);
       setDirty(false);
       router.push(published && docId ? `/library/${docId}` : "/library");
     });
@@ -161,12 +226,23 @@ export function SopEditor({ mode, docId, versionId, rev: loadedRev, published, i
 
   const loadLatest = () => {
     if (dirty && !confirm("Load the latest version? Your changes here will be lost.")) return;
+    dropBackup(key);
     setDirty(false);
     router.refresh(); // the page gives the editor the latest revision
   };
 
   return (
-    <form className="stack" style={{ gap: 18, paddingBottom: 90 }} onSubmit={(e) => { e.preventDefault(); save(); }}>
+    <form ref={form} className="stack" style={{ gap: 18, paddingBottom: 90 }} onSubmit={(e) => { e.preventDefault(); save(); }}>
+      {restore && (
+        <div className="alert" role="status"><div className="grow stack" style={{ gap: 6 }}>
+          <div className="strong">You have changes from {timeOf(restore.at)} that weren&apos;t saved</div>
+          {mode === "draft" && restore.rev !== rev && <div style={{ fontSize: 14 }}>Someone has saved this draft since then. If you put yours back and save, they replace theirs.</div>}
+          <div className="row wrap" style={{ gap: 8 }}>
+            <button type="button" className="btn small" onClick={putBack}>Put them back</button>
+            <button type="button" className="btn ghost small" onClick={throwAway}>Throw them away</button>
+          </div>
+        </div></div>
+      )}
       <section className="card stack" aria-label="Details">
         <label className="stack" style={{ gap: 6 }}><span className="strong">Title</span>
           <input id="sop-title" className="txt" style={{ width: "100%", maxWidth: "none" }} required maxLength={SOP_LIMITS.title} autoComplete="off" placeholder="e.g. Probe calibration"

@@ -39,7 +39,7 @@ export function EditButton({ docId, hasDraft }: { docId: string; hasDraft: boole
 }
 
 /** Owners and operations managers: retire an SOP (with a reason), or bring a retired one back. */
-export function RetireButton({ docId, retired, title }: { docId: string; retired: boolean; title: string }) {
+export function RetireButton({ docId, retired, title, hasDraft }: { docId: string; retired: boolean; title: string; hasDraft: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [asking, setAsking] = useState(false);
@@ -63,7 +63,8 @@ export function RetireButton({ docId, retired, title }: { docId: string; retired
         <div className="modal-back">
           <form className="modal" role="dialog" aria-label={`Retire ${title}`} onSubmit={(e) => { e.preventDefault(); run(() => retireSop(docId, note)); }}>
             <h2 className="h-sec">Retire this SOP?</h2>
-            <p style={{ margin: 0 }}>Staff won&apos;t see it any more. It&apos;s kept with its history, and you can bring it back.</p>
+            <p style={{ margin: 0 }}>Staff won&apos;t see it any more. It&apos;s kept with its history, and you can bring it back.
+              {hasDraft ? " The new version being written is thrown away." : ""}</p>
             <label className="stack" style={{ gap: 6 }}><span className="muted">Why (required)</span>
               <textarea id="retire-note" autoFocus required maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Replaced by SOP-BOH-004" /></label>
             {err && <div className="err" role="alert">{err}</div>}

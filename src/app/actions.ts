@@ -26,15 +26,15 @@ import { gasFor } from "@/lib/daily-service";
 import { askMessages, canAskCover, canCancelCover, canDecideCover, canOffer, canWithdraw, cancelMessages, coverSendAfter, decisionMessages, NOTE_MAX, offerMessages,
   offerWithdrawnMessages, withdrawMessages, type CoverMessage } from "@/lib/domain/cover";
 import { canCoverNow, coverCandidates } from "@/lib/cover-service";
-import { canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw as canTakeBack, changeFor, CHANGE_TEXT, cleanSop, dropPhotos, photoIds,
-  reachedSites, readsAny, readyForReview, sopPrefix, validReviewBy, type SopBody } from "@/lib/domain/library";
+import { canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw as canTakeBack, changeFor, CHANGE_TEXT, cleanSop, docReach, dropPhotos,
+  photoIds, readsAny, readyForReview, sopPrefix, validReviewBy, type SopBody } from "@/lib/domain/library";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
 import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
 import type { Person, Role, SiteId } from "@/lib/domain/types";
-import { current, londonNow, requireCtx, requireLead, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
+import { current, londonNow, requireCtx, requireLead, SESSION_COOKIE, SESSION_TTL_MS, type Ctx } from "@/lib/session";
 
 const SiteIdZ = z.enum(["EAS", "WEM", "SYD"]);
 /** Someone still on the temporary PIN an owner gave them chooses their own before doing anything. */
@@ -1333,6 +1333,17 @@ async function requireDrafter() {
 }
 
 /**
+ * Like requireDrafter, for saving what someone has written: a session that has ended (timed out, or signed out on
+ * another device) is an error the editor shows, not a jump to the sign-in page that would lose the text.
+ */
+async function drafterForSave(): Promise<{ ok: true; ctx: Ctx } | { ok: false; error: string }> {
+  const ctx = await current();
+  if (!ctx || ctx.person.pinMustChange || ctx.scope !== "full") return { ok: false, error: "You've been signed out, so this wasn't saved. Copy what you wrote, then sign in again" };
+  if (!canDraft(ctx.person)) return { ok: false, error: "Only managers can write SOPs" };
+  return { ok: true, ctx };
+}
+
+/**
  * Cleans an SOP from the editor and checks its photos were uploaded. A photo the owner has erased since (say, in a
  * draft copied from an older version) is left out; its step keeps its words.
  */
@@ -1350,15 +1361,17 @@ async function sopFrom(input: unknown): Promise<{ ok: true; value: { title: stri
 }
 
 /** A new SOP: its first draft. The code (SOP-BOH-012) comes from who it's for and never changes. */
-export async function createSop(input: unknown): Promise<ActionResult & { id?: string }> {
-  const ctx = await requireDrafter();
+export async function createSop(input: unknown): Promise<ActionResult & { id?: string; versionId?: string }> {
+  const who = await drafterForSave();
+  if (!who.ok) return who;
+  const { ctx } = who;
   const c = await sopFrom(input);
   if (!c.ok) return c;
   const db = store();
-  const { docId, code } = await db.createLibraryDoc({ kind: "sop", prefix: sopPrefix(c.value.body.sections), title: c.value.title, body: c.value.body, authorId: ctx.person.id });
+  const { docId, versionId, code } = await db.createLibraryDoc({ kind: "sop", prefix: sopPrefix(c.value.body.sections), title: c.value.title, body: c.value.body, authorId: ctx.person.id });
   await db.audit({ actorId: ctx.person.id, action: "library.create", detail: `Started ${code}: ${c.value.title}` });
   revalidatePath("/library");
-  return { ok: true, id: docId };
+  return { ok: true, id: docId, versionId };
 }
 
 /**
@@ -1367,7 +1380,9 @@ export async function createSop(input: unknown): Promise<ActionResult & { id?: s
  * can't then approve it. Nothing else on screen changes, so the page isn't refreshed.
  */
 export async function saveSopDraft(versionId: string, rev: number, input: unknown): Promise<LibResult & { rev?: number; saved?: { title: string; body: SopBody } }> {
-  const ctx = await requireDrafter();
+  const who = await drafterForSave();
+  if (!who.ok) return who;
+  const { ctx } = who;
   const db = store();
   const v = await db.libraryVersion(LibIdZ.parse(versionId));
   if (!v) return { ok: false, error: "That draft isn't there any more" };
@@ -1414,10 +1429,11 @@ export async function moveSop(versionId: string, move: string, rev: number, note
   if (!seen.success) return stale();
   const why = z.string().trim().max(500, "Keep the note under 500 characters").safeParse(note ?? "");
   if (!why.success) return { ok: false, error: why.error.issues[0]?.message ?? "Check the note" };
+  const reach = docReach(doc, await db.sites());
   const can = m === "submit" ? canEditDraft(ctx.person, v)
-    : m === "withdraw" ? canTakeBack(ctx.person, v)
-    : m === "send_back" ? canReview(ctx.person, v, reachedSites(v.body.sections, await db.sites()))
-    : canDiscard(ctx.person, v);
+    : m === "withdraw" ? canTakeBack(ctx.person, v, reach)
+    : m === "send_back" ? canReview(ctx.person, v, reach)
+    : canDiscard(ctx.person, v, reach);
   if (!can.ok) return can;
   if (m === "submit") {
     const ready = readyForReview(v.body);
@@ -1431,8 +1447,8 @@ export async function moveSop(versionId: string, move: string, rev: number, note
 }
 
 /**
- * An owner, or an operations manager who runs every site it reaches and didn't write or change it, approves and
- * publishes the revision they were shown. Everyone it's for reads it (again, for a minor or major change).
+ * An owner, or an operations manager who runs every site the SOP covers (before and after) and didn't write or change
+ * this version, approves and publishes the revision they were shown. Everyone it's for reads it (again, for a change).
  */
 export async function publishSop(versionId: string, input: unknown): Promise<LibResult & { version?: number }> {
   const ctx = await requireCtx();
@@ -1442,7 +1458,7 @@ export async function publishSop(versionId: string, input: unknown): Promise<Lib
   const v = await db.libraryVersion(LibIdZ.parse(versionId));
   const doc = v && (await db.libraryDoc(v.docId));
   if (!v || !doc) return { ok: false, error: "That version isn't there any more" };
-  const can = canReview(ctx.person, v, reachedSites(v.body.sections, await db.sites()));
+  const can = canReview(ctx.person, v, docReach(doc, await db.sites()));
   if (!can.ok) return can;
   if (doc.retiredAt) return { ok: false, error: "It's retired. Bring it back first" };
   const ready = readyForReview(v.body);
@@ -1464,7 +1480,7 @@ export async function retireSop(docId: string, note: string): Promise<ActionResu
   const db = store();
   const doc = await db.libraryDoc(LibIdZ.parse(docId));
   if (!doc) return { ok: false, error: "That SOP isn't there any more" };
-  const can = canRetire(ctx.person, doc);
+  const can = canRetire(ctx.person, doc, docReach(doc, await db.sites()));
   if (!can.ok) return can;
   const why = z.string().trim().min(1, "Say why it's being retired").max(300, "Keep the reason under 300 characters").safeParse(note ?? "");
   if (!why.success) return { ok: false, error: why.error.issues[0]?.message ?? "Say why" };
@@ -1479,7 +1495,7 @@ export async function reinstateSop(docId: string): Promise<ActionResult> {
   const db = store();
   const doc = await db.libraryDoc(LibIdZ.parse(docId));
   if (!doc) return { ok: false, error: "That SOP isn't there any more" };
-  const can = canReinstate(ctx.person, doc);
+  const can = canReinstate(ctx.person, doc, docReach(doc, await db.sites()));
   if (!can.ok) return can;
   if (!(await db.reinstateLibraryDoc(doc.id))) return { ok: false, error: STALE };
   await db.audit({ actorId: ctx.person.id, action: "library.reinstate", detail: `Brought back ${doc.code}: ${doc.published?.title ?? ""}` });

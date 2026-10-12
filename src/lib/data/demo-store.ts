@@ -688,7 +688,8 @@ export const demoStore: Store = {
     S().libAcks.push({ versionId, personId, at: Date.now() });
     return true;
   },
-  async addMedia(m) {
+  async addMedia(m, cap) {
+    if (Array.from(S().media.values()).filter((x) => x.createdBy === m.createdBy && x.createdAt >= cap.since).length >= cap.max) return undefined;
     const id = randomUUID();
     S().media.set(id, { mime: "image/jpeg", bytes: new Uint8Array(m.bytes), width: m.width, height: m.height, createdBy: m.createdBy, createdAt: Date.now() });
     return id;
@@ -716,7 +717,7 @@ export const demoStore: Store = {
     return true;
   },
   async deleteUnusedMedia(before) {
-    const used = JSON.stringify(S().libVersions.map((v) => v.body));
+    const used = JSON.stringify(S().libVersions.filter((v) => v.status !== "discarded").map((v) => v.body));
     let n = 0;
     for (const [id, m] of Array.from(S().media.entries())) if (m.createdAt < before && !used.includes(id)) { S().media.delete(id); n++; }
     return n;

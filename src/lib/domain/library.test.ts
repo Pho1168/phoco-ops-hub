@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canApprove, canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw, changeFor, cleanSop, defaultReviewBy, dropPhotos, imageKind,
+  canApprove, canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw, changeFor, cleanSop, coversReach, defaultReviewBy, docReach, dropPhotos, imageKind,
   isContributor, jpegSize, libraryToDo, mustRead, nextCode, reachedSites, readStats, readsAt, readyForReview, reviewState, sopPrefix, validReviewBy, versionLabel,
   type LibraryDoc, type LibraryVersion, type SopBody,
 } from "./library";
@@ -58,10 +58,20 @@ describe("library: who writes and who approves", () => {
     expect(reachedSites([], SITES)).toEqual(["EAS", "WEM"]); // Sydenham is closed
     const sent = (sections: SopBody["sections"]) => version({ status: "in_review", body: { sections, purpose: "p", steps: [{ text: "s" }] } });
     expect(canReview(easOps, sent(["BOH"]), reachedSites(["BOH"], SITES))).toEqual({ ok: true });
-    expect(canReview(easOps, sent(["PROD"]), reachedSites(["PROD"], SITES))).toMatchObject({ ok: false, error: "It reaches a site you don't run, so the owner approves it" });
+    expect(canReview(easOps, sent(["PROD"]), reachedSites(["PROD"], SITES))).toMatchObject({ ok: false, error: "It covers a site you don't run, so the owner approves it" });
     expect(canReview(easOps, sent([]), ALL)).toMatchObject({ ok: false });
     expect(canReview(ops, sent([]), ALL)).toEqual({ ok: true });
     expect(canReview(owner, sent(["PROD"]), reachedSites(["PROD"], SITES))).toEqual({ ok: true });
+    expect([coversReach(owner, ALL), coversReach(ops, ALL), coversReach(easOps, ["EAS"]), coversReach(easOps, ALL), coversReach(mgr, [])]).toEqual([true, true, true, false, false]);
+  });
+  it("narrowing who an SOP is for still counts the sites it would be taken from", () => {
+    const body = (sections: SopBody["sections"]) => ({ sections, purpose: "p", steps: [{ text: "s" }] });
+    // A production SOP (Wembley) re-scoped to Back of house (Eastcote): it covers both until published.
+    const rescoped = doc({ published: version({ status: "published", body: body(["PROD"]) }), open: version({ status: "in_review", body: body(["BOH"]) }) });
+    expect(docReach(rescoped, SITES)).toEqual(["WEM", "EAS"]);
+    expect(canReview(easOps, rescoped.open!, docReach(rescoped, SITES))).toMatchObject({ ok: false });
+    expect(docReach(doc({ open: version({ body: body(["BOH"]) }) }), SITES)).toEqual(["EAS"]);
+    expect(docReach(doc(), SITES)).toEqual([]);
   });
   it("drafts can be edited; a version waiting for approval is taken back first; published ones never change", () => {
     expect(canEditDraft(mgr, version())).toEqual({ ok: true });
@@ -69,25 +79,36 @@ describe("library: who writes and who approves", () => {
     expect(canEditDraft(owner, version({ status: "published" }))).toMatchObject({ ok: false });
     expect(canEditDraft(cook, version())).toMatchObject({ ok: false });
   });
-  it("taking back: whoever wrote or sent it (if they still write SOPs), or an approver", () => {
+  it("taking back: whoever wrote or sent it (if they still write SOPs), or an approver for its sites", () => {
     const sent = version({ status: "in_review", authorId: "mgr", submittedBy: "mgr" });
-    expect(canWithdraw(mgr, sent)).toEqual({ ok: true });
-    expect(canWithdraw(ops, sent)).toEqual({ ok: true });
-    expect(canWithdraw(wemMgr, sent)).toMatchObject({ ok: false });
-    expect(canWithdraw({ ...mgr, access: [at("EAS", "staff", ["BOH"])] }, sent)).toMatchObject({ ok: false }); // no longer a manager
+    const EAS = ["EAS" as const], WEM = ["WEM" as const];
+    expect(canWithdraw(mgr, sent, EAS)).toEqual({ ok: true });
+    expect(canWithdraw(ops, sent, EAS)).toEqual({ ok: true });
+    expect(canWithdraw(wemMgr, sent, EAS)).toMatchObject({ ok: false });
+    expect(canWithdraw({ ...mgr, access: [at("EAS", "staff", ["BOH"])] }, sent, EAS)).toMatchObject({ ok: false }); // no longer a manager
+    expect(canWithdraw(easOps, sent, WEM)).toMatchObject({ ok: false, error: "Only whoever sent it, or an approver for its sites, can take it back" });
+    expect(canWithdraw(easOps, version({ status: "in_review", authorId: "opsE" }), WEM)).toEqual({ ok: true }); // their own
   });
-  it("discarding a draft: whoever started it, or an approver; retiring a published SOP and bringing it back: approvers", () => {
-    expect(canDiscard(mgr, version())).toEqual({ ok: true });
-    expect(canDiscard(wemMgr, version())).toMatchObject({ ok: false });
-    expect(canDiscard(ops, version())).toEqual({ ok: true });
-    expect(canDiscard({ ...mgr, status: "frozen" }, version())).toMatchObject({ ok: false });
+  it("discarding a draft: whoever started it, or an approver for its sites", () => {
+    const EAS = ["EAS" as const], WEM = ["WEM" as const];
+    expect(canDiscard(mgr, version(), EAS)).toEqual({ ok: true });
+    expect(canDiscard(wemMgr, version(), EAS)).toMatchObject({ ok: false });
+    expect(canDiscard(ops, version(), EAS)).toEqual({ ok: true });
+    expect(canDiscard(easOps, version(), WEM)).toMatchObject({ ok: false });
+    expect(canDiscard({ ...mgr, status: "frozen" }, version(), EAS)).toMatchObject({ ok: false });
+  });
+  it("retiring a published SOP and bringing it back: approvers for every site it covers", () => {
+    const EAS = ["EAS" as const], WEM = ["WEM" as const];
     const live = doc({ published: version({ status: "published" }) });
-    expect(canRetire(ops, live)).toEqual({ ok: true });
-    expect(canRetire(mgr, live)).toMatchObject({ ok: false });
-    expect(canRetire(ops, doc({ ...live, retiredAt: 5 }))).toMatchObject({ ok: false });
-    expect(canRetire(ops, doc({ open: version() }))).toMatchObject({ ok: false, error: "It was never published: discard the draft instead" });
-    expect(canReinstate(ops, doc({ retiredAt: 5, published: version({ status: "published" }) }))).toEqual({ ok: true });
-    expect(canReinstate(ops, doc({ retiredAt: 5 }))).toMatchObject({ ok: false, error: "It was never published" });
+    expect(canRetire(ops, live, EAS)).toEqual({ ok: true });
+    expect(canRetire(mgr, live, EAS)).toMatchObject({ ok: false });
+    expect(canRetire(easOps, live, WEM)).toMatchObject({ ok: false, error: "It covers a site you don't run, so the owner retires it" });
+    expect(canRetire(owner, live, WEM)).toEqual({ ok: true });
+    expect(canRetire(ops, doc({ ...live, retiredAt: 5 }), EAS)).toMatchObject({ ok: false });
+    expect(canRetire(ops, doc({ open: version() }), EAS)).toMatchObject({ ok: false, error: "It was never published: discard the draft instead" });
+    expect(canReinstate(ops, doc({ retiredAt: 5, published: version({ status: "published" }) }), EAS)).toEqual({ ok: true });
+    expect(canReinstate(easOps, doc({ retiredAt: 5, published: version({ status: "published" }) }), WEM)).toMatchObject({ ok: false });
+    expect(canReinstate(ops, doc({ retiredAt: 5 }), EAS)).toMatchObject({ ok: false, error: "It was never published" });
   });
 });
 

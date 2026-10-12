@@ -103,8 +103,9 @@ create or replace trigger library_acks_append_only before update or delete on li
 alter table library_acks enable row level security;
 
 -- Photos for SOP steps, resized on the device before upload (JPEG). Kept in the database so they're backed up and only
--- reach signed-in people. A photo no version uses is cleared away after a week; one that's in use is never changed,
--- except that the owner can erase it (privacy: say it shows someone), which empties it and leaves a placeholder.
+-- reach signed-in people. A photo no version uses (discarded drafts don't count) is cleared away after a week; one
+-- that's in use is never changed, except that the owner can erase it (privacy: say it shows someone), which empties
+-- it and leaves a placeholder.
 create table if not exists media (
   id         uuid primary key default gen_random_uuid(),
   mime       text not null check (mime in ('image/jpeg')),
@@ -125,7 +126,7 @@ alter table media enable row level security;
 create or replace function media_guard() returns trigger language plpgsql set search_path = '' as $$
 begin
   if tg_op = 'DELETE' then
-    if exists (select 1 from public.library_versions v where strpos(v.body::text, old.id::text) > 0) then
+    if exists (select 1 from public.library_versions v where v.status <> 'discarded' and strpos(v.body::text, old.id::text) > 0) then
       raise exception 'that photo is used by an SOP' using errcode = 'check_violation';
     end if;
     return old;

@@ -85,6 +85,17 @@ export function reachedSites(sections: Area[], sites: Sited[]): SiteId[] {
   return sites.filter((s) => s.status === "open" && (!sections.length || sectionsFor(s.kind).some((x) => sections.includes(x)))).map((s) => s.id);
 }
 
+/**
+ * The open sites an SOP covers: those its published version reaches and those the version being written would, so
+ * narrowing who it's for still counts the sites it would be taken away from.
+ */
+export function docReach(d: { published?: { body: Pick<SopBody, "sections"> }; open?: { body: Pick<SopBody, "sections"> } }, sites: Sited[]): SiteId[] {
+  return Array.from(new Set([d.published, d.open].flatMap((v) => (v ? reachedSites(v.body.sections, sites) : []))));
+}
+
+/** Approving, sending back, retiring or bringing back for every site in `reach`: an owner, or an operations manager who runs them all. */
+export const coversReach = (p: Pick<Person, "access">, reach: SiteId[]) => isOwner(p) || (isOps(p) && reach.every((s) => opsSites(p).includes(s)));
+
 /** Wrote, changed or sent this version. */
 export const isContributor = (p: Pick<Person, "id">, v: Pick<LibraryVersion, "authorId" | "submittedBy" | "contributors">) =>
   p.id === v.authorId || p.id === v.submittedBy || v.contributors.includes(p.id);
@@ -96,47 +107,52 @@ export function canEditDraft(p: Actor, v: Pick<LibraryVersion, "status">): Check
   return yes;
 }
 
-/** Taking a version back from approval: whoever wrote or sent it (if they still write SOPs), or an approver. */
-export function canWithdraw(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy">): Checked {
+/**
+ * Taking a version back from approval: whoever wrote or sent it (if they still write SOPs), or an approver for all the
+ * sites the SOP covers (`reach`: docReach).
+ */
+export function canWithdraw(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy">, reach: SiteId[]): Checked {
   if (!canDraft(p)) return no("Only managers can change SOPs");
   if (v.status !== "in_review") return no("It isn't waiting for approval");
-  if (p.id !== v.authorId && p.id !== v.submittedBy && !canApprove(p)) return no("Only whoever sent it, or an approver, can take it back");
-  return yes;
+  if (p.id === v.authorId || p.id === v.submittedBy || (canApprove(p) && coversReach(p, reach))) return yes;
+  return no("Only whoever sent it, or an approver for its sites, can take it back");
 }
 
 /**
  * Approving (and publishing) or sending back: an owner, or an operations manager who didn't write, change or send
- * this version and runs every site it reaches (`reach`: reachedSites). Owners may approve their own, so they're never stuck.
+ * this version and runs every site the SOP covers (`reach`: docReach). Owners may approve their own, so they're never stuck.
  */
 export function canReview(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy" | "contributors">, reach: SiteId[]): Checked {
   if (!canApprove(p)) return no("Only the owner or an operations manager can approve");
   if (v.status !== "in_review") return no("It isn't waiting for approval");
   if (isOwner(p)) return yes;
   if (isContributor(p, v)) return no("You wrote or changed this version, so another approver checks it");
-  if (isOps(p) && reach.some((s) => !opsSites(p).includes(s))) return no("It reaches a site you don't run, so the owner approves it");
+  if (!coversReach(p, reach)) return no("It covers a site you don't run, so the owner approves it");
   return yes;
 }
 
-/** Throwing away a draft (it's kept, marked discarded): whoever started it (if they still write SOPs), or an approver. */
-export function canDiscard(p: Actor, v: Pick<LibraryVersion, "status" | "authorId">): Checked {
+/** Throwing away a draft: whoever started it (if they still write SOPs), or an approver for all the sites the SOP covers. */
+export function canDiscard(p: Actor, v: Pick<LibraryVersion, "status" | "authorId">, reach: SiteId[]): Checked {
   if (!canDraft(p)) return no("Only managers can change SOPs");
   if (v.status !== "draft") return no("Only a draft can be discarded");
-  if (p.id !== v.authorId && !canApprove(p)) return no("Only whoever started it, or an approver, can discard it");
-  return yes;
+  if (p.id === v.authorId || (canApprove(p) && coversReach(p, reach))) return yes;
+  return no("Only whoever started it, or an approver for its sites, can discard it");
 }
 
 /** Retiring takes a published SOP out of use (a draft that was never published is discarded instead). */
-export function canRetire(p: Actor, doc: Pick<LibraryDoc, "retiredAt" | "published">): Checked {
+export function canRetire(p: Actor, doc: Pick<LibraryDoc, "retiredAt" | "published">, reach: SiteId[]): Checked {
   if (!canApprove(p)) return no("Only the owner or an operations manager can retire an SOP");
   if (doc.retiredAt) return no("It's already retired");
   if (!doc.published) return no("It was never published: discard the draft instead");
+  if (!coversReach(p, reach)) return no("It covers a site you don't run, so the owner retires it");
   return yes;
 }
 
-export function canReinstate(p: Actor, doc: Pick<LibraryDoc, "retiredAt" | "published">): Checked {
+export function canReinstate(p: Actor, doc: Pick<LibraryDoc, "retiredAt" | "published">, reach: SiteId[]): Checked {
   if (!canApprove(p)) return no("Only the owner or an operations manager can bring an SOP back");
   if (!doc.retiredAt) return no("It isn't retired");
   if (!doc.published) return no("It was never published");
+  if (!coversReach(p, reach)) return no("It covers a site you don't run, so the owner brings it back");
   return yes;
 }
 
@@ -269,11 +285,11 @@ export function readStats(sections: Area[], versionId: string, people: Pick<Pers
 }
 
 /** What's waiting for this person in the library: versions they can approve, and their own drafts sent back. */
-export function libraryToDo(p: Actor, docs: Pick<LibraryDoc, "open" | "retiredAt">[], sites: Sited[]): number {
+export function libraryToDo(p: Actor, docs: Pick<LibraryDoc, "open" | "published" | "retiredAt">[], sites: Sited[]): number {
   return docs.filter((d) => {
     const v = d.open;
     if (!v || d.retiredAt) return false;
-    if (v.status === "in_review") return canReview(p, v, reachedSites(v.body.sections, sites)).ok;
+    if (v.status === "in_review") return canReview(p, v, docReach(d, sites)).ok;
     return v.status === "draft" && !!v.reviewNote && v.authorId === p.id;
   }).length;
 }

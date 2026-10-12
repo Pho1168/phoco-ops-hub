@@ -92,9 +92,10 @@ describe("library store: an SOP from draft to its second version", () => {
 
 describe("library store: photos", () => {
   const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 1, 2]);
+  const CAP = { max: 100, since: 0 };
   it("keeps photos, says which exist and which are erased; erasing empties one for good", async () => {
     resetDemo();
-    const id = await demoStore.addMedia({ bytes: jpeg, width: 10, height: 8, createdBy: "DEMO-MGR" });
+    const id = (await demoStore.addMedia({ bytes: jpeg, width: 10, height: 8, createdBy: "DEMO-MGR" }, CAP))!;
     expect((await demoStore.media(id))).toMatchObject({ mime: "image/jpeg", erased: false });
     expect(await demoStore.mediaStatus([id, "8f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b"])).toEqual(new Map([[id, { erased: false }]]));
     expect(await demoStore.mediaCountSince("DEMO-MGR", Date.now() - 60_000)).toBe(1);
@@ -104,15 +105,25 @@ describe("library store: photos", () => {
     expect(await demoStore.mediaInfo(id)).toEqual({ mime: "image/jpeg", erased: true });
     resetDemo();
   });
-  it("clears away old photos no version uses, and keeps the ones in use", async () => {
+  it("a person can add only so many a day", async () => {
     resetDemo();
-    const used = await demoStore.addMedia({ bytes: jpeg, width: 10, height: 8, createdBy: "DEMO-MGR" });
-    const unused = await demoStore.addMedia({ bytes: jpeg, width: 10, height: 8, createdBy: "DEMO-MGR" });
-    await demoStore.createLibraryDoc({ kind: "sop", prefix: "SOP-BOH-", title: "With a photo", authorId: "DEMO-MGR",
-      body: { sections: ["BOH"], purpose: "p", steps: [{ text: "Look", photo: { id: used, w: 10, h: 8 } }] } });
+    const cap = { max: 2, since: Date.now() - 60_000 };
+    const add = () => demoStore.addMedia({ bytes: jpeg, width: 10, height: 8, createdBy: "DEMO-MGR" }, cap);
+    expect([!!(await add()), !!(await add()), await add()]).toEqual([true, true, undefined]);
+    expect(await demoStore.addMedia({ bytes: jpeg, width: 10, height: 8, createdBy: "DEMO-OPS" }, cap)).toBeTruthy(); // someone else
+    resetDemo();
+  });
+  it("clears away old photos no version uses (a discarded draft doesn't count), and keeps the ones in use", async () => {
+    resetDemo();
+    const add = async () => (await demoStore.addMedia({ bytes: jpeg, width: 10, height: 8, createdBy: "DEMO-MGR" }, CAP))!;
+    const [used, unused, thrown] = [await add(), await add(), await add()];
+    const withPhoto = (id: string) => ({ sections: ["BOH" as const], purpose: "p", steps: [{ text: "Look", photo: { id, w: 10, h: 8 } }] });
+    await demoStore.createLibraryDoc({ kind: "sop", prefix: "SOP-BOH-", title: "With a photo", authorId: "DEMO-MGR", body: withPhoto(used) });
+    const scrap = await demoStore.createLibraryDoc({ kind: "sop", prefix: "SOP-BOH-", title: "Scrap", authorId: "DEMO-MGR", body: withPhoto(thrown) });
+    await demoStore.moveLibraryVersion(scrap.versionId, "discard", "DEMO-MGR", 1);
     expect(await demoStore.deleteUnusedMedia(Date.now() - 60_000)).toBe(0); // too new to clear
-    expect(await demoStore.deleteUnusedMedia(Date.now() + 60_000)).toBe(1);
-    expect(Array.from((await demoStore.mediaStatus([used, unused])).keys())).toEqual([used]);
+    expect(await demoStore.deleteUnusedMedia(Date.now() + 60_000)).toBe(2);
+    expect(Array.from((await demoStore.mediaStatus([used, unused, thrown])).keys())).toEqual([used]);
     resetDemo();
   });
 });
