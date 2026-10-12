@@ -30,17 +30,18 @@ export interface PersonInput { staffCode: string; name: string; access: SiteAcce
 export type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
 
 /**
- * Cleans and checks the details an owner enters for a person.
- * `editingId` is the person being edited, so their own staff ID doesn't count as taken.
+ * Cleans and checks the details an owner or operations manager enters for a person.
+ * `editingId` is the person being edited, so their own staff ID doesn't count as taken. `canSee`: whose name may be
+ * given when their staff ID is taken (an operations manager isn't told who has it at another site).
  */
-export function validatePersonInput(input: PersonInput, sites: Site[], people: Person[], editingId?: string): Checked<PersonInput> {
+export function validatePersonInput(input: PersonInput, sites: Site[], people: Person[], editingId?: string, canSee: (p: Person) => boolean = () => true): Checked<PersonInput> {
   const name = input.name.trim().replace(/\s+/g, " ");
   if (!name) return { ok: false, error: "Add a name" };
   if (name.length > 40) return { ok: false, error: "Keep the name under 40 characters" };
   const staffCode = normalizeStaffCode(input.staffCode);
   if (!staffCode || !STAFF_CODE.test(staffCode)) return { ok: false, error: "Staff ID must be a number from 001 to 999" };
   const taken = people.find((p) => normalizeStaffCode(p.staffCode) === staffCode && p.id !== editingId);
-  if (taken) return { ok: false, error: `${staffCode} is already used by ${taken.name}` };
+  if (taken) return { ok: false, error: canSee(taken) ? `${staffCode} is already used by ${taken.name}` : `${staffCode} is already used by someone at another site` };
 
   if (!input.access.length) return { ok: false, error: "Choose at least one site" };
   const seen = new Set<SiteId>();
@@ -70,14 +71,25 @@ export function canChangeAccess(actor: Person, target: Person, next: SiteAccess[
   return { ok: true, value: true };
 }
 
-/** Marking someone as left ends their access for good (records stay). Same safeguards as freezing. */
+/**
+ * Marking someone as left ends their access for good (records stay). Same safeguards as freezing. Someone frozen by a
+ * site closure is the owner's to mark as left (rejoining would otherwise lift the closure's freeze).
+ */
 export function canMarkLeft(actor: Person, target: Person, people: Person[]): Checked<true> {
   if (actor.id === target.id) return { ok: false, error: "You can't mark yourself as left" };
+  if (target.status === "left") return { ok: false, error: "They're already marked as left" };
+  if (!isOwner(actor) && target.frozenReason?.startsWith("site:")) return { ok: false, error: CLOSURE_FREEZE };
   if (isOwner(target) && activeOwners(people).filter((p) => p.id !== target.id).length < 1)
     return { ok: false, error: "This is the last owner. Add another owner first" };
   return { ok: true, value: true };
 }
 
+/** Rejoining is only for someone marked as left. */
+export function canRejoin(target: Pick<Person, "status">): Checked<true> {
+  return target.status === "left" ? { ok: true, value: true } : { ok: false, error: "They haven't been marked as left" };
+}
+
+const CLOSURE_FREEZE = "Frozen because their site is closed. It ends when the owner reopens the site";
 const NOT_A_LEAD = "Only the owner or an operations manager can change accounts";
 
 /** The roles someone can give, in the form's order: owners any; operations managers staff and managers only. */
@@ -90,11 +102,13 @@ export function givableRoles(actor: Pick<Person, "access">): Role[] {
  * mark them as left. Owners: anyone (the last-owner safeguards still apply). Operations managers: staff and managers
  * who work only at sites they run. Their own account, owners and other operations managers are the owner's to change.
  */
-export function canManageAccount(actor: Pick<Person, "id" | "access">, target: Pick<Person, "id" | "access">): Checked<true> {
+export function canManageAccount(actor: Pick<Person, "id" | "access">, target: Pick<Person, "id" | "access" | "seesRightToWork">): Checked<true> {
   if (isOwner(actor)) return { ok: true, value: true };
   if (!isOps(actor)) return { ok: false, error: NOT_A_LEAD };
   if (actor.id === target.id) return { ok: false, error: "Ask the owner to change your own account" };
   if (isLead(target)) return { ok: false, error: "Only the owner can change an owner's or operations manager's account" };
+  // Someone who can see right to work checks: a temporary PIN would let anyone else in to see them.
+  if (target.seesRightToWork) return { ok: false, error: "Only the owner can change this account" };
   const mine = opsSites(actor);
   if (!target.access.length) return { ok: false, error: "Only the owner can change this account" };
   if (target.access.some((a) => !mine.includes(a.siteId))) return { ok: false, error: "They also work at a site you don't run, so the owner changes their account" };
@@ -112,8 +126,9 @@ export function canGiveAccess(actor: Pick<Person, "access">, next: Pick<SiteAcce
 }
 
 /** Taking a freeze off. A freeze from closing a site is the owner's: it ends when they reopen the site. */
-export function canUnfreeze(actor: Pick<Person, "access">, target: Pick<Person, "frozenReason">): Checked<true> {
-  if (!isOwner(actor) && target.frozenReason?.startsWith("site:")) return { ok: false, error: "Frozen because their site is closed. It ends when the owner reopens the site" };
+export function canUnfreeze(actor: Pick<Person, "access">, target: Pick<Person, "status" | "frozenReason">): Checked<true> {
+  if (target.status !== "frozen") return { ok: false, error: "This account isn't frozen" };
+  if (!isOwner(actor) && target.frozenReason?.startsWith("site:")) return { ok: false, error: CLOSURE_FREEZE };
   return { ok: true, value: true };
 }
 

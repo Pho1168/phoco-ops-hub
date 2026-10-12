@@ -11,7 +11,7 @@ import { pushToPerson } from "@/lib/push";
 import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
-import { canFreeze, canManage, canSignIn, isLead, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
+import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn } from "@/lib/domain/access";
 import { canCancel, canDecide, clashes, kindLabel, rangeLabel, timeOffDeciders, validateRequest } from "@/lib/domain/timeoff";
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
 import { afterQuietHours, dayMonthYear, isIsoDate, londonDate } from "@/lib/domain/time";
@@ -30,7 +30,7 @@ import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
-import { canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
+import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
 import type { Person, Role, SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, requireLead, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
 
@@ -85,11 +85,9 @@ export async function staffIdSignIn(staffCode: string, pin: string): Promise<Act
   const notRecognised = { ok: false as const, error: "Staff ID or PIN not recognised" };
   const person = code ? (await db.people()).find((p) => normalizeStaffCode(p.staffCode) === code) : undefined;
   if (!person || !person.access.length) return notRecognised;
-  const owner = isOwner(person), lead = isLead(person);
-  const sites = await db.sites();
-  const mine = person.access.map((a) => sites.find((s) => s.id === a.siteId)).filter((s): s is NonNullable<typeof s> => !!s);
-  const site = mine.find((s) => s.status === "open") ?? (owner ? mine[0] : undefined);
-  if (!site) return notRecognised;
+  const landing = remoteSignIn(person, await db.sites());
+  if (!landing) return notRecognised;
+  const { site, scope } = landing;
   const now = Date.now();
   const gate = canSignIn(person, site, now);
   if (!gate.allowed) return { ok: false, error: gate.reason };
@@ -98,9 +96,9 @@ export async function staffIdSignIn(staffCode: string, pin: string): Promise<Act
     await db.audit({ actorId: person.id, action: "signin.failed", detail: "Wrong PIN (staff ID sign-in, unregistered device)" });
     return notRecognised;
   }
-  if (lead) {
+  if (scope === "full") {
     await startSession(person.id, site.id);
-    await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: `${owner ? "Owner" : "Operations manager"} signed in on an unregistered device` });
+    await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: `${isOwner(person) ? "Owner" : "Operations manager"} signed in on an unregistered device` });
   } else {
     await startSession(person.id, site.id, undefined, "shifts");
     await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: "Signed in to My shifts on own phone" });
@@ -419,7 +417,7 @@ export async function switchSite(siteId: string): Promise<void> {
   const db = store();
   const id = SiteIdZ.parse(siteId);
   const site = await db.site(id);
-  if (!site || !canSignIn(ctx.person, site, Date.now()).allowed) redirect("/owner");
+  if (!site || !canSwitchTo(ctx.person, site)) redirect("/owner");
   await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
   const prev = await db.session(ctx.sessionId);
   const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS, prev?.deviceId);
@@ -442,7 +440,8 @@ export async function createPerson(input: unknown, tempPin: string): Promise<Act
   const db = store();
   const parsed = PersonZ.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Some details are missing" };
-  const checked = validatePersonInput(parsed.data, await db.sites(), await db.people());
+  const people = await db.people();
+  const checked = validatePersonInput(parsed.data, await db.sites(), people, undefined, (p) => accountsFor(ctx.person, [p]).length > 0);
   if (!checked.ok) return checked;
   const allowed = canGiveAccess(ctx.person, checked.value.access);
   if (!allowed.ok) return allowed;
@@ -462,7 +461,7 @@ export async function updatePerson(personId: string, input: unknown): Promise<Ac
   const parsed = PersonZ.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Some details are missing" };
   const people = await db.people();
-  const checked = validatePersonInput(parsed.data, await db.sites(), people, target.id);
+  const checked = validatePersonInput(parsed.data, await db.sites(), people, target.id, (p) => accountsFor(ctx.person, [p]).length > 0);
   if (!checked.ok) return checked;
   const given = canGiveAccess(ctx.person, checked.value.access);
   if (!given.ok) return given;
@@ -508,6 +507,8 @@ export async function setLeft(personId: string, left: boolean): Promise<ActionRe
     await db.updatePerson(target.id, { status: "left", frozenReason: undefined });
     await db.revokeSessions({ personId: target.id }, "marked as left");
   } else {
+    const ok = canRejoin(target);
+    if (!ok.ok) return ok;
     await db.updatePerson(target.id, { status: "active", frozenReason: undefined });
   }
   await db.audit({ actorId: ctx.person.id, action: left ? "person.left" : "person.rejoined", detail: target.name });
@@ -896,9 +897,9 @@ export async function postNotice(input: unknown): Promise<ActionResult & { sentT
   const n = NoticeZ.safeParse(input);
   if (!n.success) return { ok: false, error: n.error.issues[0]?.message ?? "That notice couldn't be posted" };
   const db = store();
-  const openSites = (await db.sites()).filter((s) => s.status === "open").map((s) => s.id);
+  const allSites = (await db.sites()).map((s) => s.id);
   const siteId = n.data.siteId ?? undefined;
-  if (!canPostTo(managed, openSites, siteId)) return { ok: false, error: "You can only post to sites you manage" };
+  if (!canPostTo(managed, allSites, siteId)) return { ok: false, error: "You can only post to sites you manage" };
   const now = Date.now();
   if (n.data.showUntil && n.data.showUntil < londonDate(now)) return { ok: false, error: "The last day to show it is already past" };
   const id = await db.addTeamNotice({ siteId, sections: n.data.sections, title: n.data.title, body: n.data.body, important: n.data.important, createdBy: ctx.person.id, showUntil: n.data.showUntil ?? undefined });
@@ -923,8 +924,8 @@ export async function endNotice(id: string): Promise<ActionResult> {
   const db = store();
   const n = (await db.teamNotices()).find((x) => x.id === id);
   if (!n) return { ok: false, error: "That notice isn't there any more" };
-  const openSites = (await db.sites()).filter((s) => s.status === "open").map((s) => s.id);
-  if (!canPostTo(managedSites(ctx.person), openSites, n.siteId)) return { ok: false, error: "Only a manager of that site can take it down" };
+  const allSites = (await db.sites()).map((s) => s.id);
+  if (!canPostTo(managedSites(ctx.person), allSites, n.siteId)) return { ok: false, error: "Only a manager of that site can take it down" };
   if (!(await db.endTeamNotice(n.id, ctx.person.id))) return { ok: false, error: "It has already been taken down" };
   await db.audit({ actorId: ctx.person.id, siteId: n.siteId, action: "notice.end", detail: `Took down notice: ${n.title}` });
   revalidatePath("/manage/notices"); revalidatePath("/today"); revalidatePath("/me");

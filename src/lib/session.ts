@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { DEMO_MODE, store } from "@/lib/data";
 import { sessionDeviceOk } from "@/lib/domain/devices";
-import { canManage, isOps, isOwner, leadSites, managedSites } from "@/lib/domain/access";
+import { canManage, isOps, isOwner, leadSites, managedSites, runsSite } from "@/lib/domain/access";
 import type { Person, Site, SiteAccess, SiteId } from "@/lib/domain/types";
 
 export const SESSION_COOKIE = "phoco_sid";
@@ -30,8 +30,8 @@ export async function current(): Promise<Ctx | null> {
   if (!access) return null;
   const owner = isOwner(person), ops = isOps(person);
   if (site.status === "closed" && !owner) return null;
-  // A removed tablet ends every session on it; device-less full sessions are owners and operations managers only.
-  if (!DEMO_MODE && !sessionDeviceOk(s.deviceId, s.deviceId ? await db.device(s.deviceId) : undefined, owner || ops, s.scope)) return null;
+  // A removed tablet ends every session on it; device-less full sessions are for owners, and operations managers at a site they run.
+  if (!DEMO_MODE && !sessionDeviceOk(s.deviceId, s.deviceId ? await db.device(s.deviceId) : undefined, runsSite(person, site.id), s.scope)) return null;
   return { person, site, access, sessionId: s.id, isOwner: owner, isOps: ops, isLead: owner || ops, isManager: owner || canManage(person, site.id), scope: s.scope ?? "full" };
 }
 

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { canManage, canSignIn, isLead, isOps, isOwner, leadSites, managedSites, opsSites, planSiteClosure } from "./access";
+import { canFreeze, canManage, canSignIn, canSwitchTo, isLead, isOps, isOwner, leadSites, managedSites, opsSites, planSiteClosure, remoteSignIn, runsSite } from "./access";
 import { activityFor } from "./activity";
-import { expectedKinds } from "./certificates";
+import { canEditCerts, certReminderMessages, expectedKinds } from "./certificates";
+import { canPostTo } from "./notices";
 import { notReadyMessages, readyToOpen } from "./daily";
 import { sessionDeviceOk } from "./devices";
 import { replyMessages } from "./reminders";
-import { accountsFor, canGiveAccess, canManageAccount, canUnfreeze, givableRoles, validatePersonInput } from "./staff";
+import { accountsFor, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, givableRoles, validatePersonInput } from "./staff";
 import { londonToUtc } from "./time";
 import { canDecide, seesRequest, timeOffDeciders, type TimeOff } from "./timeoff";
 import type { Person, Site, SiteAccess } from "./types";
@@ -46,10 +47,41 @@ describe("operations manager: the role", () => {
     expect(canManage(ops, "WEM")).toBe(true);
     expect(canManage(ops, "SYD")).toBe(false);
   });
-  it("keeps the full app on their own phone or laptop (a session with no tablet); staff don't", () => {
-    expect(sessionDeviceOk(undefined, undefined, isLead(ops))).toBe(true);
-    expect(sessionDeviceOk(undefined, undefined, isLead(mgr))).toBe(false);
-    expect(sessionDeviceOk(undefined, undefined, isLead(mgr), "shifts")).toBe(true);
+  it("keeps the full app on their own phone or laptop (a session with no tablet), at the sites they run; staff don't", () => {
+    expect(sessionDeviceOk(undefined, undefined, runsSite(ops, "EAS"))).toBe(true);
+    expect(sessionDeviceOk(undefined, undefined, runsSite(ops, "SYD"))).toBe(false);
+    expect(sessionDeviceOk(undefined, undefined, runsSite(mgr, "EAS"))).toBe(false);
+    expect(sessionDeviceOk(undefined, undefined, runsSite(mgr, "EAS"), "shifts")).toBe(true);
+    expect(["EAS", "WEM", "SYD"].map((s) => runsSite(owner, s as "EAS"))).toEqual([true, true, true]);
+  });
+  it("signing in by staff ID on their own device lands at an open site they run (the full app); others get My shifts", () => {
+    const sites = [site("EAS"), site("WEM"), site("SYD", "closed")];
+    // Operations manager at Wembley, also on the Eastcote rota as staff: Wembley, not Eastcote.
+    const mixed = person("mix", [at("EAS", "staff", ["FOH"]), at("WEM", "ops")]);
+    expect(remoteSignIn(mixed, sites)).toEqual({ site: sites[1], scope: "full" });
+    expect(remoteSignIn(ops, sites)).toEqual({ site: sites[0], scope: "full" });
+    expect(remoteSignIn(cook, sites)).toEqual({ site: sites[0], scope: "shifts" });
+    expect(remoteSignIn(owner, [site("EAS", "closed"), site("WEM"), site("SYD", "closed")])).toEqual({ site: site("WEM"), scope: "full" });
+    // Their only site is closed: nothing for an operations manager or staff, the full app for an owner.
+    expect(remoteSignIn(ops2, sites)).toBeUndefined();
+    expect(remoteSignIn(sydOnly, sites)).toBeUndefined();
+    expect(remoteSignIn(person("o", [at("SYD", "owner")]), sites)).toEqual({ site: sites[2], scope: "full" });
+    // Operations manager whose sites are closed but who is staff at an open one: My shifts there.
+    expect(remoteSignIn(person("m2", [at("EAS", "staff", ["FOH"]), at("SYD", "ops")]), sites)).toEqual({ site: sites[0], scope: "shifts" });
+  });
+  it("Work at: only sites they run and have access to, open ones (owners, closed ones too)", () => {
+    const mixed = person("mix", [at("EAS", "staff", ["FOH"]), at("WEM", "ops")]);
+    expect(canSwitchTo(mixed, site("WEM"))).toBe(true);
+    expect(canSwitchTo(mixed, site("EAS"))).toBe(false); // only staff there
+    expect(canSwitchTo(ops, site("SYD"))).toBe(false);
+    expect(canSwitchTo(ops, site("EAS", "closed"))).toBe(false);
+    expect(canSwitchTo(owner, site("SYD", "closed"))).toBe(true);
+    expect(canSwitchTo(person("o", [at("EAS", "owner")]), site("WEM"))).toBe(false); // no access there
+  });
+  it("mixed roles: manages where they're a manager, runs only where they're the operations manager", () => {
+    const mixed = person("mix", [at("WEM", "ops"), at("SYD", "manager", ["FOH"])]);
+    expect(managedSites(mixed)).toEqual(["WEM", "SYD"]);
+    expect(leadSites(mixed, [...ALL])).toEqual(["WEM"]);
   });
   it("is locked out of a closed site like everyone but the owner, keeping their other sites", () => {
     expect(canSignIn(ops, site("EAS", "closed"), 0).allowed).toBe(false);
@@ -99,10 +131,38 @@ describe("operations manager: staff accounts", () => {
     expect(canGiveAccess(owner, [at("SYD", "ops"), at("EAS", "owner")]).ok).toBe(true);
     expect(canGiveAccess(mgr, [at("EAS", "staff")]).ok).toBe(false);
   });
-  it("can't lift a freeze that came from the owner closing a site; a freeze on its own, yes", () => {
-    expect(canUnfreeze(ops, { frozenReason: "site:EAS" })).toMatchObject({ ok: false });
-    expect(canUnfreeze(ops, { frozenReason: "owner" }).ok).toBe(true);
-    expect(canUnfreeze(owner, { frozenReason: "site:EAS" }).ok).toBe(true);
+  it("can't lift a freeze that came from the owner closing a site, by any route; a freeze on its own, yes", () => {
+    const closed = { ...cook, status: "frozen" as const, frozenReason: "site:EAS" };
+    const held = { ...cook, status: "frozen" as const, frozenReason: "owner" };
+    const everyone = [owner, ops, closed];
+    expect(canUnfreeze(ops, closed)).toMatchObject({ ok: false, error: "Frozen because their site is closed. It ends when the owner reopens the site" });
+    expect(canUnfreeze(ops, held).ok).toBe(true);
+    expect(canUnfreeze(owner, closed).ok).toBe(true);
+    expect(canUnfreeze(ops, cook)).toMatchObject({ ok: false, error: "This account isn't frozen" });
+    // Freezing again (which would replace the closure's reason) isn't possible.
+    expect(canFreeze(ops, closed, everyone)).toMatchObject({ allowed: false, reason: "This account is already frozen" });
+    expect(canFreeze(owner, closed, everyone).allowed).toBe(false);
+    // Nor is marking them as left and rejoining: leaving is the owner's while the closure's freeze is on.
+    expect(canMarkLeft(ops, closed, everyone)).toMatchObject({ ok: false });
+    expect(canMarkLeft(owner, closed, everyone).ok).toBe(true);
+    expect(canMarkLeft(ops, held, everyone).ok).toBe(true);
+    // Rejoin is only for someone who has left (it would otherwise unfreeze them).
+    expect(canRejoin(closed)).toMatchObject({ ok: false, error: "They haven't been marked as left" });
+    expect(canRejoin({ status: "left" }).ok).toBe(true);
+    expect(canMarkLeft(owner, { ...cook, status: "left" }, everyone)).toMatchObject({ ok: false });
+    expect(canFreeze(owner, { ...cook, status: "left" }, everyone)).toMatchObject({ allowed: false, reason: "This person has left" });
+  });
+  it("can't change the account of someone who can see right to work checks", () => {
+    expect(canManageAccount(ops, { ...mgr, seesRightToWork: true })).toMatchObject({ ok: false, error: "Only the owner can change this account" });
+    expect(canManageAccount(owner, { ...mgr, seesRightToWork: true }).ok).toBe(true);
+  });
+  it("isn't told who holds a staff ID at a site they don't run", () => {
+    const SITES = [site("EAS"), site("SYD")];
+    const syd = { ...sydOnly, name: "Sam", staffCode: "030" };
+    const input = { name: "New", staffCode: "30", access: [at("EAS", "staff", ["FOH"])] };
+    const canSee = (p: Person) => accountsFor(ops, [p]).length > 0;
+    expect(validatePersonInput(input, SITES, [syd], undefined, canSee)).toMatchObject({ ok: false, error: "030 is already used by someone at another site" });
+    expect(validatePersonInput(input, SITES, [syd])).toMatchObject({ ok: false, error: "030 is already used by Sam" });
   });
   it("sees the accounts at their sites on the overview; the owner sees everyone", () => {
     const everyone = [owner, ops, ops2, mgr, cook, floater, sydOnly, twoGroups];
@@ -139,6 +199,25 @@ describe("operations manager: time off", () => {
     expect(seesRequest(owner, req("ops"), ops)).toBe(true);
     expect(seesRequest(ops, req("ops"), ops)).toBe(true);
     expect(seesRequest(mgr, req("cook"), cook)).toBe(true);
+  });
+});
+
+describe("operations manager: certificates and notices", () => {
+  it("keeps certificates at their sites, never right to work", () => {
+    expect(canEditCerts(ops, cook, "allergen").ok).toBe(true);
+    expect(canEditCerts(ops, cook, "right_to_work")).toMatchObject({ ok: false, error: "Right to work checks are private to the owner" });
+    expect(canEditCerts(ops, sydOnly, "allergen").ok).toBe(false);
+  });
+  it("their own certificate reminders point them to the owner", () => {
+    const today = "2026-10-12";
+    const [mine] = certReminderMessages([ops, owner], [{ id: "c1", personId: "ops", kind: "food_hygiene_l3", expiresOn: "2026-10-19", createdBy: "own", createdAt: 1 }], today).filter((m) => m.personId === "ops");
+    expect(mine.body).toContain("Speak to the owner");
+  });
+  it("posts to their own sites; \"all sites\" only for someone who manages every site, closed ones included", () => {
+    expect(canPostTo(managedSites(ops), [...ALL], "EAS")).toBe(true);
+    expect(canPostTo(managedSites(ops), [...ALL], "SYD")).toBe(false);
+    expect(canPostTo(managedSites(ops), [...ALL], undefined)).toBe(false); // Sydenham is closed, but it's still a site
+    expect(canPostTo(managedSites(owner), [...ALL], undefined)).toBe(true);
   });
 });
 

@@ -4,6 +4,7 @@ import { canSeeRightToWork, certStatus, expectedKinds, statusText, visibleTypes 
 import { faultsOf, keepsFoodSafe, serviceState } from "@/lib/domain/equipment";
 import { datesBetween, signoffLog } from "@/lib/domain/records";
 import { taskCentre, type CentreItem } from "@/lib/domain/tasks";
+import { canDecide } from "@/lib/domain/timeoff";
 import { londonDate } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
 
@@ -11,7 +12,7 @@ import type { Person, Site } from "@/lib/domain/types";
  * Gathers everything open at one site for the task centre: manual tasks, alerts, kit, handover actions, prep,
  * overdue checklists, time off, certificates and servicing. Read-only: the rules are in `taskCentre`.
  */
-export async function centreFor(site: Site, viewer: Pick<Person, "access" | "status" | "seesRightToWork">, now = Date.now(), db: Store = store()): Promise<CentreItem[]> {
+export async function centreFor(site: Site, viewer: Pick<Person, "id" | "access" | "status" | "seesRightToWork">, now = Date.now(), db: Store = store()): Promise<CentreItem[]> {
   const today = londonDate(now);
   const seesRtw = canSeeRightToWork(viewer);
   const [tasks, alerts, kit, kitEvents, notes, prepOn, records, pendingLeave, people, certs] = await Promise.all([
@@ -27,6 +28,9 @@ export async function centreFor(site: Site, viewer: Pick<Person, "access" | "sta
     db.certificates(),
   ]);
   const prep = prepOn ? await db.prepOutstanding(site.id) : [];
+  // Time off this viewer can decide (not their own; an operations manager's is the owner's).
+  const byId = new Map(people.map((p) => [p.id, p]));
+  const toDecide = pendingLeave.filter((t) => { const who = byId.get(t.personId); return !!who && canDecide(viewer, t, who).ok; });
 
   const kitItems = kit.flatMap((eq) => {
     const open = faultsOf(kitEvents.filter((e) => e.equipmentId === eq.id)).filter((f) => !f.fixed);
@@ -61,7 +65,7 @@ export async function centreFor(site: Site, viewer: Pick<Person, "access" | "sta
     prepOutstanding: { urgent: prep.filter((e) => e.urgent).length, total: prep.length, since: prep.length ? Math.min(...prep.map((e) => e.createdAt)) : undefined },
     checklistsOverdue: signoffLog(records.lists, records.runs, datesBetween(today, today), now, records.trackingFrom)
       .filter((r) => r.status === "not_signed").map((r) => ({ id: r.listId, name: r.listName, due: r.due })),
-    timeOffPending: pendingLeave.length,
+    timeOffPending: toDecide.length,
     certificates: { expired, expiring, missing },
     services: kit.flatMap((eq) => {
       const s = serviceState(eq, kitEvents.filter((e) => e.equipmentId === eq.id), today);

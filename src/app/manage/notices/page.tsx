@@ -31,7 +31,7 @@ export default async function Notices() {
       <TopBar ctx={ctx} />
       <main>
         <div><div className="eyebrow">Manager tools</div><h1 className="h-display">Team notices</h1></div>
-        <NoticeForm sites={mine.map((s) => ({ id: s.id, name: s.name, sections: sectionsFor(s.kind) }))} canAllSites={canPostTo(ctx.managed, open.map((s) => s.id), undefined)} today={today} />
+        <NoticeForm sites={mine.map((s) => ({ id: s.id, name: s.name, sections: sectionsFor(s.kind) }))} canAllSites={canPostTo(ctx.managed, allSites.map((s) => s.id), undefined)} today={today} />
 
         <section className="stack">
           <h2 className="h-sec">Showing now</h2>

@@ -3,6 +3,7 @@ import { demoStore, resetDemo } from "@/lib/data/demo-store";
 import { queueCertReminders, queueDailyDigest, queueGasChecks, queueReadyAlerts, queueServiceReminders, queueShiftReminders, queueWeeklyReport } from "@/lib/rota-service";
 import { addDays, londonDate, londonToUtc } from "@/lib/domain/time";
 import { weekStartOf } from "@/lib/domain/rota";
+import { centreFor } from "@/lib/task-centre";
 
 // Runs against the in-memory demo store only (passed in), never a real database.
 describe("certificate reminders on the scheduler", () => {
@@ -100,6 +101,21 @@ describe("certificate reminders on the scheduler", () => {
     await demoStore.applyShiftSync("EAS", { added: [{ ...sh("DEMO-FOH", "FOH", "11:00", "15:00"), sourceKey: "draft-week", week: weekStartOf(next), date: next }], changed: [], cancelled: [] },
       new Map([["DEMO-FOH", "DEMO-FOH"]]));
     expect(await queueShiftReminders(londonToUtc(next, "09:30"), demoStore)).toEqual([]);
+    resetDemo();
+  });
+
+  it("an operations manager's Send reminders now only covers the sites they run", async () => {
+    resetDemo();
+    const day = "2026-11-04";
+    const week = weekStartOf(day);
+    const shift = (siteId: "EAS" | "WEM", code: string, section: string, start: string) =>
+      demoStore.applyShiftSync(siteId, { added: [{ sourceKey: `${siteId}|${code}`, staffCode: code, section, week, date: day, start, end: "22:00", endsNextDay: false }], changed: [], cancelled: [] },
+        new Map([[code, code]])).then(() => demoStore.setWeekStatuses(siteId, new Map([[week, "published"]])));
+    await shift("EAS", "DEMO-FOH", "FOH", "17:00");
+    await shift("WEM", "DEMO-PRD", "PROD", "16:00");
+    const at = londonToUtc(day, "09:00");
+    expect(await queueShiftReminders(at, demoStore, "now", ["WEM"])).toEqual(["DEMO-PRD"]);
+    expect(await queueShiftReminders(at, demoStore, "now", ["EAS", "WEM"])).toEqual(["DEMO-FOH"]); // Wembley's has gone
     resetDemo();
   });
 
@@ -210,6 +226,21 @@ describe("the daily loop on the scheduler", () => {
     expect(own.title).toBe("Yesterday at a glance: Wed 4 Nov");
     expect(own.body).toContain("Eastcote: NO gas-off check");
     expect(own.body).not.toContain("Wembley"); // no rota or records there that day
+    resetDemo();
+  });
+});
+
+describe("time off in the task centre", () => {
+  it("counts only the requests the viewer can decide: an operations manager's goes to the owner", async () => {
+    resetDemo();
+    const ask = (personId: string) => demoStore.requestTimeOff({ personId, siteId: "EAS", startsOn: "2026-12-01", endsOn: "2026-12-02", kind: "holiday" });
+    await ask("DEMO-OPS");
+    await ask("DEMO-FOH");
+    const site = (await demoStore.site("EAS"))!;
+    const leave = async (id: string) => (await centreFor(site, (await demoStore.person(id))!, Date.now(), demoStore)).find((i) => i.source === "timeoff")?.title;
+    expect(await leave("DEMO-MGR")).toBe("1 time-off request to decide"); // the cook's, not the operations manager's
+    expect(await leave("DEMO-OPS")).toBe("1 time-off request to decide"); // the cook's, not their own
+    expect(await leave("DEMO-OWN")).toBe("2 time-off requests to decide");
     resetDemo();
   });
 });

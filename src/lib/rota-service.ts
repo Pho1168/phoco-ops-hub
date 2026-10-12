@@ -34,7 +34,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   const known = shifts.filter((s) => byCode.has(s.staffCode));
   const messages = issues.map((i) => i.message);
   for (const [code, name] of Array.from(missing.entries())) {
-    if (shifts.some((s) => s.staffCode === code)) messages.push(`${name} (${code}) has shifts but isn't set up in the Ops Hub yet. Add them under Owner → Staff accounts`);
+    if (shifts.some((s) => s.staffCode === code)) messages.push(`${name} (${code}) has shifts but isn't set up in the Ops Hub yet. Add them under Staff accounts on the overview`);
   }
 
   const weekSet = new Set([...Array.from(weeks.keys()), ...known.map((s) => s.week)]);
