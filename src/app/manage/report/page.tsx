@@ -87,7 +87,8 @@ function SiteBlock({ name, id, r, last, week }: { name: string; id: string; r: S
 }
 
 /** Owner's weekly report: one block per site, plus a group line across sites. Owners and managers (their sites). */
-export default async function Report({ searchParams }: { searchParams: { week?: string } }) {
+export default async function Report(props: { searchParams: Promise<{ week?: string }> }) {
+  const searchParams = await props.searchParams;
   const ctx = await requireManager();
   const today = londonDate(Date.now());
   const thisWeek = weekStartOf(today);

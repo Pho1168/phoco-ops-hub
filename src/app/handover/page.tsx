@@ -17,7 +17,8 @@ const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "shor
  * The Handover tab: everything outstanding for this shift (prep items from the last handover and notes) in one list,
  * a box to add a note at any time, and the way into the closing prep handover.
  */
-export default async function Handover({ searchParams }: { searchParams: { sent?: string } }) {
+export default async function Handover(props: { searchParams: Promise<{ sent?: string }> }) {
+  const searchParams = await props.searchParams;
   const { ctx, prepOn } = await handoverPage();
   const db = store();
   const now = Date.now();

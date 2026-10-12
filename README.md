@@ -81,7 +81,7 @@ Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, manager and s
 
 ## How it's put together
 
-- **Next.js 14 (App Router) + TypeScript.** Pages render on the server, and buttons call *server actions* (functions that run on the server, never in the browser).
+- **Next.js 15 (App Router) + React 19 + TypeScript.** Pages render on the server, and buttons call *server actions* (functions that run on the server, never in the browser). In Next.js 15, `params`, `searchParams`, `cookies()` and `headers()` are asynchronous: always `await` them.
 - **`src/lib/domain/`** holds the business rules as plain functions with no database. This is the part the tests cover.
 - **`src/lib/data/`** has a `Store` interface with two implementations: `DemoStore` (in memory) and `SqlStore` (Postgres/Supabase). The app uses `SqlStore` whenever `DATABASE_URL` is set.
 - **`supabase/migrations/`** holds the database schema, one numbered file per change (`0001_core.sql` first). Row Level Security is on for every table with no policies, so the public Supabase API can read nothing; only the app server, connecting with the database connection string, can read or write. Checklist answers, corrective actions and the audit log are **append-only**: a database trigger refuses edits and deletes.

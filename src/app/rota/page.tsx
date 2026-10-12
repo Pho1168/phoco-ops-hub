@@ -18,7 +18,8 @@ const dayName = (d: string) => shortDay(d).split(" ")[0];
  * The team rota for one week, like the Schedule tab in the rota sheet. Everyone working at the site can see it,
  * on the shop tablet or their own phone. Paid hours and totals, and weeks not yet published, are for owners and managers.
  */
-export default async function TeamRota({ searchParams }: { searchParams: { week?: string; site?: string } }) {
+export default async function TeamRota(props: { searchParams: Promise<{ week?: string; site?: string }> }) {
+  const searchParams = await props.searchParams;
   const ctx = await current();
   if (!ctx) redirect("/login");
   if (ctx.person.pinMustChange) redirect("/pin");

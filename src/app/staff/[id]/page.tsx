@@ -8,7 +8,11 @@ import { siteOptions } from "../load";
 
 export const dynamic = "force-dynamic";
 
-export default async function EditPerson({ params, searchParams }: { params: { id: string }; searchParams: { added?: string } }) {
+export default async function EditPerson(
+  props: { params: Promise<{ id: string }>; searchParams: Promise<{ added?: string }> }
+) {
+  const searchParams = await props.searchParams;
+  const params = await props.params;
   const ctx = await requireCtx();
   if (!ctx.isOwner) redirect("/today");
   const p = await store().person(params.id);

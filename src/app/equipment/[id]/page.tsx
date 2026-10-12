@@ -20,7 +20,8 @@ const LOG = { fault: "Problem reported", update: "Update", fixed: "Fixed", servi
  * One piece of kit: how it is, how to use it, problems and their fixes, and servicing. The QR label on the
  * equipment opens this page. Anyone at the site can report a problem; updates and fixes need the shop tablet.
  */
-export default async function EquipmentItem({ params }: { params: { id: string } }) {
+export default async function EquipmentItem(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const ctx = await current();
   if (!ctx) redirect(`/login?next=${encodeURIComponent(`/equipment/${params.id}`)}`);
   if (ctx.person.pinMustChange) redirect("/pin");

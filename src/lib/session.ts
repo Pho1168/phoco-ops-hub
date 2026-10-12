@@ -14,7 +14,7 @@ export interface Ctx { person: Person; site: Site; access: SiteAccess; sessionId
  * Re-validated on every request: a revoked session, frozen person, closed site or removed device ends access at once.
  */
 export async function current(): Promise<Ctx | null> {
-  const sid = cookies().get(SESSION_COOKIE)?.value;
+  const sid = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!sid) return null;
   const db = store();
   const s = await db.session(sid);

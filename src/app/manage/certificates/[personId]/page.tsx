@@ -14,7 +14,8 @@ export const dynamic = "force-dynamic";
 const day = (t: number) => new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" });
 
 /** One person's certificates: what counts now, earlier records, and a form to add a new one. */
-export default async function PersonCertificates({ params }: { params: { personId: string } }) {
+export default async function PersonCertificates(props: { params: Promise<{ personId: string }> }) {
+  const params = await props.params;
   const ctx = await requireManager();
   const db = store();
   const person = await db.person(params.personId);

@@ -13,7 +13,8 @@ export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 
 /** A sent handover as it was: its prep items and the notes written in its shift. Read-only. */
-export default async function HandoverReport({ searchParams }: { searchParams: { id?: string } }) {
+export default async function HandoverReport(props: { searchParams: Promise<{ id?: string }> }) {
+  const searchParams = await props.searchParams;
   const { ctx } = await handoverPage();
   const db = store();
   const h = searchParams.id ? await db.prepHandover(searchParams.id) : undefined;

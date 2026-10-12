@@ -15,7 +15,8 @@ const ACTIONS: Record<string, { warn: string[]; bad: string[]; warnMsg: string; 
   C: { warn: [], bad: ["Cooked longer and re-probed", "Food discarded"], warnMsg: "", badMsg: "Below the safe core temperature. Do not serve. Keep cooking and probe again." },
 };
 
-export default async function RunPage({ params }: { params: { id: string } }) {
+export default async function RunPage(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const ctx = await requireCtx();
   const db = store();
   const list = await db.checklist(params.id);
