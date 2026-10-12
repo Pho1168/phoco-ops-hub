@@ -13,6 +13,7 @@ import type { Equipment, EquipmentEvent } from "@/lib/domain/equipment";
 import type { Task } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
+import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -81,6 +82,9 @@ interface State {
   tasks: Task[];
   shiftReplies: ShiftReply[];
   gasChecks: Omit<GasCheck, "personName">[];
+  cover: { id: string; shiftId: string; siteId: SiteId; personId: string; section: string; note?: string; status: CoverStatus; createdAt: number;
+    coveredBy?: string; decidedBy?: string; decidedAt?: number; decisionNote?: string; withdrawnAt?: number }[];
+  coverOffers: { id: string; requestId: string; personId: string; createdAt: number; withdrawnAt?: number }[];
 }
 
 /** Sample records so the certificates screens have something to show in demo mode. */
@@ -161,7 +165,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [],
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [], cover: [], coverOffers: [],
   };
 }
 
@@ -183,6 +187,19 @@ const certView = (c: State["certificates"][number]): Certificate => ({
   id: c.id, personId: c.personId, kind: c.kind, issuedOn: c.issuedOn, expiresOn: c.expiresOn, provider: c.provider, reference: c.reference,
   note: c.note, createdBy: c.createdBy, createdByName: nameOf(c.createdBy) ?? "", createdAt: c.createdAt,
 });
+
+function coverView(c: State["cover"][number]): CoverRequest | undefined {
+  const sh = S().shifts.find((s) => s.id === c.shiftId);
+  if (!sh) return undefined;
+  return {
+    id: c.id, shiftId: c.shiftId, siteId: c.siteId, siteName: S().sites.find((s) => s.id === c.siteId)?.name ?? c.siteId, personId: c.personId,
+    personName: nameOf(c.personId) ?? "", section: c.section, note: c.note, status: c.status, createdAt: c.createdAt,
+    coveredBy: c.coveredBy, coveredByName: nameOf(c.coveredBy), decidedBy: c.decidedBy, decidedByName: nameOf(c.decidedBy), decidedAt: c.decidedAt, decisionNote: c.decisionNote,
+    date: sh.date, start: sh.start, end: sh.end, shiftCancelled: sh.cancelled, shiftPersonId: sh.personId,
+    offers: S().coverOffers.filter((o) => o.requestId === c.id).sort((a, b) => a.createdAt - b.createdAt)
+      .map((o) => ({ id: o.id, personId: o.personId, personName: nameOf(o.personId) ?? "", createdAt: o.createdAt, withdrawnAt: o.withdrawnAt })),
+  };
+}
 
 const taskView = (t: Task): Task => ({ ...t, createdByName: nameOf(t.createdBy) ?? "", assigneeName: nameOf(t.assigneeId), doneByName: nameOf(t.doneBy) });
 
@@ -534,6 +551,37 @@ export const demoStore: Store = {
   async checklistsStartedOn(siteId) {
     const lists = new Set(S().lists.filter((l) => l.siteId === siteId).map((l) => l.id));
     return Array.from(S().runs.values()).filter((r) => lists.has(r.listId)).map((r) => r.date).sort()[0];
+  },
+  async coverRequests(f) {
+    return S().cover.filter((c) => (!f.siteIds || f.siteIds.includes(c.siteId)) && (!f.personId || c.personId === f.personId) && (f.since === undefined || c.createdAt >= f.since)
+      && (!f.live || c.status === "open" || c.status === "approved")).sort((a, b) => b.createdAt - a.createdAt).map(coverView).filter((x): x is CoverRequest => !!x);
+  },
+  async coverRequest(id) { const c = S().cover.find((x) => x.id === id); return c ? coverView(c) : undefined; },
+  async addCoverRequest(r) {
+    if (S().cover.some((c) => c.shiftId === r.shiftId && (c.status === "open" || c.status === "approved"))) return undefined;
+    const id = randomUUID();
+    S().cover.push({ ...r, id, status: "open", createdAt: Date.now() });
+    return id;
+  },
+  async decideCover(id, d) {
+    const c = S().cover.find((x) => x.id === id && x.status === "open");
+    if (!c) return false;
+    if (d.status === "withdrawn") { if (c.personId !== d.personId) return false; Object.assign(c, { status: "withdrawn", withdrawnAt: Date.now() }); return true; }
+    if (d.status === "approved" && !S().coverOffers.some((o) => o.requestId === id && o.personId === d.coveredBy && !o.withdrawnAt)) return false;
+    Object.assign(c, { status: d.status, coveredBy: d.status === "approved" ? d.coveredBy : undefined, decidedBy: d.personId, decidedAt: Date.now(), decisionNote: d.note });
+    return true;
+  },
+  async addCoverOffer(requestId, personId) {
+    if (S().coverOffers.some((o) => o.requestId === requestId && o.personId === personId && !o.withdrawnAt)) return undefined;
+    const id = randomUUID();
+    S().coverOffers.push({ id, requestId, personId, createdAt: Date.now() });
+    return id;
+  },
+  async withdrawCoverOffer(requestId, personId) {
+    const o = S().coverOffers.find((x) => x.requestId === requestId && x.personId === personId && !x.withdrawnAt);
+    if (!o) return false;
+    o.withdrawnAt = Date.now();
+    return true;
   },
   async gasChecks(siteIds, from, to) {
     return S().gasChecks.filter((g) => siteIds.includes(g.siteId) && g.date >= from && g.date <= to)

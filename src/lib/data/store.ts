@@ -10,13 +10,14 @@ import type { Equipment, EquipmentEvent, EquipmentInput } from "@/lib/domain/equ
 import type { Task, TaskInput, TaskStatus } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
+import type { CoverRequest } from "@/lib/domain/cover";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
 /** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
-export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply" | "gas" | "ready" | "daily";
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply" | "gas" | "ready" | "daily" | "cover";
 export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number; url?: string }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
@@ -174,6 +175,21 @@ export interface Store {
   gasChecks(siteIds: SiteId[], from: string, to: string): Promise<GasCheck[]>;
   /** Records the day's gas check. False if someone has already done it (the first tap counts). */
   addGasCheck(c: { siteId: SiteId; date: string; personId: string; onTablet: boolean }): Promise<boolean>;
+
+  // Shift cover (requests are withdrawn or decided, offers withdrawn; nothing is deleted)
+  /** Requests matching the filter, newest first, with the shift as it is now and every offer. `live`: open or approved. */
+  coverRequests(filter: { siteIds?: SiteId[]; personId?: string; since?: number; live?: boolean }): Promise<CoverRequest[]>;
+  coverRequest(id: string): Promise<CoverRequest | undefined>;
+  /** Undefined if a request for that shift is already in play. */
+  addCoverRequest(r: { shiftId: string; siteId: SiteId; personId: string; section: string; note?: string }): Promise<string | undefined>;
+  /**
+   * Open → approved (with who covers; they must still have an offer in), declined, or withdrawn by the person asking.
+   * False if it isn't open any more (or the offer has gone).
+   */
+  decideCover(id: string, d: { status: "approved" | "declined" | "withdrawn"; personId: string; coveredBy?: string; note?: string }): Promise<boolean>;
+  /** Undefined if they already have an offer in. */
+  addCoverOffer(requestId: string, personId: string): Promise<string | undefined>;
+  withdrawCoverOffer(requestId: string, personId: string): Promise<boolean>;
 
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;

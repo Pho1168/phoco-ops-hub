@@ -3,6 +3,7 @@ import { isLive } from "@/lib/domain/notices";
 import { canSeeRightToWork, issueCount, peopleInCare } from "@/lib/domain/certificates";
 import { openFaults, serviceState } from "@/lib/domain/equipment";
 import { centreFor } from "@/lib/task-centre";
+import { withStates } from "@/lib/cover-service";
 import { londonDate } from "@/lib/domain/time";
 import type { Person, SiteId } from "@/lib/domain/types";
 import type { ManageCounts } from "./ManageTiles";
@@ -25,11 +26,15 @@ export async function manageCounts(actor: Pick<Person, "access" | "status" | "se
     }
   }
   const urgent = (await Promise.all(sites.filter((s) => openManaged.includes(s.id)).map((s) => centreFor(s, actor)))).flat().filter((i) => i.priority <= 2).length;
+  // Cover: open requests with someone offering (to decide), and approved ones whose rota sheet still needs changing.
+  const cover = openManaged.length ? await withStates(await db.coverRequests({ siteIds: openManaged, live: true })) : [];
+  const coverToDo = cover.filter((r) => (r.state === "open" && r.offers.some((o) => !o.withdrawnAt)) || r.state === "approved").length;
   return {
     urgent,
     timeOffPending: pending.length,
     noticesActive: notices.filter((n) => isLive(n, today) && (!n.siteId || managed.includes(n.siteId))).length,
     certIssues: issueCount(peopleInCare(actor, people), certs, today, canSeeRightToWork(actor), openManaged),
     equipmentIssues,
+    coverToDo,
   };
 }
