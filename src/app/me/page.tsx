@@ -150,7 +150,7 @@ export default async function MyShifts() {
           </section>
         )}
 
-        <TimeOffCard today={today} shiftDays={shifts.map((s) => s.date)} requests={myTimeOff.map((t) => ({
+        <TimeOffCard today={today} shiftDays={shifts.map((s) => s.date)} decider={ctx.isOps ? "the owner" : "your manager"} requests={myTimeOff.map((t) => ({
           id: t.id, range: rangeLabel(t), kind: kindLabel(t.kind), status: t.status, note: t.note, canCancel: canCancel(t, today),
           decision: t.decidedByName ? `${t.status === "approved" ? "approved" : "declined"} by ${t.decidedByName}${t.decisionNote ? `: "${t.decisionNote}"` : ""}` : undefined,
         }))} />

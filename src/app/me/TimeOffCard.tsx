@@ -9,8 +9,9 @@ export interface MyTimeOff { id: string; range: string; kind: string; status: "p
 
 const STATUS = { pending: ["Waiting", "warn"], approved: ["Approved", "done"], declined: ["Declined", "bad"], cancelled: ["Withdrawn", ""] } as const;
 
-/** Ask for time off and see your requests. Your manager is told straight away. */
-export function TimeOffCard({ requests, today, shiftDays }: { requests: MyTimeOff[]; today: string; shiftDays: string[] }) {
+/** Ask for time off and see your requests. Whoever decides (`decider`: "your manager", or "the owner" for an operations manager) is told straight away. */
+export function TimeOffCard({ requests, today, shiftDays, decider = "your manager" }: { requests: MyTimeOff[]; today: string; shiftDays: string[]; decider?: string }) {
+  const Decider = decider.charAt(0).toUpperCase() + decider.slice(1);
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [from, setFrom] = useState("");
@@ -28,7 +29,7 @@ export function TimeOffCard({ requests, today, shiftDays }: { requests: MyTimeOf
     if (!from) { setErr("Choose the first day"); return; }
     const r = await requestTimeOff({ startsOn: from, endsOn: end, kind, note: note || undefined });
     if (!r.ok) { setErr(r.error); return; }
-    setOpen(false); setFrom(""); setTo(""); setNote(""); setMsg("Sent. Your manager has been told, and you'll get a message when they decide.");
+    setOpen(false); setFrom(""); setTo(""); setNote(""); setMsg(`Sent. ${Decider} has been told, and you'll get a message when they decide.`);
     router.refresh();
   });
   const withdraw = (id: string) => start(async () => {
@@ -50,15 +51,15 @@ export function TimeOffCard({ requests, today, shiftDays }: { requests: MyTimeOf
           <div className="seg" role="group" aria-label="Type">
             {TIME_OFF_KINDS.map((k) => <button key={k.id} type="button" aria-pressed={kind === k.id} onClick={() => setKind(k.id)}>{k.label.split(" (")[0]}</button>)}
           </div>
-          <input className="txt wide" style={{ maxWidth: "none" }} maxLength={300} placeholder="Note for your manager (optional)" value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" />
-          {onRota > 0 && <div className="alert" style={{ padding: "10px 12px" }}><div style={{ fontSize: 14 }}>You&apos;re on the rota for {onRota} of these days. Your manager will see that.</div></div>}
+          <input className="txt wide" style={{ maxWidth: "none" }} maxLength={300} placeholder={`Note for ${decider} (optional)`} value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" />
+          {onRota > 0 && <div className="alert" style={{ padding: "10px 12px" }}><div style={{ fontSize: 14 }}>You&apos;re on the rota for {onRota} of these days. {Decider} will see that.</div></div>}
           {err && <div className="err" role="alert">{err}</div>}
           <div className="row"><button type="button" className="btn ghost" onClick={() => { setOpen(false); setErr(""); }}>Cancel</button><button className="btn accent grow" type="submit" disabled={pending}>{pending ? "Sending…" : "Send request"}</button></div>
         </form>
       )}
       {msg && <div className="alert good" role="status"><div className="strong" style={{ fontSize: 14 }}>{msg}</div></div>}
       {!open && err && <div className="err" role="alert">{err}</div>}
-      {requests.length === 0 && !open && <div className="muted">No time off booked. Ask here and your manager approves it in the app.</div>}
+      {requests.length === 0 && !open && <div className="muted">No time off booked. Ask here and {decider} approves it in the app.</div>}
       {requests.map((r) => (
         <div key={r.id} className="row wrap timeoff-row" style={{ gap: 8 }}>
           <div className="grow">

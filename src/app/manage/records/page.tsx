@@ -163,7 +163,7 @@ export default async function Records(
 
         <div className="muted">Records are kept exactly as entered. Readings and checks can&apos;t be edited or deleted: a correction is added as a new entry, and both are shown. Printed {dayHm(Date.now())} by {ctx.person.name}.</div>
       </main>
-      <BottomNav ctx={ctx} current={ctx.isOwner ? "owner" : "manage"} />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

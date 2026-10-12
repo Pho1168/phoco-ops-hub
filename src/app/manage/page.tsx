@@ -13,11 +13,12 @@ export default async function Manage() {
     <>
       <TopBar ctx={ctx} />
       <main>
-        <div><div className="eyebrow">{ctx.isOwner ? "All sites" : ctx.site.name} · manager tools</div><h1 className="h-display">Manage</h1></div>
+        <div><div className="eyebrow">{ctx.isOwner ? "All sites" : ctx.isOps ? "Your sites" : ctx.site.name} · manager tools</div><h1 className="h-display">Manage</h1></div>
         <ManageTiles counts={await manageCounts(ctx.person)} />
         {ctx.isOwner && <Link className="btn ghost" href="/owner">Owner controls: sites, staff, tablets, rota sheets</Link>}
+        {ctx.isOps && <Link className="btn ghost" href="/owner">Overview: your sites, staff and tablets</Link>}
       </main>
-      <BottomNav ctx={ctx} current={ctx.isOwner ? "owner" : "manage"} />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

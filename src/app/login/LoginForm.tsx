@@ -45,7 +45,7 @@ export function LoginForm({ sites, people, deviceLabel, returnTo }: { sites: S[]
         ))}
       </div>}
       {site?.closed && <div className="err"><strong>{site.name} is closed.</strong> {site.reason ? `${site.reason}. ` : ""}Staff sign-in is frozen until the owner reopens it.</div>}
-      {list.length === 0 && <div className="card muted">No staff at this site yet. An owner can add people from the Owner screen.</div>}
+      {list.length === 0 && <div className="card muted">No staff at this site yet. The owner or operations manager adds people from the overview.</div>}
       <div className="people">
         {list.map((p) => (
           <button key={p.id} type="button" className="person" aria-pressed={pick === p.id} onClick={() => { setPick(p.id); setPin(""); setErr(""); }}>

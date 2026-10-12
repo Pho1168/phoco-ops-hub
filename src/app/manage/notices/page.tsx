@@ -69,7 +69,7 @@ export default async function Notices() {
           </details>
         )}
       </main>
-      <BottomNav ctx={ctx} current={ctx.isOwner ? "owner" : "manage"} />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

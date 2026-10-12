@@ -16,7 +16,7 @@ if (!process.env.DATABASE_URL) fail("Set DATABASE_URL first.");
 if (!/^\d{3}$/.test(values.code ?? "")) fail("--code must be three digits, like 001");
 if (!values.name?.trim()) fail("--name is required");
 
-const SITES = ["EAS", "WEM", "SYD"], ROLES = ["owner", "manager", "staff"], AREAS = ["FOH", "BOH", "PROD"];
+const SITES = ["EAS", "WEM", "SYD"], ROLES = ["owner", "ops", "manager", "staff"], AREAS = ["FOH", "BOH", "PROD"];
 const access = (values.access ?? "").split(";").filter(Boolean).map((part) => {
   const [site, role, sections = ""] = part.split(":");
   if (!SITES.includes(site) || !ROLES.includes(role)) fail(`Bad access entry "${part}". Use SITE:role:SECTIONS`);

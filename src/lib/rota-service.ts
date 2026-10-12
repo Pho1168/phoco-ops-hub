@@ -168,14 +168,15 @@ export async function waitingAt(siteId: SiteId, db: Store = store()): Promise<Wa
 
 /**
  * Queues shift reminders and returns who was messaged. "due": the scheduler, for shifts whose reminder time has come
- * (2 hours before). "now": the owner's button, for everyone starting later today. Either way a person gets one
- * reminder per shift, and it goes whatever the hour.
+ * (2 hours before). "now": the overview's button, for everyone starting later today (only at `siteIds` when given:
+ * an operations manager's sites). Either way a person gets one reminder per shift, and it goes whatever the hour.
  */
-export async function queueShiftReminders(now = Date.now(), db: Store = store(), mode: "due" | "now" = "due"): Promise<string[]> {
+export async function queueShiftReminders(now = Date.now(), db: Store = store(), mode: "due" | "now" = "due", siteIds?: SiteId[]): Promise<string[]> {
   const today = londonDate(now);
-  const candidates = mode === "now"
+  const all = mode === "now"
     ? startingLaterToday(await db.shiftsOnDate(today), today, now)
     : dueReminders([...(await db.shiftsOnDate(today)), ...(await db.shiftsOnDate(addDays(today, 1)))], now);
+  const candidates = siteIds ? all.filter((s) => siteIds.includes(s.siteId)) : all;
   if (!candidates.length) return [];
   const already = await db.noticeKeys(candidates.map(reminderKey));
   const waiting = new Map<SiteId, Waiting>();

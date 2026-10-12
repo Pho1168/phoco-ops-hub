@@ -10,8 +10,8 @@ import { CHIP, cellText } from "./cells";
 
 export const dynamic = "force-dynamic";
 
-const ROLE_ORDER: Record<Role, number> = { manager: 0, staff: 1, owner: 2 };
-const ROLE: Record<Role, string> = { manager: "Manager", staff: "Staff", owner: "Owner" };
+const ROLE_ORDER: Record<Role, number> = { ops: 0, manager: 1, staff: 2, owner: 3 };
+const ROLE: Record<Role, string> = { ops: "Ops manager", manager: "Manager", staff: "Staff", owner: "Owner" };
 
 /**
  * Who holds which certificate at a site, what's running out, and whether the site has a first aider, a Level 3
@@ -133,7 +133,7 @@ export default async function Certificates(props: { searchParams: Promise<{ site
           </div>
         </details>
       </main>
-      <BottomNav ctx={ctx} current={ctx.isOwner ? "owner" : "manage"} />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

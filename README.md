@@ -2,13 +2,17 @@
 
 Operations app for PHO & CO restaurants (Eastcote, Sydenham) and the Wembley central production kitchen.
 Built for shared Android phones and tablets on site: staff pick their name, enter a PIN and work through
-the day's checklists. Owners see every site, resolve alerts and control accounts.
+the day's checklists. Owners see every site, resolve alerts and control accounts; operations managers do most of
+that for the sites they run.
 
 ## What works today
 
-- **Site tablets only**: staff names and the name + PIN sign-in appear only on tablets registered to a site with a one-time set-up code from an owner. Any other device shows no names, just a pairing box and an owner sign-in (staff ID + PIN). Removing a tablet signs out everyone on it.
+- **Site tablets only**: staff names and the name + PIN sign-in appear only on tablets registered to a site with a one-time set-up code from an owner or operations manager. Any other device shows no names, just a pairing box and a staff ID + PIN sign-in (the full app for owners and operations managers, My shifts for everyone else). Removing a tablet signs out everyone on it.
 - **Sign in** with name + 4-digit PIN. 5 wrong PINs (at sign-in, sign-off or PIN change) locks the account for 15 minutes.
-- **Staff management** (owners): add people, sites, roles, sections; temporary PINs that must be changed on first use; reset PIN; mark as left.
+- **Staff management** (owners, and operations managers for staff and managers at their sites): add people, sites, roles, sections; temporary PINs that must be changed on first use; reset PIN; mark as left.
+- **Roles**, set per site: **staff**, **manager** (manager tools for their site), **operations manager** and **owner**.
+  - An **operations manager** runs a group of sites, above the site managers and below the owner. At their sites they have everything a manager has, plus the overview (Overview tab: the sites, today's team and **Send reminders now**, alerts, the activity log), staff and manager accounts (add, edit, temporary PIN, log out, freeze, mark as left) and the shop tablets (set up and remove). They get the full app on their own phone or laptop, and every manager message for their sites (alerts, gas, ready to open, cover, time off, the 08:00 and Monday summaries).
+  - These stay with the **owner**: closing and reopening sites (and lifting a freeze that came from a closure), connecting rota sheets, right to work, owner and operations manager accounts (including the operations manager's own), anyone who also works at a site the operations manager doesn't run, and making anyone an owner or operations manager. An operations manager's own time off goes to the owners only (site managers don't see the request), and their activity log leaves out other sites and right to work.
 - **Today screen**: the site's checklists for each section (FOH, BOH, Production) with due times, overdue flags, open alerts and handover items.
 - **Checklists**: tick items, temperature readings, numbers, text, photo placeholders. Readings are checked against the approved limits:
   - Fridge: target ≤ 5 °C, legal limit 8 °C
@@ -17,7 +21,7 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
   An out-of-range reading must have a corrective action before the list can be signed off, and a failed one raises an alert for managers.
 - **Sign-off** requires the PIN again. Signed records are locked; corrections are added as new entries.
 - **Handover** notes between shifts. "Needs action" items stay open until someone closes them.
-- **Owner control**:
+- **Owner control** (the overview; operations managers see their own sites, without closing them):
   - site overview
   - resolve alerts (a note is required)
   - log out or freeze any account
@@ -35,7 +39,7 @@ the day's checklists. Owners see every site, resolve alerts and control accounts
 - **Shift cover**: under any upcoming published shift on My shifts, **Ask for cover** (with an optional reason, which only managers see). Colleagues at the same site in the same section who aren't working (or already covering) then and aren't off are asked; the site's managers and owners are told. Colleagues see it under **Shifts you could cover** and tap **I can cover** (or take it back). A manager approves one offer (Manage → Shift cover) or declines with a note, and can cancel an approval later; everyone involved is told. The app never changes the rota sheet: the page tells the manager to move the shift in the sheet, and once the next import shows it moved, the request shows as covered. If the sheet changes the shift first, an open request closes. Requests can be withdrawn while open; nothing is deleted.
 - **Team rota** (Rota tab, and "Team rota" on My shifts): the site's week laid out like the Schedule tab in the rota sheet, a grid on a computer and day by day on a phone. Everyone at the site can see published weeks; owners and managers also see paid hours, daily and weekly totals, and draft weeks (marked Draft). Paid hours come from the sheet's Export tab with each hourly sync.
 
-- **Manager tools** (Manage tab for managers; tiles at the top of the Owner screen for owners). Managers use them on the shop tablet; staff phones stay limited to My shifts and the team rota.
+- **Manager tools** (Manage tab for managers; tiles at the top of the overview for owners and operations managers). Managers use them on the shop tablet; staff phones stay limited to My shifts and the team rota.
   - **Task centre**: everything open at the sites a manager runs, in one list by priority (P1 critical to P4 improvement): critical alerts and broken fridges first, then overdue checklists, food-safety handover actions, urgent prep, run-out certificates, and so on. Managers add one-off tasks for a person, a section or everyone at a site, with a date; they show on Today (and My shifts on a phone) for the people they're for, who tick them done with a note (undo within 10 minutes). Alerts can be resolved from here. Everything else links to where it's dealt with.
   - **Inspection records**: for a site and date range, the temperature log (with limits, out-of-range readings and corrective actions), checklist sign-offs (on time, late, not signed), alerts with how they were resolved, and food-safety handover notes. Printable, with CSV downloads. Days before a site's first recorded checklist aren't counted as missed.
   - **Weekly report**: per site and for the group, Monday to Sunday: checklists on time, temperatures out of range, alerts, handover actions, prep carried over and planned hours, with a change on the week before and a short "needs attention" list in plain words. On Monday at 9am each owner and manager also gets last week's headline numbers for their sites as a message.
@@ -70,7 +74,7 @@ The app uses the database when the server has a `DATABASE_URL` (Supabase project
 DATABASE_URL=... npm run person:add -- --code 001 --name "First name" --access "EAS:owner:FOH,BOH;WEM:owner:PROD;SYD:owner"
 ```
 
-Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, manager and staff. Sections are FOH, BOH and PROD.
+Access is `SITE:role:SECTIONS`, separated by `;`. Roles are owner, ops (operations manager), manager and staff. Sections are FOH, BOH and PROD.
 
 ## Scripts
 

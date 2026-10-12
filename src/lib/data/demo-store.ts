@@ -153,6 +153,7 @@ function seed(): State {
       p("DEMO-FOH", "FOH staff (demo)", [{ siteId: "EAS", role: "staff", sections: ["FOH"] }], staff),
       p("DEMO-BOH", "BOH staff (demo)", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }], staff),
       p("DEMO-MGR", "Manager (demo)", [{ siteId: "EAS", role: "manager", sections: ["FOH", "BOH"] }], staff),
+      p("DEMO-OPS", "Ops manager (demo)", [{ siteId: "EAS", role: "ops", sections: [] }, { siteId: "WEM", role: "ops", sections: [] }], staff),
       p("DEMO-PRD", "Wembley cook (demo)", [{ siteId: "WEM", role: "staff", sections: ["PROD"] }], staff),
       p("DEMO-FLT", "Floater (demo)", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }, { siteId: "WEM", role: "staff", sections: ["PROD"] }], staff),
     ],

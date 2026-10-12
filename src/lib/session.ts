@@ -2,13 +2,17 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { DEMO_MODE, store } from "@/lib/data";
 import { sessionDeviceOk } from "@/lib/domain/devices";
-import { managedSites } from "@/lib/domain/access";
+import { canManage, isOps, isOwner, leadSites, managedSites } from "@/lib/domain/access";
 import type { Person, Site, SiteAccess, SiteId } from "@/lib/domain/types";
 
 export const SESSION_COOKIE = "phoco_sid";
 export const SESSION_TTL_MS = 14 * 60 * 60 * 1000; // one long shift
 
-export interface Ctx { person: Person; site: Site; access: SiteAccess; sessionId: string; isOwner: boolean; isManager: boolean; scope: "full" | "shifts" }
+/**
+ * `isOwner`: an owner anywhere. `isOps`: an operations manager (and not an owner). `isLead`: either of them (the
+ * overview, staff accounts, tablets). `isManager`: manages this site (owners everywhere).
+ */
+export interface Ctx { person: Person; site: Site; access: SiteAccess; sessionId: string; isOwner: boolean; isOps: boolean; isLead: boolean; isManager: boolean; scope: "full" | "shifts" }
 
 /**
  * Re-validated on every request: a revoked session, frozen person, closed site or removed device ends access at once.
@@ -24,11 +28,11 @@ export async function current(): Promise<Ctx | null> {
   if (!person || !site || person.status !== "active") return null;
   const access = person.access.find((a) => a.siteId === site.id);
   if (!access) return null;
-  const isOwner = person.access.some((a) => a.role === "owner");
-  if (site.status === "closed" && !isOwner) return null;
-  // A removed tablet ends every session on it; device-less sessions are owner sign-ins only.
-  if (!DEMO_MODE && !sessionDeviceOk(s.deviceId, s.deviceId ? await db.device(s.deviceId) : undefined, isOwner, s.scope)) return null;
-  return { person, site, access, sessionId: s.id, isOwner, isManager: isOwner || access.role === "manager", scope: s.scope ?? "full" };
+  const owner = isOwner(person), ops = isOps(person);
+  if (site.status === "closed" && !owner) return null;
+  // A removed tablet ends every session on it; device-less full sessions are owners and operations managers only.
+  if (!DEMO_MODE && !sessionDeviceOk(s.deviceId, s.deviceId ? await db.device(s.deviceId) : undefined, owner || ops, s.scope)) return null;
+  return { person, site, access, sessionId: s.id, isOwner: owner, isOps: ops, isLead: owner || ops, isManager: owner || canManage(person, site.id), scope: s.scope ?? "full" };
 }
 
 /** Signed-in context for normal pages. Anyone still on a temporary PIN is sent to choose their own first. */
@@ -40,12 +44,19 @@ export async function requireCtx(): Promise<Ctx> {
   return c;
 }
 
-/** Owners and managers only (on the full app). `managed` are the sites they can manage. */
+/** Owners, operations managers and managers only (on the full app). `managed` are the sites they can manage. */
 export async function requireManager(): Promise<Ctx & { managed: SiteId[] }> {
   const ctx = await requireCtx();
   const managed = managedSites(ctx.person);
   if (!managed.length) redirect("/today");
   return { ...ctx, managed };
+}
+
+/** Owners and operations managers only (on the full app). `leads` are the sites they run: every site for an owner. */
+export async function requireLead(): Promise<Ctx & { leads: SiteId[] }> {
+  const ctx = await requireCtx();
+  if (!ctx.isLead) redirect("/today");
+  return { ...ctx, leads: leadSites(ctx.person, (await store().sites()).map((s) => s.id)) };
 }
 
 export function londonNow(): { date: string; hm: string } {

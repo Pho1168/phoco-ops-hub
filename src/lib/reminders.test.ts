@@ -9,7 +9,7 @@ describe("certificate reminders on the scheduler", () => {
   it("queues each due reminder once, to the holder, their managers and (right to work) owners only", async () => {
     resetDemo();
     const now = londonToUtc(londonDate(Date.now()), "09:05");
-    expect(await queueCertReminders(now, demoStore)).toBe(7);
+    expect(await queueCertReminders(now, demoStore)).toBe(9);
     expect(await queueCertReminders(now + 10 * 60_000, demoStore)).toBe(0); // the next run sends nothing new
     const titles = async (id: string) => (await demoStore.notices(id, 20)).filter((n) => n.kind === "cert").map((n) => n.title).sort();
     expect(await titles("DEMO-FOH")).toEqual(["Your Allergen awareness runs out in 15 days"]);
@@ -17,12 +17,14 @@ describe("certificate reminders on the scheduler", () => {
     expect(await titles("DEMO-PRD")).toEqual([]); // right to work never goes to the person
     expect(await titles("DEMO-MGR")).toEqual(["BOH staff (demo): Food hygiene Level 2 has run out", "FOH staff (demo): Allergen awareness runs out in 15 days"]);
     expect(await titles("DEMO-OWN")).toHaveLength(3);
+    // The operations manager hears what the Eastcote manager hears; right to work stays with the owner.
+    expect(await titles("DEMO-OPS")).toEqual(await titles("DEMO-MGR"));
     resetDemo();
   });
   it("reminds managers about a service due soon, once", async () => {
     resetDemo();
     const now = londonToUtc(londonDate(Date.now()), "09:05");
-    expect(await queueServiceReminders(now, demoStore)).toBe(2); // Fryer 2 at Eastcote: the Eastcote manager and the owner
+    expect(await queueServiceReminders(now, demoStore)).toBe(3); // Fryer 2 at Eastcote: the Eastcote manager, the operations manager and the owner
     expect(await queueServiceReminders(now, demoStore)).toBe(0);
     const mgr = (await demoStore.notices("DEMO-MGR", 20)).filter((n) => n.kind === "service");
     expect(mgr[0]?.title).toMatch(/^Service due in \d+ days: Fryer 2 \(Eastcote\)$/);
@@ -33,7 +35,7 @@ describe("certificate reminders on the scheduler", () => {
     const monday = weekStartOf(londonDate(Date.now()));
     expect(await queueWeeklyReport(londonToUtc(addDays(monday, 1), "09:05"), demoStore)).toBe(0); // not on a Tuesday
     const at = londonToUtc(monday, "09:05");
-    expect(await queueWeeklyReport(at, demoStore)).toBe(2); // the owner (Eastcote and Wembley) and the Eastcote manager
+    expect(await queueWeeklyReport(at, demoStore)).toBe(3); // the owner and the operations manager (Eastcote and Wembley), and the Eastcote manager
     expect(await queueWeeklyReport(at + 600_000, demoStore)).toBe(0);
     const [own] = (await demoStore.notices("DEMO-OWN", 20)).filter((n) => n.kind === "report");
     expect(own.title).toMatch(/^Weekly report: Mon \d+ \w+ to Sun \d+ \w+$/);
@@ -41,6 +43,9 @@ describe("certificate reminders on the scheduler", () => {
     expect(own.body).toContain("Wembley:");
     const [mgr] = (await demoStore.notices("DEMO-MGR", 20)).filter((n) => n.kind === "report");
     expect(mgr.body).not.toContain("Wembley");
+    const [ops] = (await demoStore.notices("DEMO-OPS", 20)).filter((n) => n.kind === "report");
+    expect(ops.body).toContain("Eastcote:");
+    expect(ops.body).toContain("Wembley:");
     resetDemo();
   });
   it("hands each due message to one sender only, and can send just the people an action messaged", async () => {
@@ -131,8 +136,9 @@ describe("the daily loop on the scheduler", () => {
     expect(await queueGasChecks(at("22:00"), demoStore)).toBe(1); // only the one on until close
     expect(await queueGasChecks(at("22:10"), demoStore)).toBe(0);
     expect((await demoStore.notices("DEMO-FOH", 10)).filter((n) => n.kind === "gas")[0]).toMatchObject({ title: "Gas check before you leave · Eastcote", sendAfter: at("22:00") });
-    expect(await queueGasChecks(at("22:45"), demoStore)).toBe(2); // the Eastcote manager and the owner
+    expect(await queueGasChecks(at("22:45"), demoStore)).toBe(3); // the Eastcote manager, the operations manager and the owner
     expect((await demoStore.notices("DEMO-MGR", 10)).filter((n) => n.kind === "gas")[0].title).toBe("No gas-off check at Eastcote");
+    expect((await demoStore.notices("DEMO-OPS", 10)).filter((n) => n.kind === "gas")[0]).toMatchObject({ title: "No gas-off check at Eastcote", url: "/owner" });
     await demoStore.addGasCheck({ siteId: "EAS", date: day, personId: "DEMO-FOH", onTablet: true });
     expect(await queueGasChecks(at("23:00"), demoStore)).toBe(0);
     expect(await demoStore.addGasCheck({ siteId: "EAS", date: day, personId: "DEMO-MGR", onTablet: false })).toBe(false); // the first tap counts
@@ -147,7 +153,7 @@ describe("the daily loop on the scheduler", () => {
     expect(await queueReadyAlerts(at("12:05"), demoStore)).toBe(0); // no shifts that day
     await rota();
     expect(await queueReadyAlerts(at("11:55"), demoStore)).toBe(0);
-    expect(await queueReadyAlerts(at("12:05"), demoStore)).toBe(2);
+    expect(await queueReadyAlerts(at("12:05"), demoStore)).toBe(3); // the Eastcote manager, the operations manager and the owner
     expect(await queueReadyAlerts(at("12:15"), demoStore)).toBe(0);
     const [m] = (await demoStore.notices("DEMO-OWN", 10)).filter((n) => n.kind === "ready");
     expect(m.title).toBe("Eastcote not ready to open (12:00)");
@@ -188,7 +194,7 @@ describe("the daily loop on the scheduler", () => {
     expect(await queueDailyDigest(at("08:05", "2026-11-05"), demoStore)).toBe(0);
     // An open day with the same history does count them.
     await rota();
-    expect(await queueDailyDigest(at("08:15", "2026-11-05"), demoStore)).toBe(2);
+    expect(await queueDailyDigest(at("08:15", "2026-11-05"), demoStore)).toBe(3);
     const [own] = (await demoStore.notices("DEMO-OWN", 10)).filter((n) => n.kind === "daily");
     expect(own.body).toMatch(/Eastcote: NO gas-off check · 0\/\d+ checks signed \(missed: /);
     resetDemo();
@@ -198,7 +204,7 @@ describe("the daily loop on the scheduler", () => {
     resetDemo();
     await rota();
     const next = at("08:05", "2026-11-05");
-    expect(await queueDailyDigest(next, demoStore)).toBe(2);
+    expect(await queueDailyDigest(next, demoStore)).toBe(3); // the owner, the operations manager and the Eastcote manager
     expect(await queueDailyDigest(next + 600_000, demoStore)).toBe(0);
     const [own] = (await demoStore.notices("DEMO-OWN", 10)).filter((n) => n.kind === "daily");
     expect(own.title).toBe("Yesterday at a glance: Wed 4 Nov");

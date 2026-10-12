@@ -5,14 +5,16 @@ import { openFaults, serviceState } from "@/lib/domain/equipment";
 import { centreFor } from "@/lib/task-centre";
 import { coverState } from "@/lib/domain/cover";
 import { londonDate } from "@/lib/domain/time";
-import type { Person, SiteId } from "@/lib/domain/types";
+import { managedSites } from "@/lib/domain/access";
+import { canDecide } from "@/lib/domain/timeoff";
+import type { Person } from "@/lib/domain/types";
 import type { ManageCounts } from "./ManageTiles";
 
 /** Numbers shown on the manager tiles. */
-export async function manageCounts(actor: Pick<Person, "access" | "status" | "seesRightToWork">): Promise<ManageCounts> {
+export async function manageCounts(actor: Pick<Person, "id" | "access" | "status" | "seesRightToWork">): Promise<ManageCounts> {
   const db = store();
   const today = londonDate(Date.now());
-  const managed: SiteId[] = actor.access.filter((a) => a.role === "owner" || a.role === "manager").map((a) => a.siteId);
+  const managed = managedSites(actor);
   const [notices, pending, people, certs, sites] = await Promise.all([
     db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(),
   ]);
@@ -30,9 +32,12 @@ export async function manageCounts(actor: Pick<Person, "access" | "status" | "se
   const now = Date.now();
   const cover = openManaged.length ? await db.coverRequests({ siteIds: openManaged, live: true, shiftEndsAfter: now }) : [];
   const coverToDo = cover.filter((r) => { const st = coverState(r, now); return (st === "open" && r.offers.some((o) => !o.withdrawnAt)) || st === "approved"; }).length;
+  // Time off to decide: only requests this person can decide (not their own; an operations manager's go to the owner).
+  const byId = new Map(people.map((p) => [p.id, p]));
+  const toDecide = pending.filter((t) => { const who = byId.get(t.personId); return !!who && canDecide(actor, t, who).ok; });
   return {
     urgent,
-    timeOffPending: pending.length,
+    timeOffPending: toDecide.length,
     noticesActive: notices.filter((n) => isLive(n, today) && (!n.siteId || managed.includes(n.siteId))).length,
     certIssues: issueCount(peopleInCare(actor, people), certs, today, canSeeRightToWork(actor), openManaged),
     equipmentIssues,

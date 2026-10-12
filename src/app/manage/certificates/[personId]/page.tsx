@@ -84,7 +84,7 @@ export default async function PersonCertificates(props: { params: Promise<{ pers
         )}
         <Link className="btn ghost" href="/manage/certificates">Back to all certificates</Link>
       </main>
-      <BottomNav ctx={ctx} current={ctx.isOwner ? "owner" : "manage"} />
+      <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>
   );
 }

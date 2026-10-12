@@ -1,4 +1,4 @@
-import { canManage, managedSites } from "./access";
+import { canManage, isOwner, managedSites } from "./access";
 import { addDays, dayMonthYear, daysBetween, isIsoDate } from "./time";
 import type { Person, SiteId } from "./types";
 
@@ -85,10 +85,10 @@ export function certStatus(records: Certificate[], kind: CertKind, expected: boo
   return { status: "valid", cert: best };
 }
 
-/** Kinds this person is expected to hold under PHO & CO's standard. Owners aren't held to it. */
+/** Kinds this person is expected to hold under PHO & CO's standard. Owners aren't held to it; operations managers count as managers. */
 export function expectedKinds(person: Pick<Person, "access" | "status">): CertKind[] {
-  if (person.status !== "active" || !person.access.length || person.access.some((a) => a.role === "owner")) return [];
-  const isManager = person.access.some((a) => a.role === "manager");
+  if (person.status !== "active" || !person.access.length || isOwner(person)) return [];
+  const isManager = person.access.some((a) => a.role === "manager" || a.role === "ops");
   return CERT_TYPES.filter((t) => t.expectedFor === "everyone" || (t.expectedFor === "managers" && isManager)).map((t) => t.id);
 }
 
@@ -187,16 +187,15 @@ export function certReminderMessages(people: Pick<Person, "id" | "name" | "statu
 
 /** People a manager looks after: anyone (not left) with access to a site they manage. Owners see everyone. */
 export function peopleInCare<P extends Pick<Person, "status" | "access">>(actor: Pick<Person, "access">, people: P[]): P[] {
-  const isOwner = actor.access.some((a) => a.role === "owner");
+  const owner = isOwner(actor);
   const managed = managedSites(actor);
-  return people.filter((p) => p.status !== "left" && (isOwner || p.access.some((a) => managed.includes(a.siteId))));
+  return people.filter((p) => p.status !== "left" && (owner || p.access.some((a) => managed.includes(a.siteId))));
 }
 
 /** Who may add or remove a person's records: a manager of one of their sites; right to work, only people allowed to see it. */
 export function canEditCerts(actor: Pick<Person, "id" | "access" | "status" | "seesRightToWork">, target: Pick<Person, "access" | "status">, kind?: CertKind): { ok: true } | { ok: false; error: string } {
-  const isOwner = actor.access.some((a) => a.role === "owner");
   if (kind && certType(kind).restricted && !canSeeRightToWork(actor)) return { ok: false, error: "Right to work checks are private to the owner" };
-  if (!isOwner && !target.access.some((a) => canManage(actor, a.siteId))) return { ok: false, error: "You can only update records for people at your sites" };
+  if (!isOwner(actor) && !target.access.some((a) => canManage(actor, a.siteId))) return { ok: false, error: "You can only update records for people at your sites" };
   return { ok: true };
 }
 

@@ -615,11 +615,12 @@ describe("time off", () => {
   it("lets a manager of the site decide, but not their own request", () => {
     const mgr = { id: "m", access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] };
     const owner = { id: "o", access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }] };
-    expect(canDecide(mgr, t())).toEqual({ ok: true });
-    expect(canDecide(mgr, t({ siteId: "WEM" }))).toMatchObject({ ok: false });
-    expect(canDecide(mgr, t({ personId: "m" }))).toMatchObject({ ok: false, error: "Another manager needs to decide your own request" });
-    expect(canDecide(owner, t({ personId: "o" }))).toEqual({ ok: true });
-    expect(canDecide(mgr, t({ status: "approved" }))).toMatchObject({ ok: false });
+    const staff = { access: [{ siteId: "EAS" as const, role: "staff" as const, sections: [] }] };
+    expect(canDecide(mgr, t(), staff)).toEqual({ ok: true });
+    expect(canDecide(mgr, t({ siteId: "WEM" }), staff)).toMatchObject({ ok: false });
+    expect(canDecide(mgr, t({ personId: "m" }), mgr)).toMatchObject({ ok: false, error: "Another manager needs to decide your own request" });
+    expect(canDecide(owner, t({ personId: "o" }), owner)).toEqual({ ok: true });
+    expect(canDecide(mgr, t({ status: "approved" }), staff)).toMatchObject({ ok: false });
   });
   it("can be withdrawn while waiting, or before approved time off starts", () => {
     expect(canCancel(t(), today)).toBe(true);
