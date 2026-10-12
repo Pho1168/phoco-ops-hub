@@ -216,12 +216,15 @@ export const unanswered = (a: Allergens) => ALLERGEN_KEYS.filter((k) => !a[k]);
 const yes: Checked = { ok: true };
 const no = (error: string): Checked => ({ ok: false, error });
 
-/** Ready to send for approval or publish: everything a cook (and front of house) needs is there. */
+/**
+ * Ready to send for approval or publish. A prep recipe needs everything a cook needs. A dish needs its menu section and
+ * every allergen marked: its portion and build steps can come in a later version (so its allergens can go on the
+ * matrix first).
+ */
 export function recipeReady(kind: RecipeKind, body: PrepBody | DishBody): Checked {
-  if (!body.category) return no("Choose a category");
-  const items = kind === "prep" ? (body as PrepBody).ingredients : (body as DishBody).components;
-  if (!items.length) return no(kind === "prep" ? "Add the ingredients" : "Add what goes in a portion");
-  if (!body.steps.length) return no(kind === "prep" ? "Add the method: at least one step" : "Add how it's built: at least one step");
+  if (!body.category) return no(kind === "prep" ? "Choose a category" : "Choose its menu section");
+  if (kind === "prep" && !(body as PrepBody).ingredients.length) return no("Add the ingredients");
+  if (kind === "prep" && !body.steps.length) return no("Add the method: at least one step");
   const i = body.steps.findIndex((s) => !s.text);
   if (i >= 0) return no(`Step ${i + 1} needs words, not just a photo or warning`);
   if (kind === "prep") {

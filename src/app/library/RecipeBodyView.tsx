@@ -34,13 +34,18 @@ export function RecipeBodyView({ kind, title, body, links, gone, eraseIn, stepMo
         </section>
       )}
 
-      <Scaler kind={kind} items={prep ? prep.ingredients : dish!.components} makes={prep?.makes} links={links} />
-
-      <section className="stack" aria-label={kind === "prep" ? "Method" : "How it's built"}>
-        <div className="row wrap"><h2 className="h-sec grow">{kind === "prep" ? "Method" : "How it's built"}</h2>
-          {stepMode && <StepMode title={title} steps={body.steps.map((s) => (s.photo && gone.includes(s.photo.id) ? { text: s.text, warning: s.warning } : s))} />}</div>
-        <StepList steps={body.steps} title={title} erased={gone} eraseIn={eraseIn} />
-      </section>
+      {dish && !dish.components.length && !dish.steps.length
+        ? <div className="card muted" role="note">What goes in a portion and how it&apos;s built aren&apos;t written yet: only its allergens are.</div>
+        : <>
+            {(prep || dish!.components.length > 0) && <Scaler kind={kind} items={prep ? prep.ingredients : dish!.components} makes={prep?.makes} links={links} />}
+            {body.steps.length > 0 && (
+              <section className="stack" aria-label={kind === "prep" ? "Method" : "How it's built"}>
+                <div className="row wrap"><h2 className="h-sec grow">{kind === "prep" ? "Method" : "How it's built"}</h2>
+                  {stepMode && <StepMode title={title} steps={body.steps.map((s) => (s.photo && gone.includes(s.photo.id) ? { text: s.text, warning: s.warning } : s))} />}</div>
+                <StepList steps={body.steps} title={title} erased={gone} eraseIn={eraseIn} />
+              </section>
+            )}
+          </>}
 
       {prep?.notes && <section className="card stack" aria-label="Notes"><h2 className="h-sec">Notes</h2><div style={{ whiteSpace: "pre-wrap" }}>{prep.notes}</div></section>}
 

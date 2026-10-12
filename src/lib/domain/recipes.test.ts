@@ -78,8 +78,10 @@ describe("recipes: content", () => {
     expect(unanswered({})).toHaveLength(15);
     const dishBody = (cleanRecipe("dish", dishInput()) as { ok: true; value: { body: DishBody } }).value.body;
     expect(recipeReady("dish", dishBody)).toEqual({ ok: true });
-    expect(recipeReady("dish", { ...dishBody, category: "" })).toMatchObject({ ok: false, error: "Choose a category" });
-    expect(recipeReady("dish", { ...dishBody, steps: [] })).toMatchObject({ ok: false, error: "Add how it's built: at least one step" });
+    expect(recipeReady("dish", { ...dishBody, category: "" })).toMatchObject({ ok: false, error: "Choose its menu section" });
+    // A dish's allergens can go live before its portion and build steps are written.
+    expect(recipeReady("dish", { ...dishBody, components: [], steps: [] })).toEqual({ ok: true });
+    expect(recipeReady("dish", { ...dishBody, steps: [{ text: "", photo: PHOTO }] })).toMatchObject({ ok: false, error: "Step 1 needs words, not just a photo or warning" });
   });
   it("codes by kind and section; photos include the finished photo", () => {
     expect([codePrefix("prep", ["PROD"]), codePrefix("dish", ["BOH"]), codePrefix("prep", ["BOH", "PROD"]), codePrefix("sop", [])]).toEqual(["PREP-PROD-", "DISH-BOH-", "PREP-GEN-", "SOP-GEN-"]);
