@@ -1,6 +1,6 @@
 import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
-import { certStatus, expectedKinds, statusText, visibleTypes } from "@/lib/domain/certificates";
+import { canSeeRightToWork, certStatus, expectedKinds, statusText, visibleTypes } from "@/lib/domain/certificates";
 import { faultsOf, keepsFoodSafe, serviceState } from "@/lib/domain/equipment";
 import { datesBetween, signoffLog } from "@/lib/domain/records";
 import { taskCentre, type CentreItem } from "@/lib/domain/tasks";
@@ -11,9 +11,9 @@ import type { Person, Site } from "@/lib/domain/types";
  * Gathers everything open at one site for the task centre: manual tasks, alerts, kit, handover actions, prep,
  * overdue checklists, time off, certificates and servicing. Read-only: the rules are in `taskCentre`.
  */
-export async function centreFor(site: Site, viewer: Pick<Person, "access">, now = Date.now(), db: Store = store()): Promise<CentreItem[]> {
+export async function centreFor(site: Site, viewer: Pick<Person, "access" | "status" | "seesRightToWork">, now = Date.now(), db: Store = store()): Promise<CentreItem[]> {
   const today = londonDate(now);
-  const isOwner = viewer.access.some((a) => a.role === "owner");
+  const seesRtw = canSeeRightToWork(viewer);
   const [tasks, alerts, kit, kitEvents, notes, prepOn, records, pendingLeave, people, certs] = await Promise.all([
     db.tasks({ siteIds: [site.id] }),
     db.alerts(site.id),
@@ -37,7 +37,7 @@ export async function centreFor(site: Site, viewer: Pick<Person, "access">, now 
   });
 
   const here = people.filter((p) => p.status === "active" && p.access.some((a) => a.siteId === site.id));
-  const types = visibleTypes(isOwner);
+  const types = visibleTypes(seesRtw);
   const expired: { personId: string; name: string; label: string }[] = [];
   const expiring: { personId: string; name: string; label: string; text: string }[] = [];
   let missing = 0;

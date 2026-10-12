@@ -760,7 +760,7 @@ export async function addCertificate(input: unknown): Promise<ActionResult> {
   if (!check.ok) return check;
   await db.addCertificate({ ...rec, createdBy: ctx.person.id });
   await db.audit({ actorId: ctx.person.id, siteId: target.access[0]?.siteId, action: "cert.add",
-    detail: `${t.label} recorded for ${target.name}${rec.expiresOn && !t.ownerOnly ? ` (runs out ${dayMonthYear(rec.expiresOn)})` : ""}` });
+    detail: `${t.label} recorded for ${target.name}${rec.expiresOn && !t.restricted ? ` (runs out ${dayMonthYear(rec.expiresOn)})` : ""}` });
   revalidatePath("/manage/certificates"); revalidatePath(`/manage/certificates/${target.id}`); revalidatePath("/me");
   return { ok: true };
 }
@@ -867,7 +867,8 @@ export async function reportFault(equipmentId: string, input: unknown): Promise<
   const now = Date.now();
   const told: string[] = [];
   for (const m of faultReportedMessages(eq, { id: id!, severity: f.data.severity, body: f.data.body }, ctx.person.id, ctx.person.name, await db.people())) {
-    if (await db.queueNotice({ personId: m.personId, kind: "fault", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) told.push(m.personId);
+    // "Not working" is urgent: it still goes out until midnight.
+    if (await db.queueNotice({ personId: m.personId, kind: "fault", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now, f.data.severity === "down"), url: m.url })) told.push(m.personId);
   }
   if (told.length) await deliverDue(now, told);
   await db.audit({ actorId: ctx.person.id, siteId: eq.siteId, action: "equipment.fault", detail: `${SEVERITY_LABEL[f.data.severity]}: ${eq.name}: ${f.data.body}` });
@@ -958,7 +959,7 @@ export async function addTask(siteId: string, input: unknown): Promise<ActionRes
   const audience = assignee ? [assignee] : data.priority === 1 ? people.filter((p) => p.id !== ctx.person.id && isForPerson({ siteId: site.data, section: data.section }, p)) : [];
   for (const p of audience) {
     await db.queueNotice({ personId: p.id, kind: "task", title: `New task (${priorityCode(data.priority)}): ${data.title}`,
-      body: `${categoryLabel(data.category)}${due}${data.detail ? `\n${data.detail.slice(0, 160)}` : ""}\nFrom ${ctx.person.name}`, dedupeKey: `task|${id}|${p.id}`, sendAfter: afterQuietHours(now) });
+      body: `${categoryLabel(data.category)}${due}${data.detail ? `\n${data.detail.slice(0, 160)}` : ""}\nFrom ${ctx.person.name}`, dedupeKey: `task|${id}|${p.id}`, sendAfter: afterQuietHours(now, data.priority === 1) });
   }
   if (audience.length) await deliverDue(now, audience.map((p) => p.id));
   await db.audit({ actorId: ctx.person.id, siteId: site.data, action: "task.add", detail: `${priorityCode(data.priority)} task: ${data.title}${assignee ? ` (for ${assignee.name})` : data.section ? ` (for ${data.section})` : ""}` });

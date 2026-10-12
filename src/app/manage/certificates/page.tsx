@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { store } from "@/lib/data";
-import { certStatus, certType, expectedKinds, issueCount, peopleInCare, siteCover, statusText, visibleTypes, type CertKind } from "@/lib/domain/certificates";
+import { canSeeRightToWork, certStatus, certType, expectedKinds, issueCount, peopleInCare, siteCover, statusText, visibleTypes, type CertKind } from "@/lib/domain/certificates";
 import { londonDate } from "@/lib/domain/time";
 import type { Role } from "@/lib/domain/types";
 import { BottomNav, TopBar } from "@/components/Chrome";
@@ -27,10 +27,11 @@ export default async function Certificates({ searchParams }: { searchParams: { s
     .filter((p) => p.access.some((a) => a.siteId === site.id))
     .map((p) => ({ ...p, role: p.access.find((a) => a.siteId === site.id)!.role }))
     .sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || a.name.localeCompare(b.name));
-  const types = visibleTypes(ctx.isOwner);
+  const seesRtw = canSeeRightToWork(ctx.person);
+  const types = visibleTypes(seesRtw);
   const mine = (id: string) => certs.filter((c) => c.personId === id);
   const cover = site.status === "open" ? siteCover(site.id, here, certs, today) : [];
-  const issues = issueCount(here, certs, today, ctx.isOwner, site.status === "open" ? [site.id] : []);
+  const issues = issueCount(here, certs, today, seesRtw, site.status === "open" ? [site.id] : []);
 
   const soon: { person: string; personId: string; kind: CertKind; text: string; level: "critical" | "warn" }[] = [];
   let missing = 0;
@@ -124,7 +125,7 @@ export default async function Certificates({ searchParams }: { searchParams: { s
               <div key={t.id} style={{ flexDirection: "column", gap: 2 }}>
                 <span className="strong" style={{ fontSize: 14 }}>{t.label}{t.renewYears ? ` · refresh every ${t.renewYears} years` : ""}</span>
                 <span>{t.why}.</span>
-                <span className="muted">{t.expectedFor === "everyone" ? "Expected for everyone (not owners)." : t.expectedFor === "managers" ? "Expected for managers." : t.sitecover ? "At least one person per site." : "Optional."}{t.ownerOnly ? " Only owners can see or change this." : ""}</span>
+                <span className="muted">{t.expectedFor === "everyone" ? "Expected for everyone (not owners)." : t.expectedFor === "managers" ? "Expected for managers." : t.sitecover ? "At least one person per site." : "Optional."}{t.restricted ? " Private: only you can see or change this." : ""}</span>
               </div>
             ))}
             <div className="muted">These are PHO &amp; CO&apos;s working standard, not legal advice. Reminders go to the person and their managers 30 days and 7 days before a date, and when it passes.</div>

@@ -24,8 +24,8 @@ export interface CertType {
   expectedFor: "everyone" | "managers" | "none";
   /** At least one valid holder per site is recommended. */
   sitecover?: boolean;
-  /** Only owners can see and edit it. */
-  ownerOnly?: boolean;
+  /** Only people allowed to see right to work (`canSeeRightToWork`) can see and edit it. */
+  restricted?: boolean;
   /** Form labels when "issued" and "expires" read wrongly for this kind. */
   dates?: { issued: string; expires: string };
   /** No certificate number for this kind (right to work: document numbers stay off the app). */
@@ -39,7 +39,7 @@ export const CERT_TYPES: CertType[] = [
     why: "Food handlers must be trained in food hygiene for the work they do. Level 2, refreshed every 3 years, is the usual way to show it" },
   { id: "allergen", label: "Allergen awareness", short: "Allergens", renewYears: 3, expectedFor: "everyone",
     why: "Staff must give correct allergen information. The Food Standards Agency's free online course counts" },
-  { id: "right_to_work", label: "Right to work check", short: "Right to work", expectedFor: "everyone", ownerOnly: true, noReference: true,
+  { id: "right_to_work", label: "Right to work check", short: "Right to work", expectedFor: "everyone", restricted: true, noReference: true,
     dates: { issued: "Checked on", expires: "Follow-up check due (time-limited permission only)" },
     why: "Check before someone starts work. If their permission is time-limited, the follow-up check must be done before it runs out" },
   { id: "food_hygiene_l3", label: "Food hygiene Level 3 (supervisor)", short: "Hygiene L3", renewYears: 3, expectedFor: "managers", sitecover: true,
@@ -56,8 +56,11 @@ export const CERT_TYPES: CertType[] = [
 
 export const certType = (k: CertKind) => CERT_TYPES.find((t) => t.id === k)!;
 
-/** The kinds a viewer can see: right to work is for owners only. */
-export const visibleTypes = (isOwner: boolean) => CERT_TYPES.filter((t) => isOwner || !t.ownerOnly);
+/** Right to work: only people given it (today, just the owner who asked). Being an owner isn't enough. */
+export const canSeeRightToWork = (p: Pick<Person, "status" | "seesRightToWork">) => p.status === "active" && p.seesRightToWork === true;
+
+/** The kinds a viewer can see: right to work only if they're allowed. */
+export const visibleTypes = (seesRightToWork: boolean) => CERT_TYPES.filter((t) => seesRightToWork || !t.restricted);
 
 export interface Certificate {
   id: string; personId: string; kind: CertKind;
@@ -148,7 +151,7 @@ export interface CertMessage { personId: string; title: string; body: string; de
  * is looked at, so a renewed certificate stops the reminders for the old one. The holder and the managers of
  * their sites are told; right to work goes to owners only. Each message has its own key so it's sent once.
  */
-export function certReminderMessages(people: Pick<Person, "id" | "name" | "status" | "access">[], records: Certificate[], today: string): CertMessage[] {
+export function certReminderMessages(people: Pick<Person, "id" | "name" | "status" | "access" | "seesRightToWork">[], records: Certificate[], today: string): CertMessage[] {
   const out: CertMessage[] = [];
   const active = people.filter((p) => p.status === "active");
   for (const holder of active) {
@@ -162,8 +165,8 @@ export function certReminderMessages(people: Pick<Person, "id" | "name" | "statu
       const days = daysBetween(today, exp);
       const when = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
       const key = (to: string) => `cert|${best.id}|${stage}|${to}`;
-      const others = active.filter((p) => p.id !== holder.id && (t.ownerOnly
-        ? p.access.some((a) => a.role === "owner")
+      const others = active.filter((p) => p.id !== holder.id && (t.restricted
+        ? canSeeRightToWork(p)
         : holder.access.some((a) => canManage(p, a.siteId))));
       if (kind === "right_to_work") {
         for (const p of others) out.push(stage === "expired"
@@ -189,10 +192,10 @@ export function peopleInCare<P extends Pick<Person, "status" | "access">>(actor:
   return people.filter((p) => p.status !== "left" && (isOwner || p.access.some((a) => managed.includes(a.siteId))));
 }
 
-/** Who may add or remove a person's records: a manager of one of their sites; right to work, owners only. */
-export function canEditCerts(actor: Pick<Person, "id" | "access">, target: Pick<Person, "access" | "status">, kind?: CertKind): { ok: true } | { ok: false; error: string } {
+/** Who may add or remove a person's records: a manager of one of their sites; right to work, only people allowed to see it. */
+export function canEditCerts(actor: Pick<Person, "id" | "access" | "status" | "seesRightToWork">, target: Pick<Person, "access" | "status">, kind?: CertKind): { ok: true } | { ok: false; error: string } {
   const isOwner = actor.access.some((a) => a.role === "owner");
-  if (kind && certType(kind).ownerOnly && !isOwner) return { ok: false, error: "Only an owner can record right to work checks" };
+  if (kind && certType(kind).restricted && !canSeeRightToWork(actor)) return { ok: false, error: "Right to work checks are private to the owner" };
   if (!isOwner && !target.access.some((a) => canManage(actor, a.siteId))) return { ok: false, error: "You can only update records for people at your sites" };
   return { ok: true };
 }
@@ -213,12 +216,12 @@ export function validateCert(input: CertInput, today: string): { ok: true } | { 
 }
 
 /** How many expected certificates are missing, expired or running out for these people, plus sites missing cover. */
-export function issueCount(people: Pick<Person, "id" | "name" | "status" | "access">[], records: Certificate[], today: string, includeOwnerOnly: boolean, coverSites: SiteId[] = []): number {
+export function issueCount(people: Pick<Person, "id" | "name" | "status" | "access">[], records: Certificate[], today: string, includeRestricted: boolean, coverSites: SiteId[] = []): number {
   let n = 0;
   for (const p of people) {
     const mine = records.filter((r) => r.personId === p.id);
     for (const k of expectedKinds(p)) {
-      if (!includeOwnerOnly && certType(k).ownerOnly) continue;
+      if (!includeRestricted && certType(k).restricted) continue;
       if (certStatus(mine, k, true, today).status !== "valid") n++;
     }
   }

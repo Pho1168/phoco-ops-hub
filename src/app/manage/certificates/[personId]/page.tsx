@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { store } from "@/lib/data";
-import { canEditCerts, certStatus, expectedKinds, statusText, visibleTypes, type Certificate, type CertType } from "@/lib/domain/certificates";
+import { canEditCerts, canSeeRightToWork, certStatus, expectedKinds, statusText, visibleTypes, type Certificate, type CertType } from "@/lib/domain/certificates";
 import { dayMonthYear, londonDate } from "@/lib/domain/time";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { requireManager } from "@/lib/session";
@@ -22,7 +22,7 @@ export default async function PersonCertificates({ params }: { params: { personI
   const today = londonDate(Date.now());
   const [certs, sites] = await Promise.all([db.certificates({ personIds: [person.id] }), db.sites()]);
   const expected = new Set(expectedKinds(person));
-  const types = visibleTypes(ctx.isOwner);
+  const types = visibleTypes(canSeeRightToWork(ctx.person));
   const siteNames = person.access.map((a) => `${sites.find((s) => s.id === a.siteId)?.name ?? a.siteId} (${a.role})`).join(" · ");
   const firstMissing = types.find((t) => expected.has(t.id) && certStatus(certs, t.id, true, today).status === "missing")?.id;
 

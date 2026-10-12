@@ -97,7 +97,7 @@ const fromDbOutcome = (o: string): Outcome => (o === "cleared" ? "todo" : (o as 
 
 interface PersonRow {
   id: string; staff_code: string; display_name: string; status: Person["status"]; frozen_reason: string | null;
-  pin_hash: string | null; pin_failed: number; pin_locked_until: Date | null; pin_must_change: boolean;
+  pin_hash: string | null; pin_failed: number; pin_locked_until: Date | null; pin_must_change: boolean; sees_right_to_work: boolean;
   access: { site_id: SiteId; role: Role; sections: Area[] }[] | null;
 }
 
@@ -105,6 +105,7 @@ function toPerson(r: PersonRow): Person {
   return {
     id: r.id, staffCode: r.staff_code, name: r.display_name, status: r.status, frozenReason: opt(r.frozen_reason),
     pinHash: opt(r.pin_hash), pinFailed: r.pin_failed, pinLockedUntil: ms(r.pin_locked_until), pinMustChange: r.pin_must_change,
+    seesRightToWork: r.sees_right_to_work,
     access: (r.access ?? []).map((a) => ({ siteId: a.site_id, role: a.role, sections: a.sections })),
   };
 }
@@ -117,6 +118,7 @@ async function selectPeople(where: postgres.PendingQuery<postgres.Row[]> | null)
   const q = sql();
   const rows = await q<PersonRow[]>`
     select p.id, p.staff_code, p.display_name, p.status, p.frozen_reason, p.pin_hash, p.pin_failed, p.pin_locked_until, p.pin_must_change,
+      p.sees_right_to_work,
       (select coalesce(json_agg(json_build_object('site_id', ps.site_id, 'role', ps.role, 'sections', ps.sections) order by ps.site_id), '[]')
          from person_sites ps where ps.person_id = p.id) as access
     from people p

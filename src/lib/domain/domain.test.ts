@@ -9,7 +9,7 @@ import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, s
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
 import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
 import { readFileSync } from "node:fs";
-import { canEditCerts, certReminderMessages, certStatus, expectedKinds, issueCount, peopleInCare, reminderDue, siteCover, statusText, suggestExpiry, validateCert, CERT_KINDS, CERT_TYPES, type Certificate } from "./certificates";
+import { canEditCerts, canSeeRightToWork, certReminderMessages, certStatus, expectedKinds, issueCount, peopleInCare, reminderDue, siteCover, statusText, suggestExpiry, validateCert, visibleTypes, CERT_KINDS, CERT_TYPES, type Certificate } from "./certificates";
 import { canCancel, canDecide, clashes, daysOf, offOn, rangeLabel, validateRequest, type TimeOff } from "./timeoff";
 import { audienceLabel, canPostTo, inAudience, isLive, readStats, unreadFor, type TeamNotice } from "./notices";
 import { change, groupTotals, siteWeekReport, weeklyDigest, type SiteWeekInput } from "./report";
@@ -212,6 +212,11 @@ describe("London time", () => {
     expect(afterQuietHours(noon)).toBe(noon);
     expect(new Date(afterQuietHours(londonToUtc("2026-10-13", "23:10"))).toISOString()).toBe("2026-10-14T07:00:00.000Z");
     expect(new Date(afterQuietHours(londonToUtc("2026-10-14", "06:00"))).toISOString()).toBe("2026-10-14T07:00:00.000Z");
+    // urgent (kit not working, P1 task): still sent until midnight, then waits for 08:00
+    expect(afterQuietHours(londonToUtc("2026-10-13", "23:10"), true)).toBe(londonToUtc("2026-10-13", "23:10"));
+    expect(afterQuietHours(londonToUtc("2026-10-13", "22:30"), true)).toBe(londonToUtc("2026-10-13", "22:30"));
+    expect(new Date(afterQuietHours(londonToUtc("2026-10-14", "00:20"), true)).toISOString()).toBe("2026-10-14T07:00:00.000Z");
+    expect(afterQuietHours(noon, true)).toBe(noon);
   });
 });
 describe("PIN lockout shared by sign-in and sign-off", () => {
@@ -687,35 +692,42 @@ describe("staff certificates", () => {
       { id: "ana", name: "Ana", status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: ["BOH" as const] }] },
       { id: "mgr", name: "Mo", status: "active" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] },
       { id: "wem", name: "Wes", status: "active" as const, access: [{ siteId: "WEM" as const, role: "manager" as const, sections: [] }] },
-      { id: "own", name: "Olu", status: "active" as const, access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }, { siteId: "WEM" as const, role: "owner" as const, sections: [] }] },
+      { id: "own", name: "Olu", status: "active" as const, seesRightToWork: true, access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }, { siteId: "WEM" as const, role: "owner" as const, sections: [] }] },
+      { id: "co", name: "Cam", status: "active" as const, access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }] },
       { id: "old", name: "Gone", status: "left" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] },
     ];
     const msgs = certReminderMessages(people, [c({ id: "h1", personId: "ana", expiresOn: "2026-10-20" })], today);
-    expect(msgs.map((m) => m.personId).sort()).toEqual(["ana", "mgr", "own"]); // not the Wembley manager, not someone who has left
+    expect(msgs.map((m) => m.personId).sort()).toEqual(["ana", "co", "mgr", "own"]); // not the Wembley manager, not someone who has left
     expect(msgs.find((m) => m.personId === "ana")?.title).toBe("Your Food hygiene Level 2 runs out in 8 days");
     expect(msgs.find((m) => m.personId === "mgr")?.title).toBe("Ana: Food hygiene Level 2 runs out in 8 days");
     expect(msgs.find((m) => m.personId === "mgr")?.url).toBe("/manage/certificates/ana"); // tapping opens their record
     expect(msgs.find((m) => m.personId === "ana")?.url).toBe("/me");
-    expect(new Set(msgs.map((m) => m.dedupeKey)).size).toBe(3);
+    expect(new Set(msgs.map((m) => m.dedupeKey)).size).toBe(4);
     expect(msgs[0].dedupeKey).toMatch(/^cert\|h1\|30\|/); // 8 days out: the 30-day reminder
     // renewed: the old record no longer counts
     expect(certReminderMessages(people, [c({ id: "h1", personId: "ana", expiresOn: "2026-10-20" }), c({ id: "h2", personId: "ana", expiresOn: "2029-10-10" })], today)).toEqual([]);
-    // right to work: owners only, never the person or a manager
+    // right to work: only the person allowed to see it, not another owner, a manager or the person themself
     const rtw = certReminderMessages(people, [c({ id: "r", personId: "ana", kind: "right_to_work", expiresOn: "2026-11-01" })], today);
     expect(rtw.map((m) => m.personId)).toEqual(["own"]);
     expect(rtw[0].title).toBe("Ana: right to work follow-up due in 20 days");
     // nothing for people who have left
     expect(certReminderMessages([{ ...people[0], status: "left" }, people[1]], [c({ personId: "ana", expiresOn: "2026-10-20" })], today)).toEqual([]);
   });
-  it("lets managers update people at their sites, and only owners record right to work", () => {
-    const mgr = { id: "m", access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] };
-    const own = { id: "o", access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }] };
+  it("lets managers update people at their sites, and only the person allowed records right to work", () => {
+    const mgr = { id: "m", status: "active" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: [] }] };
+    const own = { id: "o", status: "active" as const, seesRightToWork: true, access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }] };
+    const coOwner = { id: "co", status: "active" as const, access: [{ siteId: "EAS" as const, role: "owner" as const, sections: [] }] };
     const easStaff = { status: "active" as const, access: [{ siteId: "EAS" as const, role: "staff" as const, sections: [] }] };
     const wemStaff = { status: "active" as const, access: [{ siteId: "WEM" as const, role: "staff" as const, sections: [] }] };
     expect(canEditCerts(mgr, easStaff, "food_hygiene_l2").ok).toBe(true);
     expect(canEditCerts(mgr, wemStaff, "food_hygiene_l2").ok).toBe(false);
     expect(canEditCerts(mgr, easStaff, "right_to_work").ok).toBe(false);
     expect(canEditCerts(own, wemStaff, "right_to_work").ok).toBe(true);
+    expect(canEditCerts(coOwner, easStaff, "right_to_work").ok).toBe(false); // being an owner isn't enough
+    expect(canEditCerts(coOwner, wemStaff, "food_hygiene_l2").ok).toBe(true);
+    expect(visibleTypes(canSeeRightToWork(own)).some((t) => t.id === "right_to_work")).toBe(true);
+    expect(visibleTypes(canSeeRightToWork(coOwner)).some((t) => t.id === "right_to_work")).toBe(false);
+    expect(canSeeRightToWork({ ...own, status: "frozen" })).toBe(false);
     expect(peopleInCare(mgr, [{ ...easStaff, id: "a" }, { ...wemStaff, id: "b" }, { ...easStaff, id: "c", status: "left" as const }]).map((p) => p.id)).toEqual(["a"]);
   });
   it("checks the dates on a new record", () => {

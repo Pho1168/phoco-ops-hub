@@ -61,9 +61,13 @@ export function daysBetween(from: string, to: string): number {
 export const QUIET_START = "22:00";
 export const QUIET_END = "08:00";
 
-/** Messages created in quiet hours (22:00–08:00 London) wait until 08:00. Returns when to send. */
-export function afterQuietHours(now: number): number {
+/**
+ * Messages created in quiet hours (22:00–08:00 London) wait until 08:00. Urgent ones (kit not working, P1 tasks)
+ * still go out until midnight: only 00:00–08:00 waits. Returns when to send.
+ */
+export function afterQuietHours(now: number, urgent = false): number {
   const hm = londonHM(now);
+  if (urgent) return hm >= QUIET_END ? now : londonToUtc(londonDate(now), QUIET_END);
   if (hm >= QUIET_END && hm < QUIET_START) return now;
   const today = londonDate(now);
   const day = hm >= QUIET_START ? addDays(today, 1) : today;
