@@ -139,8 +139,11 @@ describe("the daily loop on the scheduler", () => {
     resetDemo();
   });
 
+  const usesChecklists = () => demoStore.addAnswer("EAS-FOH-OPEN", "2026-11-01", { itemId: "EAS-FOH-OPEN#1", value: "", outcome: "done", recordedBy: "DEMO-FOH", capturedAt: londonToUtc("2026-11-01", "11:00") });
+
   it("not ready at the ready time tells managers and the owner once; a day with no rota tells nobody", async () => {
     resetDemo();
+    await usesChecklists();
     expect(await queueReadyAlerts(at("12:05"), demoStore)).toBe(0); // no shifts that day
     await rota();
     expect(await queueReadyAlerts(at("11:55"), demoStore)).toBe(0);
@@ -152,8 +155,16 @@ describe("the daily loop on the scheduler", () => {
     resetDemo();
   });
 
+  it("a site that hasn't started using checklists in the app isn't checked", async () => {
+    resetDemo();
+    await rota();
+    expect(await queueReadyAlerts(at("12:05"), demoStore)).toBe(0);
+    resetDemo();
+  });
+
   it("a day nobody starts by the ready time (evening only) isn't checked", async () => {
     resetDemo();
+    await usesChecklists();
     const week = weekStartOf(day);
     await demoStore.applyShiftSync("EAS", { added: [{ sourceKey: "eve", staffCode: "DEMO-FOH", section: "FOH", week, date: day, start: "17:00", end: "22:15", endsNextDay: false }], changed: [], cancelled: [] },
       new Map([["DEMO-FOH", "DEMO-FOH"]]));
@@ -164,6 +175,7 @@ describe("the daily loop on the scheduler", () => {
 
   it("the not-ready message is only sent in the half hour after the ready time", async () => {
     resetDemo();
+    await usesChecklists();
     await rota();
     expect(await queueReadyAlerts(at("12:30"), demoStore)).toBe(0);
     resetDemo();

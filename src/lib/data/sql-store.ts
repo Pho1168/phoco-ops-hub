@@ -925,6 +925,12 @@ export const sqlStore: Store = {
     };
   },
 
+  async checklistsStartedOn(siteId) {
+    const q = sql();
+    const [first] = await q<{ d: string | null }[]>`select to_char(min(business_date), 'YYYY-MM-DD') as d from checklist_runs where site_id = ${siteId}`;
+    return first?.d ?? undefined;
+  },
+
   // ---------- gas off at close ----------
   async gasChecks(siteIds, from, to) {
     if (!siteIds.length) return [];

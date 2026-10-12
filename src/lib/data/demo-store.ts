@@ -531,6 +531,10 @@ export const demoStore: Store = {
       .map((s) => ({ id: s.id, siteId: s.siteId, siteName: names.get(s.siteId) ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
         published: true, cancelled: false, personId: s.personId, staffCode: s.staffCode }));
   },
+  async checklistsStartedOn(siteId) {
+    const lists = new Set(S().lists.filter((l) => l.siteId === siteId).map((l) => l.id));
+    return Array.from(S().runs.values()).filter((r) => lists.has(r.listId)).map((r) => r.date).sort()[0];
+  },
   async gasChecks(siteIds, from, to) {
     return S().gasChecks.filter((g) => siteIds.includes(g.siteId) && g.date >= from && g.date <= to)
       .map((g) => ({ ...g, personName: nameOf(g.personId) ?? "" })).sort((a, b) => a.date.localeCompare(b.date));

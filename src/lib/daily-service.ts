@@ -38,15 +38,16 @@ async function siteShifts(siteId: SiteId, dates: string[], db: Store, known?: Da
 }
 
 /**
- * Ready to open, for today. Undefined when the site has no ready time, or nobody on the published rota starts by
- * then (a shut day, or an evening-only one). `forStaff` leaves out who's late or not coming (managers only see that);
- * `asOf` judges kit, alerts and replies as they were then.
+ * Ready to open, for today. Undefined when the site has no ready time, hasn't started using checklists in the app
+ * (like the records, they count from the first one recorded), or nobody on the published rota starts by then (a shut
+ * day, or an evening-only one). `forStaff` leaves out who's late or not coming (managers only see that); `asOf`
+ * judges kit, alerts and replies as they were then.
  */
 export async function readyFor(site: Site, now = Date.now(), db: Store = store(), known: Known = {}, opts: { forStaff?: boolean; asOf?: number } = {}): Promise<Ready | undefined> {
   if (!site.readyBy || site.status !== "open") return undefined;
   const today = londonDate(now);
   const opening = (await siteShifts(site.id, [today], db, known.shifts)).filter((s) => s.start <= site.readyBy!);
-  if (!opening.length) return undefined;
+  if (!opening.length || !(await db.checklistsStartedOn(site.id))) return undefined;
   const [kit, open, alerts, people, replies] = await Promise.all([
     known.kit ?? db.equipment(site.id),
     known.openFaults ?? db.equipmentEvents({ siteId: site.id, openFaultsOnly: true }),

@@ -87,7 +87,8 @@ export interface Store {
   raiseAlert(a: Omit<Alert, "id" | "createdAt">): Promise<void>;
   resolveAlert(id: string, personId: string, note: string): Promise<void>;
 
-  /** The site's open notes, plus every note written since `createdSince` (default: the last 7 days). */
+  /** The first day the site recorded any checklist (London date), or undefined if it hasn't yet. */
+  checklistsStartedOn(siteId: SiteId): Promise<string | undefined>;
   /** Checklist runs, answers and alerts for inspection records and reports. */
   recordsData(siteId: SiteId, from: string, to: string): Promise<RecordsData>;
 
