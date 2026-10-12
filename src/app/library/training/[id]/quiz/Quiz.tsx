@@ -3,10 +3,17 @@
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { submitQuiz } from "@/app/actions";
+import { submitQuiz, type QuizOutcome } from "@/app/actions";
 
 export interface QuizQuestion { id: string; text: string; options: { i: number; text: string }[] }
-type Result = { score: number; passed: boolean; total: number; correct: number; wrong: string[]; passMark: number; handsOn: boolean };
+
+/** What happens next, in words. */
+const NEXT: Record<QuizOutcome["next"], string> = {
+  done: "This skill is done.",
+  ready: "Next, a manager watches you do it and confirms it.",
+  practice: "It was already done, so nothing changes: good practice.",
+  again: "Saved.",
+};
 
 const mix = <T,>(xs: T[]): T[] => {
   const out = [...xs];
@@ -26,7 +33,7 @@ export function Quiz({ skillId, version, questions, backHref }: { skillId: strin
   const router = useRouter();
   const [shown, setShown] = useState(questions);
   const [answers, setAnswers] = useState<Record<string, number>>({});
-  const [result, setResult] = useState<Result | null>(null);
+  const [result, setResult] = useState<QuizOutcome | null>(null);
   const [err, setErr] = useState<{ text: string; restart?: boolean } | null>(null);
   const [pending, start] = useTransition();
   const top = useRef<HTMLDivElement>(null);
@@ -49,8 +56,8 @@ export function Quiz({ skillId, version, questions, backHref }: { skillId: strin
           <div className="grow stack" style={{ gap: 8 }}>
             <div className="strong">{result.passed ? "Passed" : "Not passed yet"}: {result.correct} of {result.total} right ({result.score}%)</div>
             {result.passed
-              ? <div>{result.handsOn ? "Next, a manager watches you do it and confirms it." : "This skill is done."}</div>
-              : <div>You need {result.passMark}%. Look again at:</div>}
+              ? <div>{NEXT[result.next]}</div>
+              : <div>{result.next === "done" || result.next === "practice" ? "It's still done: this try doesn't change that. " : ""}You need {result.passMark}%. Look again at:</div>}
             {!result.passed && (
               <ul style={{ margin: 0, paddingLeft: 20 }}>
                 {shown.filter((q) => result.wrong.includes(q.id)).map((q) => <li key={q.id}>{q.text}</li>)}

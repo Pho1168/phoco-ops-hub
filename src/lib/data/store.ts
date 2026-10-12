@@ -60,17 +60,19 @@ export type LibraryMove = "submit" | "withdraw" | "send_back" | "discard";
 export interface Store {
   sites(): Promise<Site[]>;
   site(id: SiteId): Promise<Site | undefined>;
+  /** Opens or closes a site. Reopening starts training again for the people who train there (see createPerson). */
   setSiteStatus(id: SiteId, status: Site["status"], reason?: string): Promise<void>;
 
   people(): Promise<Person[]>;
   person(id: string): Promise<Person | undefined>;
+  /** Changes a person. Back from leaving or a freeze, their training starts again today. */
   updatePerson(id: string, patch: Partial<Person>): Promise<void>;
   /**
    * Creates a person with their site access; returns the new id. Their training starts today in each section they
-   * work in as staff or a manager.
+   * train in (trainingSections: staff or a manager at an open site, not an owner or operations manager).
    */
   createPerson(p: { staffCode: string; name: string; pinHash: string; pinMustChange: boolean; access: Person["access"] }): Promise<string>;
-  /** Replaces a person's site access. A section they work in for the first time starts its training today. */
+  /** Replaces a person's site access. A section they now train in that they didn't before starts its training today. */
   setAccess(personId: string, access: Person["access"]): Promise<void>;
 
   createSession(personId: string, siteId: SiteId, ttlMs: number, deviceId?: string, scope?: SessionScope): Promise<Session>;
@@ -244,12 +246,16 @@ export interface Store {
   trainingSkill(id: string): Promise<Skill | undefined>;
   /** A new skill, last in its pathway. */
   createTrainingSkill(s: SkillFields, by: string): Promise<string>;
-  /** Saves a skill if it's still at revision `rev` (a new pathway puts it last there). The new revision, or undefined. */
+  /**
+   * Saves a live skill if it's still at revision `rev` (a new pathway puts it last there; a change to its rules dates
+   * `rulesChangedAt`). The new revision, or undefined (changed meanwhile, or retired).
+   */
   saveTrainingSkill(id: string, rev: number, s: SkillFields): Promise<number | undefined>;
   /** Swaps a live skill with the live one before (-1) or after (1) it in its pathway. False if there's none. */
   moveTrainingSkill(id: string, dir: -1 | 1): Promise<boolean>;
+  /** Retires a skill (a new revision, so an open form can't save over it). */
   retireTrainingSkill(id: string, by: string): Promise<boolean>;
-  /** Brings a retired skill back, last in its pathway. */
+  /** Brings a retired skill back, last in its pathway (its rules count as changed now). */
   reinstateTrainingSkill(id: string): Promise<boolean>;
   /** Questions not retired, approved or drafted, in order. */
   trainingQuestions(skillIds?: string[]): Promise<Question[]>;
@@ -263,7 +269,10 @@ export interface Store {
   retireTrainingQuestion(id: string, by: string): Promise<boolean>;
   trainingPathways(): Promise<Pathway[]>;
   saveTrainingPathway(p: Pathway, by: string): Promise<void>;
-  /** When people started in each section (recorded by createPerson and setAccess when a section is first given). */
+  /**
+   * When people last started training in each section: recorded when they're given it, come back from leaving or a
+   * freeze, or their site reopens (createPerson, setAccess, updatePerson, setSiteStatus). The latest per section.
+   */
   trainingStarts(personIds?: string[]): Promise<TrainingStart[]>;
   /** Oldest first. */
   trainingEvents(filter: { personIds?: string[]; skillIds?: string[] }): Promise<TrainingEvent[]>;

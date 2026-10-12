@@ -3,7 +3,7 @@ import { store } from "@/lib/data";
 import { peopleInCare } from "@/lib/domain/certificates";
 import { sectionsFor } from "@/lib/domain/staff";
 import { canConfirmNow, canEditTraining, managesTraining, passport, PATHWAY_TEXT, progressText, tally, type PassportRow, type Progress } from "@/lib/domain/training";
-import { londonDate } from "@/lib/domain/time";
+import { dayMonthYear, londonDate } from "@/lib/domain/time";
 import { requireManager } from "@/lib/session";
 import { trainingData } from "@/lib/training-service";
 import { BottomNav, TopBar } from "@/components/Chrome";
@@ -35,9 +35,11 @@ export default async function TeamTraining(props: { searchParams: Promise<{ site
     .map((p) => ({ p, rows: passport(p, sites, d, today).filter((r) => secs.includes(r.skill.section)) }))
     .filter((x) => x.rows.length)
     .sort((a, b) => a.p.name.localeCompare(b.p.name));
+  // They've passed the quiz or said they're ready (a refresher being renewed too), and this manager can confirm it.
   const waiting = trainees.flatMap(({ p, rows }) => rows
-    .filter((r) => r.progress.state === "ready" && managesTraining(ctx.person, p, r.skill.section, sites).ok && canConfirmNow(r.skill, r.progress, r.hasQuiz).ok)
-    .map((r) => ({ p, r })));
+    .filter((r) => !!r.progress.readyAt && managesTraining(ctx.person, p, r.skill.section, sites).ok && canConfirmNow(r.skill, r.progress, r.hasQuiz).ok)
+    .map((r) => ({ p, r })))
+    .sort((a, b) => a.r.progress.readyAt! - b.r.progress.readyAt!);
   const overdue = trainees.map(({ p, rows }) => ({ p, n: rows.filter((r) => r.progress.overdue).length })).filter((x) => x.n > 0);
   const totals = trainees.map((t) => tally(t.rows)).reduce((a, t) => ({ done: a.done + t.done, total: a.total + t.total }), { done: 0, total: 0 });
   const skills = d.skills.filter((s) => !s.retiredAt && secs.includes(s.section));
@@ -73,7 +75,7 @@ export default async function TeamTraining(props: { searchParams: Promise<{ site
             {waiting.map(({ p, r }) => (
               <div key={`${p.id}-${r.skill.id}`} className="card row wrap" style={{ gap: 10 }}>
                 <span className="grow"><Link href={`/manage/training/${p.id}`} className="strong">{p.name}</Link>
-                  <span className="muted" style={{ display: "block" }}>{r.skill.title} · {PATHWAY_TEXT[r.skill.section]}</span></span>
+                  <span className="muted" style={{ display: "block" }}>{r.skill.title} · {PATHWAY_TEXT[r.skill.section]}{r.progress.state === "done" || r.progress.why === "expired" ? " · refresher" : ""} · waiting since {dayMonthYear(londonDate(r.progress.readyAt!))}</span></span>
                 <ConfirmButton personId={p.id} skillId={r.skill.id} name={p.name} skill={r.skill.title} />
               </div>
             ))}
@@ -108,7 +110,7 @@ export default async function TeamTraining(props: { searchParams: Promise<{ site
                         {cols.map(({ p, rows }) => {
                           const r = cell(rows, s.id);
                           if (!r) return <td key={p.id} />;
-                          const c = CELL[r.progress.state];
+                          const c = r.progress.readyAt ? CELL.ready : CELL[r.progress.state];
                           return <td key={p.id} title={`${p.name} · ${s.title}: ${progressText(r.progress, today)}`}>
                             <span className={`chip ${r.progress.overdue ? "bad" : c.tone}`}>{r.progress.overdue && r.progress.state !== "refresher" ? "Overdue" : c.text}</span></td>;
                         })}

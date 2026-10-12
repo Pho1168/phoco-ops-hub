@@ -1,7 +1,7 @@
 import { isOps, isOwner, opsSites } from "./access";
 import { addMonths } from "./equipment";
 import { canApprove, cleanText, type Checked, type Cleaned } from "./library";
-import { addDays, dayMonthYear, daysBetween, londonDate } from "./time";
+import { addDays, dayMonthYear, daysBetween, londonDate, londonToUtc } from "./time";
 import type { Area, Person, Site } from "./types";
 
 /**
@@ -11,9 +11,11 @@ import type { Area, Person, Site } from "./types";
  * - A knowledge skill is done when its quiz is passed (or, while it has no quiz, when the person marks it done).
  * - A hands-on skill is done when a manager confirms it after watching them do it (once the quiz is passed, if it has one).
  * Each person's skills passport is worked out from append-only training events. A completion stops counting when its
- * refresher falls due, when a linked SOP or recipe gets a major change after it, or when a manager takes it back.
- * Deadlines run from the day someone started in that section. The owner and operations managers set the skills,
- * quizzes and deadlines; a drafted question is only asked once one of them has approved it.
+ * refresher falls due (it can be done again from 30 days before), when a linked SOP or recipe gets a major change after
+ * it, or when a manager takes it back; the last two leave two weeks to do it again. Deadlines run from the day someone
+ * (re)started training in that section, and a change to a skill's rules never leaves anyone less than two weeks. The
+ * owner and operations managers set the skills, quizzes and deadlines; a drafted question is only asked once one of
+ * them has approved it.
  */
 
 export const PATHWAYS: Area[] = ["FOH", "BOH", "PROD"];
@@ -42,6 +44,11 @@ export interface Skill {
   passMark: number;
   createdAt: number;
   updatedAt: number;
+  /**
+   * When its rules last changed: its pathway, induction, hands-on, links or refresher (or it was brought back). Anyone
+   * the change puts behind has at least REDO_DAYS from then.
+   */
+  rulesChangedAt?: number;
   rev: number;
   retiredAt?: number;
 }
@@ -95,9 +102,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ---------- who trains, who decides ----------
 
-/** The pathways someone follows: their sections as staff or a manager at open sites. Owners and operations managers don't. */
+/**
+ * The pathways someone follows: their sections as staff or a manager at open sites. Owners and operations managers
+ * don't (even where they're also a manager or staff at another site).
+ */
 export function trainingSections(p: Pick<Person, "status" | "access">, sites: Pick<Site, "id" | "status">[]): Area[] {
-  if (p.status !== "active" || isOwner(p)) return [];
+  if (p.status !== "active" || isOwner(p) || isOps(p)) return [];
   const open = new Set(sites.filter((s) => s.status === "open").map((s) => s.id));
   return PATHWAYS.filter((sec) => p.access.some((a) => (a.role === "staff" || a.role === "manager") && open.has(a.siteId) && a.sections.includes(sec)));
 }
@@ -144,36 +154,47 @@ export interface Progress {
   doneAt?: number;
   doneBy?: string;
   doneKind?: "quiz" | "done" | "confirmed";
-  /** Hands-on: the quiz is passed (or it was marked ready) since the last time it counted: a manager can confirm it. */
+  /**
+   * Hands-on: they've passed the quiz (or, with no quiz, said they're ready) since it last had to be done, or since its
+   * refresher opened: a manager can confirm it.
+   */
   readyAt?: number;
+  /** Done, and its refresher falls due within REFRESHER_SOON_DAYS: it can be done again now to keep it in date. */
+  renewal?: boolean;
   /** Quiz attempts since it last had to be (re)done, and the latest score. */
   attempts: number;
   lastScore?: number;
   /** Done: when its refresher falls due. Otherwise: its deadline. */
   dueOn?: string;
+  /** Not done and past its deadline (never while it's waiting for a manager: they've done their part). */
   overdue: boolean;
   /** Why it has to be done again: its refresher fell due, a linked SOP or recipe changed, or a manager took it back. */
   why?: "expired" | "changed" | "reset";
+  /** The day it had to be done again from (with `why`). */
+  whyOn?: string;
 }
 
 export interface ProgressInput {
   /** This person's events for this skill (any order). */
   events: TrainingEvent[];
-  /** When they started in the skill's section. */
+  /** When they (re)started training in the skill's section. */
   startedOn?: string;
   pathway: Pick<Pathway, "inductionDays" | "allDays">;
   /** The latest major change to an SOP or recipe it links to. */
   changedAt?: number;
+  /** It has a quiz (approved questions) now. */
+  hasQuiz: boolean;
   today: string;
 }
 
 /** Where someone stands on one skill (see the module notes for the rules). */
-export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresherMonths" | "createdAt">, x: ProgressInput): Progress {
+export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresherMonths" | "createdAt" | "rulesChangedAt">, x: ProgressInput): Progress {
   const evs = [...x.events].sort((a, b) => a.at - b.at);
   const lastReset = Math.max(0, ...evs.filter((e) => e.kind === "reset").map((e) => e.at));
   const cutoff = Math.max(lastReset, x.changedAt ?? 0);
   const completes = (e: TrainingEvent) => e.kind === "confirmed" || (!skill.handsOn && (e.kind === "done" || (e.kind === "quiz" && !!e.passed)));
-  const readies = (e: TrainingEvent) => skill.handsOn && (e.kind === "done" || (e.kind === "quiz" && !!e.passed));
+  // Ready for a manager's check: the quiz passed, or (only while it has no quiz) they said they're ready.
+  const readies = (e: TrainingEvent) => skill.handsOn && ((e.kind === "quiz" && !!e.passed) || (e.kind === "done" && !x.hasQuiz));
   const valid = evs.filter((e) => e.at > cutoff);
   const done = valid.filter(completes).at(-1);
   const prior = evs.filter((e) => e.at <= cutoff && completes(e)).at(-1);
@@ -184,30 +205,45 @@ export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresher
     const attempts = attemptsSince(since);
     return { state, attempts: attempts.length, lastScore: attempts.at(-1)?.score, overdue: false, ...extra };
   };
-  const finish = (p: Progress): Progress => ({ ...p, overdue: p.state !== "done" && !!p.dueOn && p.dueOn < x.today });
+  const finish = (p: Progress): Progress => ({ ...p, overdue: p.state !== "done" && p.state !== "ready" && !!p.dueOn && p.dueOn < x.today });
   const who = (e: TrainingEvent) => ({ doneAt: e.at, doneBy: e.byName, doneKind: e.kind as Progress["doneKind"] });
+  // A change to the skill's rules leaves anyone it puts behind at least REDO_DAYS from the change.
+  const changed = skill.rulesChangedAt ? londonDate(skill.rulesChangedAt) : undefined;
+  const atLeast = (due: string, from: string) => { const d = addDays(from, REDO_DAYS); return d > due ? d : due; };
+  const fair = (due: string) => (changed ? atLeast(due, changed) : due);
 
   if (done) {
     const expires = skill.refresherMonths ? addMonths(londonDate(done.at), skill.refresherMonths) : undefined;
-    if (!expires || expires > x.today) return finish(base("done", { ...who(done), dueOn: expires }));
-    // Its refresher has fallen due: done again the same way (the quiz, then a manager for hands-on skills).
-    const readyAt = readyAfter(done.at);
-    return finish(base(readyAt ? "ready" : "refresher", { ...who(done), readyAt, dueOn: expires, why: "expired" }));
+    if (!expires) return finish(base("done", who(done)));
+    // From REFRESHER_SOON_DAYS before its refresher falls due it can be done again the same way (for a hands-on skill,
+    // the quiz and then a manager); only what's done from then on counts.
+    const opens = Math.max(done.at, londonToUtc(addDays(expires, -REFRESHER_SOON_DAYS), "00:00"));
+    const readyAt = readyAfter(opens);
+    if (expires > x.today) return finish(base("done", { ...who(done), dueOn: expires, readyAt, renewal: daysBetween(x.today, expires) <= REFRESHER_SOON_DAYS }));
+    const dueOn = fair(expires);
+    return finish(base(readyAt ? "ready" : "refresher", { ...who(done), readyAt, dueOn, why: "expired", whyOn: dueOn === expires ? expires : changed }));
   }
   const readyAt = readyAfter(cutoff);
   if (prior) {
     const why = lastReset >= (x.changedAt ?? 0) ? "reset" : "changed";
-    return finish(base(readyAt ? "ready" : "refresher", { ...who(prior), readyAt, dueOn: addDays(londonDate(cutoff), REDO_DAYS), why }));
+    const from = londonDate(cutoff), dueOn = fair(addDays(from, REDO_DAYS));
+    return finish(base(readyAt ? "ready" : "refresher", { ...who(prior), readyAt, dueOn, why, whyOn: dueOn === addDays(from, REDO_DAYS) ? from : changed }));
   }
-  // Never done (or taken back before it was): due a set time after they started in the section, or after the skill was added.
+  // Never done: due a set time after they started in the section, or after the skill was added. If a manager took
+  // back their readiness, at least two weeks from then.
   const added = londonDate(skill.createdAt);
-  const from = x.startedOn && x.startedOn > added ? x.startedOn : added;
-  const dueOn = addDays(from, skill.induction ? x.pathway.inductionDays : x.pathway.allDays);
-  if (readyAt) return finish(base("ready", { readyAt, dueOn }));
-  return finish(base(attemptsSince(cutoff).length ? "in_training" : "not_started", { dueOn }));
+  const start = x.startedOn && x.startedOn > added ? x.startedOn : added;
+  let dueOn = fair(addDays(start, skill.induction ? x.pathway.inductionDays : x.pathway.allDays));
+  const reset = lastReset ? { why: "reset" as const, whyOn: londonDate(lastReset) } : {};
+  if (lastReset) dueOn = atLeast(dueOn, londonDate(lastReset));
+  if (readyAt) return finish(base("ready", { readyAt, dueOn, ...reset }));
+  return finish(base(attemptsSince(cutoff).length ? "in_training" : "not_started", { dueOn, ...reset }));
 }
 
-/** In words, for a list: "Done 12 Oct 2026", "Due by 19 Oct 2026", "Overdue since 19 Oct 2026", "Refresher by 12 Oct 2027". */
+/**
+ * In words, for a list: "Done 12 Oct 2026", "Done 12 Oct 2026 · refresher by 12 Oct 2027", "Due by 19 Oct 2026",
+ * "Overdue since 19 Oct 2026", "Waiting for a manager since 14 Oct 2026".
+ */
 export function progressText(p: Progress, today: string): string {
   if (p.state === "done") {
     const done = `Done ${dayMonthYear(londonDate(p.doneAt!))}`;
@@ -215,6 +251,7 @@ export function progressText(p: Progress, today: string): string {
     const left = daysBetween(today, p.dueOn);
     return left <= REFRESHER_SOON_DAYS ? `${done} · refresher due ${left === 0 ? "today" : left === 1 ? "tomorrow" : `in ${left} days`}` : `${done} · refresher by ${dayMonthYear(p.dueOn)}`;
   }
+  if (p.state === "ready" && p.readyAt) return `Waiting for a manager since ${dayMonthYear(londonDate(p.readyAt))}`;
   if (!p.dueOn) return STATE_TEXT[p.state];
   return p.overdue ? `Overdue since ${dayMonthYear(p.dueOn)}` : `Due by ${dayMonthYear(p.dueOn)}`;
 }
@@ -239,11 +276,26 @@ export const quizOf = (skillId: string, questions: Question[]) =>
 /** Which version of a quiz someone was shown: it changes when a question is added, changed, approved or taken off. */
 export const quizVersion = (quiz: Pick<Question, "id" | "updatedAt">[]) => quiz.map((q) => `${q.id}@${q.updatedAt}`).join(",");
 
-/** Whether a manager may confirm a hands-on skill now: it isn't done, and the quiz (if it has one) is passed. */
+/**
+ * Whether a manager may confirm a hands-on skill now: it isn't done (or its refresher is coming up), and the quiz, if
+ * it has one, has been passed since it last had to be done (or since its refresher opened).
+ */
 export function canConfirmNow(skill: Pick<Skill, "handsOn">, p: Progress, hasQuiz: boolean): Checked {
   if (!skill.handsOn) return no("This one is done by passing the quiz");
-  if (p.state === "done") return no("It's already done");
-  if (hasQuiz && !p.readyAt) return no("They need to pass the quiz first");
+  if (p.state === "done" && !p.renewal) return no("It's already done");
+  if (hasQuiz && !p.readyAt) return no(p.state === "done" ? "They need to pass the quiz again first" : "They need to pass the quiz first");
+  return yes;
+}
+
+/**
+ * Whether someone may mark a skill with no quiz done themselves (knowledge), or say they're ready to be checked
+ * (hands-on). Not while its quiz is being written (drafted questions), for a knowledge skill: it'll be done by the quiz.
+ */
+export function canMarkDone(skill: Pick<Skill, "handsOn">, p: Progress, quiz: { asked: boolean; drafted: boolean }): Checked {
+  if (quiz.asked) return no("Pass the quiz to finish this one");
+  if (!skill.handsOn && quiz.drafted) return no("Its quiz is being written: you'll take it once it's ready");
+  if (p.readyAt) return no("It's waiting for a manager to check you");
+  if (p.state === "done" && !p.renewal) return no("It's already done");
   return yes;
 }
 
@@ -359,40 +411,57 @@ export interface TrainingData {
   majorChanges: Map<string, number>;
 }
 
-export interface PassportRow { skill: Skill; progress: Progress; hasQuiz: boolean }
+export interface PassportRow {
+  skill: Skill;
+  progress: Progress;
+  /** Its quiz has approved questions: it's asked now. */
+  hasQuiz: boolean;
+  /** It has drafted questions waiting to be approved. */
+  drafted: boolean;
+}
 
 export const pathwayOf = (pathways: Pathway[], section: Area): Pathway =>
   pathways.find((p) => p.section === section) ?? { section, ...DEFAULT_PATHWAY };
 
+/** The day someone last (re)started training in a section: they start again after leaving, a freeze or a closure. */
+export const startedOn = (starts: TrainingStart[], personId: string, section: Area): string | undefined =>
+  starts.filter((s) => s.personId === personId && s.section === section).map((s) => s.startedOn).sort().at(-1);
+
 /** Someone's passport: each of their skills, in order, with where they stand. */
 export function passport(p: Pick<Person, "id" | "status" | "access">, sites: Pick<Site, "id" | "status">[], d: TrainingData, today: string): PassportRow[] {
-  const quizzed = new Set(d.questions.filter((q) => q.approved).map((q) => q.skillId));
+  const asked = new Set(d.questions.filter((q) => q.approved).map((q) => q.skillId));
+  const drafted = new Set(d.questions.filter((q) => !q.approved).map((q) => q.skillId));
   const mine = d.events.filter((e) => e.personId === p.id);
-  return skillsFor(p, sites, d.skills).map((skill) => ({
-    skill,
-    hasQuiz: quizzed.has(skill.id),
-    progress: progress(skill, {
-      events: mine.filter((e) => e.skillId === skill.id),
-      startedOn: d.starts.find((s) => s.personId === p.id && s.section === skill.section)?.startedOn,
-      pathway: pathwayOf(d.pathways, skill.section), changedAt: changedAt(skill, d.majorChanges), today,
-    }),
-  }));
+  return skillsFor(p, sites, d.skills).map((skill) => {
+    const hasQuiz = asked.has(skill.id);
+    return {
+      skill, hasQuiz, drafted: drafted.has(skill.id),
+      progress: progress(skill, {
+        events: mine.filter((e) => e.skillId === skill.id), startedOn: startedOn(d.starts, p.id, skill.section),
+        pathway: pathwayOf(d.pathways, skill.section), changedAt: changedAt(skill, d.majorChanges), hasQuiz, today,
+      }),
+    };
+  });
 }
 
-/** How a passport adds up. */
+/**
+ * How a passport adds up. `ready`: waiting for a manager to check them (a refresher being renewed too); `again`: to do
+ * again (their move: a refresher fallen due, a changed SOP or recipe, or a manager asking).
+ */
 export function tally(rows: PassportRow[]): { total: number; done: number; overdue: number; ready: number; again: number } {
   return {
     total: rows.length,
     done: rows.filter((r) => r.progress.state === "done").length,
     overdue: rows.filter((r) => r.progress.overdue).length,
-    ready: rows.filter((r) => r.progress.state === "ready").length,
-    again: rows.filter((r) => r.progress.state === "refresher" || (r.progress.state === "ready" && !!r.progress.why)).length,
+    ready: rows.filter((r) => !!r.progress.readyAt).length,
+    again: rows.filter((r) => r.progress.state === "refresher" || (r.progress.why === "reset" && (r.progress.state === "not_started" || r.progress.state === "in_training"))).length,
   };
 }
 
 /**
- * What's waiting for someone in training: hands-on skills they can confirm now, people (whose training they look
- * after) with something overdue, and for the owner and operations managers, skills with drafted questions to approve.
+ * What's waiting for someone in training: hands-on skills they can confirm now (the person has passed the quiz or said
+ * they're ready), people (whose training they look after) with something overdue, and for the owner and operations
+ * managers, skills with drafted questions to approve.
  */
 export function trainingToDo(actor: Pick<Person, "id" | "status" | "access">, people: Pick<Person, "id" | "status" | "access">[],
   sites: Pick<Site, "id" | "status">[], d: TrainingData, today: string): { ready: number; overdue: number; toApprove: number } {
@@ -400,7 +469,7 @@ export function trainingToDo(actor: Pick<Person, "id" | "status" | "access">, pe
   for (const p of people) {
     if (p.id === actor.id) continue;
     const rows = passport(p, sites, d, today).filter((r) => managesTraining(actor, p, r.skill.section, sites).ok);
-    ready += rows.filter((r) => canConfirmNow(r.skill, r.progress, r.hasQuiz).ok && r.progress.state === "ready").length;
+    ready += rows.filter((r) => !!r.progress.readyAt && canConfirmNow(r.skill, r.progress, r.hasQuiz).ok).length;
     if (rows.some((r) => r.progress.overdue)) overdue++;
   }
   const live = new Set(d.skills.filter((s) => !s.retiredAt).map((s) => s.id));
@@ -410,10 +479,17 @@ export function trainingToDo(actor: Pick<Person, "id" | "status" | "access">, pe
 
 export interface TrainingMessage { personId: string; title: string; body: string; dedupeKey: string; url: string }
 
+const AGAIN_TEXT: Record<NonNullable<Progress["why"]>, string> = {
+  expired: "Its refresher has fallen due",
+  changed: "An SOP or recipe it covers has changed",
+  reset: "Your manager asked for it to be done again",
+};
+
 /**
  * The reminders due today, to the person: a refresher coming up (30 days before), a refresher due, or a skill to do
- * again after a major change to an SOP or recipe it covers (or a manager taking it back). Each has its own key, so
- * it's sent once; old dates are skipped, so loading past records doesn't send a flood.
+ * again (an SOP or recipe it covers changed, a manager asked, or a change to the skill gave them until a date). Each
+ * has its own key, so it's sent once; old dates are skipped, so loading past records doesn't send a flood. Nothing
+ * while a skill is waiting for a manager's check.
  */
 export function trainingReminders(people: Pick<Person, "id" | "status" | "access">[], sites: Pick<Site, "id" | "status">[], d: TrainingData, today: string): TrainingMessage[] {
   const out: TrainingMessage[] = [];
@@ -422,16 +498,13 @@ export function trainingReminders(people: Pick<Person, "id" | "status" | "access
     for (const { skill, progress: pr } of passport(p, sites, d, today)) {
       const url = `/library/training/${skill.id}`;
       const key = (stage: string) => `training|${p.id}|${skill.id}|${stage}`;
-      if (pr.state === "done" && pr.dueOn && daysBetween(today, pr.dueOn) <= REFRESHER_SOON_DAYS) {
-        out.push({ personId: p.id, title: `Refresher coming up: ${skill.title}`, body: `Do it again by ${dayMonthYear(pr.dueOn)} to keep it in date. Open it in Library → Training.`, dedupeKey: key(`soon|${pr.dueOn}`), url });
-      } else if (pr.state === "refresher" && pr.why === "expired" && pr.dueOn && recent(pr.dueOn)) {
-        out.push({ personId: p.id, title: `Refresher due: ${skill.title}`, body: `It was due on ${dayMonthYear(pr.dueOn)}. Open it in Library → Training to do it again.`, dedupeKey: key(`due|${pr.dueOn}`), url });
-      } else if (pr.state === "refresher" && (pr.why === "changed" || pr.why === "reset") && pr.dueOn && recent(addDays(pr.dueOn, -REDO_DAYS))) {
-        out.push({
-          personId: p.id, title: `Do it again: ${skill.title}`,
-          body: `${pr.why === "changed" ? "An SOP or recipe it covers has changed" : "Your manager asked for it to be done again"}. Please do it by ${dayMonthYear(pr.dueOn)}.`,
-          dedupeKey: key(`again|${pr.dueOn}`), url,
-        });
+      if (pr.readyAt || !pr.dueOn) continue;
+      if (pr.state === "done") {
+        if (pr.renewal) out.push({ personId: p.id, title: `Refresher coming up: ${skill.title}`, body: `Do it again by ${dayMonthYear(pr.dueOn)} to keep it in date. Open it in Library → Training.`, dedupeKey: key(`soon|${pr.dueOn}`), url });
+      } else if (pr.why === "expired" && pr.dueOn <= today) {
+        if (recent(pr.dueOn)) out.push({ personId: p.id, title: `Refresher due: ${skill.title}`, body: `It was due on ${dayMonthYear(pr.dueOn)}. Open it in Library → Training to do it again.`, dedupeKey: key(`due|${pr.dueOn}`), url });
+      } else if (pr.why && pr.whyOn && recent(pr.whyOn)) {
+        out.push({ personId: p.id, title: `Do it again: ${skill.title}`, body: `${AGAIN_TEXT[pr.why]}. Please do it by ${dayMonthYear(pr.dueOn)}.`, dedupeKey: key(`again|${pr.whyOn}`), url });
       }
     }
   }

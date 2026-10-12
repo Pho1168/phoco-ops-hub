@@ -3,7 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { KIND_TEXT, type LibraryDoc } from "@/lib/domain/library";
 import { seesRecipes } from "@/lib/domain/recipes";
-import { canEditTraining, PATHWAY_TEXT, progressText, quizOf, WHY_TEXT, type TrainingEvent } from "@/lib/domain/training";
+import { canEditTraining, canMarkDone, PATHWAY_TEXT, progressText, quizOf, WHY_TEXT, type Progress, type TrainingEvent } from "@/lib/domain/training";
+import { dayMonthYear } from "@/lib/domain/time";
 import { londonDate } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { myTraining } from "@/lib/training-service";
@@ -13,6 +14,13 @@ import { StateChips } from "../parts";
 import { MarkDone } from "./MarkDone";
 
 export const dynamic = "force-dynamic";
+
+/** How to keep a skill in date once its refresher is coming up. */
+const renewText = (handsOn: boolean, quiz: boolean, p: Progress) => {
+  const by = `Its refresher is coming up: do it again by ${dayMonthYear(p.dueOn!)} to keep it in date.`;
+  if (handsOn) return `${by} ${quiz ? "Take the quiz again, then a manager" : "Say you're ready below, then a manager"} watches you do it and confirms it.`;
+  return `${by} ${quiz ? "Take the quiz again." : "Go through it again, then mark it done."}`;
+};
 
 const EVENT_TEXT = (e: TrainingEvent, mine: boolean) => {
   switch (e.kind) {
@@ -45,6 +53,8 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
   ]);
   const row = rows.find((r) => r.skill.id === skill.id);
   const quiz = quizOf(skill.id, questions);
+  // Only published SOPs and recipes reach staff; editors also see links to ones still being written or retired.
+  const shown = editor ? docs : docs.filter((d) => d.published && !d.retiredAt);
   const events = row ? (await db.trainingEvents({ personIds: [ctx.person.id], skillIds: [skill.id] })).reverse().slice(0, 10) : [];
   const recipesOk = full && seesRecipes(ctx.person, sites);
   const today = londonDate(Date.now());
@@ -58,7 +68,7 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
         <div className="stack" style={{ gap: 6 }}>
           <div className="eyebrow">{PATHWAY_TEXT[skill.section]} · {skill.group}</div>
           <h1 className="h-display">{skill.title}</h1>
-          <div className="muted">{skill.handsOn ? "Hands-on: a manager confirms it once they've watched you do it." : quiz.length ? "Done when you pass the quiz." : "Done when you've read and watched it."}
+          <div className="muted">{skill.handsOn ? "Hands-on: a manager confirms it once they've watched you do it." : quiz.length || row?.drafted ? "Done when you pass the quiz." : "Done when you've read and watched it."}
             {skill.refresherMonths ? ` Done again every ${skill.refresherMonths} months.` : ""}</div>
         </div>
         {skill.retiredAt && <div className="alert bad" role="status">Retired: it isn&apos;t part of anyone&apos;s training.</div>}
@@ -68,16 +78,17 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
             <div className="row wrap" style={{ gap: 8 }}><span className="strong grow">{progressText(p, today)}</span><StateChips p={p} /></div>
             {p.why && p.state !== "done" && <div className="muted">{WHY_TEXT[p.why]}{p.doneAt ? `. Last done ${dayMonthYearAt(p.doneAt)}.` : "."}</div>}
             {p.state === "done" && p.doneKind === "confirmed" && <div className="muted">Confirmed by {p.doneBy} on {dayMonthYearAt(p.doneAt!)}.</div>}
-            {p.state === "ready" && <div className="muted">Waiting for a manager to watch you do it and confirm it.</div>}
+            {p.state === "done" && p.renewal && !p.readyAt && <div className="muted">{renewText(skill.handsOn, quiz.length > 0, p)}</div>}
+            {p.readyAt && <div className="muted">Waiting for a manager to watch you do it{p.state === "done" ? " again" : ""} and confirm it.</div>}
           </section>
         )}
 
         {skill.about && <section className="card" aria-label="What it covers" style={{ whiteSpace: "pre-wrap" }}>{skill.about}</section>}
 
-        {docs.length > 0 && (
+        {shown.length > 0 && (
           <section className="stack" aria-label="Read" style={{ gap: 8 }}>
             <h2 className="h-sec">Read</h2>
-            {docs.map((d) => {
+            {shown.map((d) => {
               const title = d.published?.title ?? d.open?.title ?? d.code;
               const link = !d.published || d.retiredAt ? undefined : d.kind === "prep" && !recipesOk ? undefined : `/library/${d.id}`;
               const note = !d.published ? "Not published yet" : d.retiredAt ? "Retired" : d.kind === "prep" && !recipesOk ? "On the shop tablet, for kitchen staff" : "";
@@ -113,8 +124,8 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
             </>
           ) : (
             <>
-              <div className="muted">No quiz for this one yet.</div>
-              {row && !skill.retiredAt && p!.state !== "done" && p!.state !== "ready" && <MarkDone skillId={skill.id} handsOn={skill.handsOn} />}
+              <div className="muted">{row?.drafted && !skill.handsOn ? "Its quiz is being written: you'll take it once it's ready." : "No quiz for this one yet."}</div>
+              {row && !skill.retiredAt && canMarkDone(skill, row.progress, { asked: false, drafted: row.drafted }).ok && <MarkDone skillId={skill.id} handsOn={skill.handsOn} again={row.progress.state === "done"} />}
             </>
           )}
         </section>

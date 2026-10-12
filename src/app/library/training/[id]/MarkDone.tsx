@@ -4,8 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { markSkillDone } from "@/app/actions";
 
-/** A skill with no quiz: "Mark it as done" (knowledge) or "I'm ready to be checked" (hands-on). */
-export function MarkDone({ skillId, handsOn }: { skillId: string; handsOn: boolean }) {
+/** A skill with no quiz: "Mark it as done" (knowledge) or "I'm ready to be checked" (hands-on); "again" for a refresher. */
+export function MarkDone({ skillId, handsOn, again = false }: { skillId: string; handsOn: boolean; again?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -15,7 +15,7 @@ export function MarkDone({ skillId, handsOn }: { skillId: string; handsOn: boole
         setErr("");
         const r = await markSkillDone(skillId);
         if (!r.ok) setErr(r.error); else router.refresh();
-      })}>{pending ? "Saving…" : handsOn ? "I'm ready to be checked" : "Mark it as done"}</button>
+      })}>{pending ? "Saving…" : handsOn ? `I'm ready to be checked${again ? " again" : ""}` : again ? "Mark it as done again" : "Mark it as done"}</button>
       {err && <div className="err" role="alert">{err}</div>}
     </div>
   );

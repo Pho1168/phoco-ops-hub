@@ -14,7 +14,7 @@ import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
 import type { Device } from "@/lib/domain/devices";
-import type { Pathway, Question, Skill, TrainingEvent } from "@/lib/domain/training";
+import { trainingSections, type Pathway, type Question, type Skill, type TrainingEvent } from "@/lib/domain/training";
 
 /**
  * Postgres implementation of Store, used when DATABASE_URL is set (Supabase in production).
@@ -269,12 +269,13 @@ async function prepHandoversWhere(where: postgres.PendingQuery<postgres.Row[]>, 
 // ---------- training ----------
 interface SkillRow {
   id: string; section: Area; grp: string; position: number; title: string; about: string; hands_on: boolean; induction: boolean; links: string[] | null;
-  video_url: string | null; refresher_months: number | null; pass_mark: number; created_at: Date; updated_at: Date; rev: number; retired_at: Date | null;
+  video_url: string | null; refresher_months: number | null; pass_mark: number; created_at: Date; updated_at: Date; rules_changed_at: Date | null; rev: number;
+  retired_at: Date | null;
 }
 const toSkill = (r: SkillRow): Skill => ({
   id: r.id, section: r.section, group: r.grp, position: r.position, title: r.title, about: r.about, handsOn: r.hands_on, induction: r.induction,
   links: r.links ?? [], videoUrl: opt(r.video_url), refresherMonths: opt(r.refresher_months), passMark: r.pass_mark,
-  createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), rev: r.rev, retiredAt: ms(r.retired_at),
+  createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), rulesChangedAt: ms(r.rules_changed_at), rev: r.rev, retiredAt: ms(r.retired_at),
 });
 interface QuestionRow { id: string; skill_id: string; position: number; text: string; options: string[]; answer: number; approved_at: Date | null; created_at: Date; updated_at: Date }
 const toQuestion = (r: QuestionRow): Question => ({
@@ -288,13 +289,30 @@ const toTrainingEvent = (r: TrainingEventRow): TrainingEvent => ({
 });
 /** One position change at a time in the skill list (adding, moving, bringing back). */
 const lockSkillOrder = (tx: postgres.ReservedSql) => tx`select pg_advisory_xact_lock(hashtext('training_skills.position'))`;
-/** A section someone works in as staff or a manager for the first time starts its training today. */
-async function recordStarts(tx: postgres.ReservedSql, personId: string, access: Person["access"]) {
-  const sections = Array.from(new Set(access.filter((a) => a.role === "staff" || a.role === "manager").flatMap((a) => a.sections)));
-  if (!sections.length) return;
-  await tx`insert into training_starts (person_id, section, started_on)
-    select ${personId}, s, (now() at time zone 'Europe/London')::date from unnest(${sections}::text[]) as s
-    on conflict (person_id, section) do nothing`;
+/** The sections someone trains in now (the rule is trainingSections), read inside a transaction. */
+async function traineeSections(tx: postgres.ReservedSql, personId: string): Promise<Area[]> {
+  const [p] = await tx<{ status: Person["status"] }[]>`select status from people where id = ${personId}`;
+  if (!p) return [];
+  const access = await tx<{ site_id: SiteId; role: Role; sections: Area[] }[]>`select site_id, role, sections from person_sites where person_id = ${personId}`;
+  const sites = await tx<{ id: SiteId; status: Site["status"] }[]>`select id, status from sites`;
+  return trainingSections({ status: p.status, access: access.map((a) => ({ siteId: a.site_id, role: a.role, sections: a.sections })) }, sites);
+}
+/**
+ * Makes a change to people, their access or a site, then starts training today in each section someone trains in now
+ * that they didn't before: given a new section, back from leaving or a freeze, or their site reopened.
+ */
+async function withStarts<T>(tx: postgres.ReservedSql, personIds: string[], change: () => Promise<T>): Promise<T> {
+  const before = new Map<string, Area[]>();
+  for (const id of personIds) before.set(id, await traineeSections(tx, id));
+  const out = await change();
+  for (const id of personIds) {
+    const fresh = (await traineeSections(tx, id)).filter((sec) => !before.get(id)!.includes(sec));
+    if (fresh.length) {
+      await tx`insert into training_starts (person_id, section, started_on)
+        select ${id}, s, (now() at time zone 'Europe/London')::date from unnest(${fresh}::text[]) as s on conflict do nothing`;
+    }
+  }
+  return out;
 }
 
 export const sqlStore: Store = {
@@ -309,9 +327,13 @@ export const sqlStore: Store = {
     return r ? toSite(r as Parameters<typeof toSite>[0]) : undefined;
   },
   async setSiteStatus(id, status, reason) {
-    const q = sql();
-    if (status === "closed") await q`update sites set status = 'closed', closed_reason = ${reason ?? null}, closed_at = now() where id = ${id}`;
-    else await q`update sites set status = 'open', closed_reason = null, closed_at = null, closed_by = null where id = ${id}`;
+    await withTx(async (tx) => {
+      const people = (await tx<{ person_id: string }[]>`select distinct person_id from person_sites where site_id = ${id}`).map((r) => r.person_id);
+      await withStarts(tx, people, async () => {
+        if (status === "closed") await tx`update sites set status = 'closed', closed_reason = ${reason ?? null}, closed_at = now() where id = ${id}`;
+        else await tx`update sites set status = 'open', closed_reason = null, closed_at = null, closed_by = null where id = ${id}`;
+      });
+    });
   },
 
   async people() { return selectPeople(null); },
@@ -333,8 +355,10 @@ export const sqlStore: Store = {
     if ("pinLockedUntil" in patch) cols.pin_locked_until = patch.pinLockedUntil ? new Date(patch.pinLockedUntil) : null;
     const keys = Object.keys(cols);
     if (!keys.length) return;
-    const q = sql();
-    await q`update people set ${q(cols as Record<string, postgres.ParameterOrJSON<never>>, ...keys)} where id = ${id}`;
+    const set = (q: postgres.Sql | postgres.ReservedSql) => q`update people set ${q(cols as Record<string, postgres.ParameterOrJSON<never>>, ...keys)} where id = ${id}`;
+    // Back from leaving or a freeze: training starts again in their sections.
+    if ("status" in patch) await withTx((tx) => withStarts(tx, [id], async () => { await set(tx); }));
+    else await set(sql());
   },
 
   async createPerson({ staffCode, name, pinHash, pinMustChange, access }) {
@@ -342,22 +366,22 @@ export const sqlStore: Store = {
       const [p] = await tx<{ id: string }[]>`
         insert into people (staff_code, display_name, pin_hash, pin_must_change)
         values (${staffCode}, ${name}, ${pinHash}, ${pinMustChange}) returning id`;
-      for (const a of access) {
-        await tx`insert into person_sites (person_id, site_id, role, sections) values (${p.id}, ${a.siteId}, ${a.role}, ${a.sections})`;
-      }
-      await recordStarts(tx, p.id, access);
+      await withStarts(tx, [p.id], async () => {
+        for (const a of access) {
+          await tx`insert into person_sites (person_id, site_id, role, sections) values (${p.id}, ${a.siteId}, ${a.role}, ${a.sections})`;
+        }
+      });
       return p.id;
     });
   },
   async setAccess(personId, access) {
     if (!isUuid(personId)) return;
-    await withTx(async (tx) => {
+    await withTx((tx) => withStarts(tx, [personId], async () => {
       await tx`delete from person_sites where person_id = ${personId}`;
       for (const a of access) {
         await tx`insert into person_sites (person_id, site_id, role, sections) values (${personId}, ${a.siteId}, ${a.role}, ${a.sections})`;
       }
-      await recordStarts(tx, personId, access);
-    });
+    }));
   },
 
   async createSession(personId, siteId, ttlMs, deviceId, scope = "full") {
@@ -1224,14 +1248,14 @@ export const sqlStore: Store = {
   async trainingSkills() {
     const q = sql();
     return (await q<SkillRow[]>`
-      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, rev, retired_at
+      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, rules_changed_at, rev, retired_at
       from training_skills order by case section when 'FOH' then 1 when 'BOH' then 2 else 3 end, position, title`).map(toSkill);
   },
   async trainingSkill(id) {
     if (!isUuid(id)) return undefined;
     const q = sql();
     const [r] = await q<SkillRow[]>`
-      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, rev, retired_at
+      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, rules_changed_at, rev, retired_at
       from training_skills where id = ${id}`;
     return r ? toSkill(r) : undefined;
   },
@@ -1250,14 +1274,18 @@ export const sqlStore: Store = {
     if (!isUuid(id)) return undefined;
     return withTx(async (tx) => {
       await lockSkillOrder(tx);
-      // In SET, "section" and "position" are the values before the update: a new pathway puts it last there.
+      // In SET, every column on the right is the value before the update: a new pathway puts it last there, and a change
+      // to its rules (pathway, induction, hands-on, links, refresher) is dated.
       const [r] = await tx<{ rev: number }[]>`
         update training_skills set grp = ${s.group}, title = ${s.title}, about = ${s.about}, hands_on = ${s.handsOn}, induction = ${s.induction},
           links = ${s.links}::uuid[], video_url = ${s.videoUrl ?? null}, refresher_months = ${s.refresherMonths ?? null}, pass_mark = ${s.passMark},
           position = case when section = ${s.section} then position
             else (select coalesce(max(o.position), 0) + 1 from training_skills o where o.section = ${s.section}) end,
+          rules_changed_at = case when section <> ${s.section} or induction <> ${s.induction} or hands_on <> ${s.handsOn}
+              or refresher_months is distinct from ${s.refresherMonths ?? null}::integer
+              or not (links @> ${s.links}::uuid[] and links <@ ${s.links}::uuid[]) then now() else rules_changed_at end,
           section = ${s.section}, updated_at = now(), rev = rev + 1
-        where id = ${id} and rev = ${rev} returning rev`;
+        where id = ${id} and rev = ${rev} and retired_at is null returning rev`;
       return r?.rev;
     });
   },
@@ -1280,13 +1308,14 @@ export const sqlStore: Store = {
   async retireTrainingSkill(id, by) {
     if (!isUuid(id)) return false;
     const q = sql();
-    return (await q`update training_skills set retired_at = now(), retired_by = ${by} where id = ${id} and retired_at is null`).count === 1;
+    return (await q`update training_skills set retired_at = now(), retired_by = ${by}, rev = rev + 1 where id = ${id} and retired_at is null`).count === 1;
   },
   async reinstateTrainingSkill(id) {
     if (!isUuid(id)) return false;
     return withTx(async (tx) => {
       await lockSkillOrder(tx);
-      const r = await tx`update training_skills k set retired_at = null, retired_by = null,
+      // Back in everyone's training: anyone it puts behind gets at least two weeks (rules_changed_at).
+      const r = await tx`update training_skills k set retired_at = null, retired_by = null, rules_changed_at = now(), rev = rev + 1,
           position = (select coalesce(max(o.position), 0) + 1 from training_skills o where o.section = k.section and o.retired_at is null)
         where k.id = ${id} and k.retired_at is not null`;
       return r.count === 1;
@@ -1347,8 +1376,10 @@ export const sqlStore: Store = {
     const q = sql();
     const ids = personIds?.filter(isUuid);
     if (ids && !ids.length) return [];
+    // The latest start in each section counts.
     const rows = await q<{ person_id: string; section: Area; started_on: string }[]>`
-      select person_id, section, started_on::text as started_on from training_starts ${ids ? q`where person_id = any(${ids}::uuid[])` : q``}`;
+      select distinct on (person_id, section) person_id, section, started_on::text as started_on from training_starts
+      ${ids ? q`where person_id = any(${ids}::uuid[])` : q``} order by person_id, section, started_on desc`;
     return rows.map((r) => ({ personId: r.person_id, section: r.section, startedOn: r.started_on }));
   },
   async trainingEvents(f) {

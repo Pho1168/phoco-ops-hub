@@ -40,7 +40,7 @@ export default async function Skills(props: { searchParams: Promise<{ section?: 
           {PATHWAYS.map((s) => <Link key={s} href={`/manage/training/skills?section=${s}`} aria-current={s === section ? "page" : undefined}>{PATHWAY_TEXT[s]}</Link>)}
         </nav>
 
-        <PathwayForm key={`${section}-${p.inductionDays}-${p.allDays}`} section={section} inductionDays={p.inductionDays} allDays={p.allDays} />
+        <PathwayForm key={section} section={section} inductionDays={p.inductionDays} allDays={p.allDays} />
         {toApprove > 0 && <div className="alert" role="status">{toApprove} quiz{toApprove === 1 ? " has" : "zes have"} drafted questions to check and approve: they&apos;re marked below.</div>}
 
         <section className="stack" aria-label={`${PATHWAY_TEXT[section]} skills`} style={{ gap: 8 }}>

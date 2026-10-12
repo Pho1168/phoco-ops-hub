@@ -19,11 +19,13 @@ create table if not exists training_skills (
   created_by       uuid not null references people(id),
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
+  rules_changed_at timestamptz,                            -- its pathway, induction, hands-on, links or refresher changed (or it came back)
   rev              integer not null default 1 check (rev > 0),
   retired_at       timestamptz,
   retired_by       uuid references people(id),
   check ((retired_at is null) = (retired_by is null))
 );
+alter table training_skills add column if not exists rules_changed_at timestamptz;
 create index if not exists training_skills_order on training_skills (section, position);
 alter table training_skills enable row level security;
 
@@ -87,23 +89,29 @@ create table if not exists training_pathways (
 insert into training_pathways (section) values ('FOH'), ('BOH'), ('PROD') on conflict (section) do nothing;
 alter table training_pathways enable row level security;
 
--- When someone started in a section: their pathway's deadlines run from then. Added when they're given the section;
--- never changed.
+-- When someone started training in a section: their pathway's deadlines run from the latest start. A new row each time
+-- they start (given the section, back from leaving or a freeze, or their site reopened); never changed.
 create table if not exists training_starts (
   person_id  uuid not null references people(id),
   section    text not null check (section in ('FOH', 'BOH', 'PROD')),
   started_on date not null,
-  primary key (person_id, section)
+  primary key (person_id, section, started_on)
 );
 create or replace trigger training_starts_append_only before update or delete on training_starts
   for each row execute function refuse_change();
 alter table training_starts enable row level security;
--- Everyone working now starts today, the day training goes live.
+-- Everyone training now starts today, the day training goes live: active staff and managers at open sites, not owners
+-- or operations managers (the rule is trainingSections in src/lib/domain/training.ts).
 insert into training_starts (person_id, section, started_on)
 select distinct ps.person_id, s.section, (now() at time zone 'Europe/London')::date
-from person_sites ps cross join lateral unnest(ps.sections) as s(section)
+from person_sites ps
+join people p on p.id = ps.person_id and p.status = 'active'
+join sites st on st.id = ps.site_id and st.status = 'open'
+cross join lateral unnest(ps.sections) as s(section)
 where ps.role in ('staff', 'manager') and s.section in ('FOH', 'BOH', 'PROD')
-on conflict (person_id, section) do nothing;
+  and not exists (select 1 from person_sites x where x.person_id = ps.person_id and x.role in ('owner', 'ops'))
+  and not exists (select 1 from training_starts t where t.person_id = ps.person_id and t.section = s.section) -- safe to run again
+on conflict do nothing;
 
 -- What people did. A quiz keeps the questions as asked and the answers given (detail).
 create table if not exists training_events (

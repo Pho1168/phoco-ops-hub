@@ -21,8 +21,11 @@ export function ConfirmButton({ personId, skillId, name, skill }: { personId: st
   );
 }
 
-/** A manager takes a skill back (done or ready to be checked), saying why: it has to be done again. */
-export function TakeBackButton({ personId, skillId, name, skill }: { personId: string; skillId: string; name: string; skill: string }) {
+/**
+ * A manager takes a skill back (done or ready to be checked), saying why: it has to be done again. `wasDone`: it had
+ * been done (it goes back on their list for two weeks); otherwise only their readiness goes.
+ */
+export function TakeBackButton({ personId, skillId, name, skill, wasDone }: { personId: string; skillId: string; name: string; skill: string; wasDone: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [asking, setAsking] = useState(false);
@@ -42,7 +45,9 @@ export function TakeBackButton({ personId, skillId, name, skill }: { personId: s
             });
           }}>
             <h2 className="h-sec">Ask {name} to do it again?</h2>
-            <p style={{ margin: 0 }}>{skill} goes back on their list, due within two weeks. What they did before stays on their record.</p>
+            <p style={{ margin: 0 }}>{wasDone
+              ? `${skill} goes back on their list, due within two weeks. What they did before stays on their record.`
+              : `${skill} goes back to in training: they pass the quiz again (or say they're ready) before you can confirm it. They have at least two weeks.`}</p>
             <label className="stack" style={{ gap: 6 }}><span className="muted">Why (they&apos;ll see this)</span>
               <textarea id="take-back-note" autoFocus required minLength={3} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)}
                 placeholder="e.g. Portions were over spec: practise with the scales" /></label>

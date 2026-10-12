@@ -5,12 +5,13 @@ import type { Area } from "@/lib/domain/types";
 
 const TONE: Record<Progress["state"], string> = { done: "done", ready: "late", in_training: "", not_started: "", refresher: "warn" };
 
-/** Where someone stands on a skill, as a chip (and "Overdue" beside it when it is). */
+/** Where someone stands on a skill, as a chip (and "Overdue", or a refresher waiting for its check, beside it). */
 export function StateChips({ p }: { p: Progress }) {
   const text = p.state === "refresher" && p.why === "expired" ? "Refresher due" : STATE_TEXT[p.state];
   return (
     <span className="chips">
       <span className={`chip ${TONE[p.state]}`}>{text}</span>
+      {p.state === "done" && p.readyAt && <span className="chip late">{STATE_TEXT.ready}</span>}
       {p.overdue && <span className="chip bad">Overdue</span>}
     </span>
   );

@@ -30,9 +30,14 @@ export default async function EditSkill(props: { params: Promise<{ id: string }>
           <Link className="btn ghost small" href={`/library/training/${skill.id}`}>See it as staff do</Link>
           <RetireSkill skillId={skill.id} retired={!!skill.retiredAt} />
         </div>
-        {skill.retiredAt && <div className="alert bad" role="status">Retired: it isn&apos;t part of anyone&apos;s training. Bring it back to use it again.</div>}
-        <SkillForm skill={skill} section={skill.section} groups={groupsBySection(skills)} options={options} />
-        {!skill.retiredAt && <QuestionsEditor skillId={skill.id} questions={questions.map((q) => ({ id: q.id, text: q.text, options: q.options, answer: q.answer, approved: q.approved }))} />}
+        {skill.retiredAt ? (
+          <div className="alert bad" role="status">Retired: it isn&apos;t part of anyone&apos;s training. Bring it back to change it or use it again.</div>
+        ) : (
+          <>
+            <SkillForm skill={skill} section={skill.section} groups={groupsBySection(skills)} options={options} />
+            <QuestionsEditor skillId={skill.id} questions={questions.map((q) => ({ id: q.id, text: q.text, options: q.options, answer: q.answer, approved: q.approved }))} />
+          </>
+        )}
       </main>
       <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />
     </>

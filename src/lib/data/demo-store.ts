@@ -19,7 +19,7 @@ import { ALLERGEN_KEYS } from "@/lib/domain/recipes";
 import { shiftEnd, shiftStart } from "@/lib/domain/reminders";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
-import { bySkillOrder, type Pathway, type Question, type Skill, type TrainingEvent, type TrainingStart } from "@/lib/domain/training";
+import { bySkillOrder, trainingSections, type Pathway, type Question, type Skill, type TrainingEvent, type TrainingStart } from "@/lib/domain/training";
 
 /** Demo-only people. Real staff come from the database, never from the code. */
 export const DEMO_PINS = { owner: "4826", staff: "1357" } as const;
@@ -337,11 +337,21 @@ function libDocView(d: State["libDocs"][number], light = false): LibraryDoc {
     published: published && libVersionView(published, light), open: open && libVersionView(open, light) };
 }
 
-/** A section someone works in as staff or a manager for the first time starts its training today. */
-function recordStarts(personId: string, access: Person["access"]) {
+/**
+ * Makes a change to people, their access or a site, then starts training today in each section someone trains in now
+ * that they didn't before (the rule is trainingSections): given a new section, back from leaving or a freeze, or their
+ * site reopened.
+ */
+function withStarts(personIds: string[], change: () => void) {
+  const now = (id: string) => { const p = S().people.find((x) => x.id === id); return p ? trainingSections(p, S().sites) : []; };
+  const before = new Map(personIds.map((id) => [id, now(id)]));
+  change();
   const today = londonDate(Date.now());
-  for (const section of new Set(access.filter((a) => a.role === "staff" || a.role === "manager").flatMap((a) => a.sections))) {
-    if (!S().trainingStarts.some((s) => s.personId === personId && s.section === section)) S().trainingStarts.push({ personId, section, startedOn: today });
+  for (const id of personIds) {
+    for (const section of now(id)) {
+      if (before.get(id)!.includes(section) || S().trainingStarts.some((s) => s.personId === id && s.section === section && s.startedOn === today)) continue;
+      S().trainingStarts.push({ personId: id, section, startedOn: today });
+    }
   }
 }
 const questionView = (q: State["trainingQuestions"][number]): Question => ({
@@ -351,7 +361,7 @@ const questionView = (q: State["trainingQuestions"][number]): Question => ({
 const skillView = (k: State["trainingSkills"][number]): Skill => ({
   id: k.id, section: k.section, group: k.group, position: k.position, title: k.title, about: k.about, handsOn: k.handsOn, induction: k.induction,
   links: [...k.links], videoUrl: k.videoUrl, refresherMonths: k.refresherMonths, passMark: k.passMark, createdAt: k.createdAt, updatedAt: k.updatedAt,
-  rev: k.rev, retiredAt: k.retiredAt,
+  rulesChangedAt: k.rulesChangedAt, rev: k.rev, retiredAt: k.retiredAt,
 });
 const lastPosition = (section: Skill["section"], liveOnly = false) =>
   Math.max(0, ...S().trainingSkills.filter((k) => k.section === section && (!liveOnly || !k.retiredAt)).map((k) => k.position));
@@ -366,21 +376,24 @@ export const demoStore: Store = {
   async site(id) { return S().sites.find((s) => s.id === id); },
   async setSiteStatus(id, status, reason) {
     const s = S().sites.find((x) => x.id === id);
-    if (s) { s.status = status; s.closedReason = status === "closed" ? reason : undefined; }
+    if (!s) return;
+    withStarts(S().people.filter((p) => p.access.some((a) => a.siteId === id)).map((p) => p.id), () => {
+      s.status = status; s.closedReason = status === "closed" ? reason : undefined;
+    });
   },
 
   async people() { return S().people; },
   async person(id) { return S().people.find((p) => p.id === id); },
-  async updatePerson(id, patch) { const p = S().people.find((x) => x.id === id); if (p) Object.assign(p, patch); },
+  async updatePerson(id, patch) { const p = S().people.find((x) => x.id === id); if (p) withStarts([id], () => Object.assign(p, patch)); },
   async createPerson({ staffCode, name, pinHash, pinMustChange, access }) {
     const id = randomUUID();
-    S().people.push({ id, staffCode, name, status: "active", pinHash, pinMustChange, pinFailed: 0, access });
-    recordStarts(id, access);
+    S().people.push({ id, staffCode, name, status: "active", pinHash, pinMustChange, pinFailed: 0, access: [] });
+    withStarts([id], () => { S().people.find((x) => x.id === id)!.access = access; });
     return id;
   },
   async setAccess(personId, access) {
     const p = S().people.find((x) => x.id === personId);
-    if (p) { p.access = access; recordStarts(personId, access); }
+    if (p) withStarts([personId], () => { p.access = access; });
   },
 
   async createSession(personId, siteId, ttlMs, deviceId, scope = "full") {
@@ -850,10 +863,13 @@ export const demoStore: Store = {
   },
   async saveTrainingSkill(id, rev, s) {
     const k = S().trainingSkills.find((x) => x.id === id);
-    if (!k || k.rev !== rev) return undefined;
+    if (!k || k.rev !== rev || k.retiredAt) return undefined;
     const position = k.section === s.section ? k.position : lastPosition(s.section) + 1;
+    const sameLinks = new Set(k.links).size === new Set(s.links).size && s.links.every((l) => k.links.includes(l));
+    const rules = k.section !== s.section || k.induction !== s.induction || k.handsOn !== s.handsOn || k.refresherMonths !== s.refresherMonths || !sameLinks;
     Object.assign(k, { group: s.group, title: s.title, about: s.about, handsOn: s.handsOn, induction: s.induction, links: [...s.links], videoUrl: s.videoUrl,
-      refresherMonths: s.refresherMonths, passMark: s.passMark, section: s.section, position, updatedAt: Date.now(), rev: k.rev + 1 });
+      refresherMonths: s.refresherMonths, passMark: s.passMark, section: s.section, position, updatedAt: Date.now(), rev: k.rev + 1,
+      rulesChangedAt: rules ? Date.now() : k.rulesChangedAt });
     return k.rev;
   },
   async moveTrainingSkill(id, dir) {
@@ -869,13 +885,13 @@ export const demoStore: Store = {
   async retireTrainingSkill(id, by) {
     const k = S().trainingSkills.find((x) => x.id === id && !x.retiredAt);
     if (!k) return false;
-    Object.assign(k, { retiredAt: Date.now(), retiredBy: by });
+    Object.assign(k, { retiredAt: Date.now(), retiredBy: by, rev: k.rev + 1 });
     return true;
   },
   async reinstateTrainingSkill(id) {
     const k = S().trainingSkills.find((x) => x.id === id && x.retiredAt);
     if (!k) return false;
-    Object.assign(k, { position: lastPosition(k.section, true) + 1, retiredAt: undefined, retiredBy: undefined });
+    Object.assign(k, { position: lastPosition(k.section, true) + 1, retiredAt: undefined, retiredBy: undefined, rulesChangedAt: Date.now(), rev: k.rev + 1 });
     return true;
   },
   async trainingQuestions(skillIds) {
@@ -915,7 +931,16 @@ export const demoStore: Store = {
     const x = S().trainingPathways.find((y) => y.section === p.section);
     if (x) Object.assign(x, p); else S().trainingPathways.push({ ...p });
   },
-  async trainingStarts(personIds) { return S().trainingStarts.filter((s) => !personIds || personIds.includes(s.personId)).map((s) => ({ ...s })); },
+  async trainingStarts(personIds) {
+    // The latest start in each section counts.
+    const latest = new Map<string, TrainingStart>();
+    for (const s of S().trainingStarts) {
+      if (personIds && !personIds.includes(s.personId)) continue;
+      const k = `${s.personId}|${s.section}`, was = latest.get(k);
+      if (!was || s.startedOn > was.startedOn) latest.set(k, { ...s });
+    }
+    return Array.from(latest.values());
+  },
   async trainingEvents(f) {
     return S().trainingEvents.filter((e) => (!f.personIds || f.personIds.includes(e.personId)) && (!f.skillIds || f.skillIds.includes(e.skillId)))
       .sort((a, b) => a.at - b.at)

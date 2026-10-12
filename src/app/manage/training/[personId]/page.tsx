@@ -62,13 +62,13 @@ export default async function PersonTraining(props: { params: Promise<{ personId
               if (!managesTraining(ctx.person, target, r.skill.section, sites).ok) return null;
               const confirm = canConfirmNow(r.skill, r.progress, r.hasQuiz).ok;
               const back = canTakeBackNow(r.progress).ok;
-              const waitQuiz = r.skill.handsOn && r.hasQuiz && r.progress.state !== "done" && !r.progress.readyAt;
+              const waitQuiz = r.skill.handsOn && r.hasQuiz && !r.progress.readyAt && (r.progress.state !== "done" || !!r.progress.renewal);
               if (!confirm && !back && !waitQuiz) return null;
               return (
                 <div className="row wrap" style={{ gap: 8, paddingLeft: 16 }}>
                   {confirm && <ConfirmButton personId={target.id} skillId={r.skill.id} name={target.name} skill={r.skill.title} />}
-                  {back && <TakeBackButton personId={target.id} skillId={r.skill.id} name={target.name} skill={r.skill.title} />}
-                  {waitQuiz && <span className="muted" style={{ fontSize: 13 }}>Confirm it once they&apos;ve passed the quiz.</span>}
+                  {back && <TakeBackButton personId={target.id} skillId={r.skill.id} name={target.name} skill={r.skill.title} wasDone={!!r.progress.doneAt} />}
+                  {waitQuiz && <span className="muted" style={{ fontSize: 13 }}>Confirm it once they&apos;ve passed the quiz{r.progress.state === "done" ? " again" : ""}.</span>}
                 </div>
               );
             }} />

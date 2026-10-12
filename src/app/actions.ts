@@ -29,8 +29,8 @@ import { canCoverNow, coverCandidates } from "@/lib/cover-service";
 import { canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw as canTakeBack, changeFor, CHANGE_TEXT, cleanSop, codePrefix, docReach,
   dropPhotos, isKind, photoIds, readsAny, readyForReview, validReviewBy, type LibraryBody, type LibraryKind, type SopBody } from "@/lib/domain/library";
 import { alertedAt, allergenAlert, cleanRecipe, recipeReady, type DishBody, type PrepBody } from "@/lib/domain/recipes";
-import { canConfirmNow, canEditTraining, canTakeBackNow, cleanPathway, cleanQuestion, cleanSkill, gradeQuiz, managesTraining, passport, PATHWAY_TEXT, quizOf,
-  quizVersion, TRAINING_LIMITS, type PassportRow } from "@/lib/domain/training";
+import { canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, cleanPathway, cleanQuestion, cleanSkill, gradeQuiz, managesTraining, passport, PATHWAY_TEXT,
+  quizOf, quizVersion, TRAINING_LIMITS, type PassportRow } from "@/lib/domain/training";
 import { trainingData } from "@/lib/training-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
@@ -1638,12 +1638,16 @@ async function passportRow(person: Person, skillId: string): Promise<{ ok: true;
   return { ok: true, row, questions: d.questions };
 }
 
+/** After a quiz: the skill is done, waiting for a manager's check, or it was already done and this was practice. */
+export type QuizNext = "done" | "ready" | "practice" | "again";
+export interface QuizOutcome { score: number; passed: boolean; total: number; correct: number; wrong: string[]; passMark: number; next: QuizNext }
+
 /**
  * Marks a quiz. `version` is the version of the quiz they were shown (if it changed meanwhile, they start again); the
  * answers are option indexes as stored. The attempt is kept with what was asked and answered. Passing completes a
  * knowledge skill, or makes a hands-on one ready for a manager to confirm.
  */
-export async function submitQuiz(skillId: string, input: unknown): Promise<ActionResult & { restart?: boolean; result?: { score: number; passed: boolean; total: number; correct: number; wrong: string[]; passMark: number; handsOn: boolean } }> {
+export async function submitQuiz(skillId: string, input: unknown): Promise<ActionResult & { restart?: boolean; result?: QuizOutcome }> {
   const who = await signedIn();
   if (!who.ok) return who;
   const x = QuizZ.safeParse(input);
@@ -1660,7 +1664,11 @@ export async function submitQuiz(skillId: string, input: unknown): Promise<Actio
     detail: { passMark: skill.passMark, asked: qs.map((q) => ({ id: q.id, text: q.text, options: q.options, answer: q.answer, given: x.data.answers[q.id] })) },
   });
   revalidateTraining(`/library/training/${skill.id}`);
-  return { ok: true, result: { ...g.value, passMark: skill.passMark, handsOn: skill.handsOn } };
+  // Where that leaves them, for the message: done, waiting for a manager, or (already done) practice.
+  const after = await passportRow(who.ctx.person, skill.id);
+  const p = after.ok ? after.row.progress : mine.row.progress;
+  const next: QuizNext = p.readyAt ? "ready" : p.state === "done" ? (skill.handsOn ? "practice" : "done") : "again";
+  return { ok: true, result: { ...g.value, passMark: skill.passMark, next } };
 }
 
 /** With no quiz: a knowledge skill is marked done; a hands-on one is marked ready for a manager to check. */
@@ -1669,10 +1677,9 @@ export async function markSkillDone(skillId: string): Promise<ActionResult> {
   if (!who.ok) return who;
   const mine = await passportRow(who.ctx.person, skillId);
   if (!mine.ok) return mine;
-  const { skill, progress: p, hasQuiz } = mine.row;
-  if (hasQuiz) return { ok: false, error: "Pass the quiz to finish this one" };
-  if (p.state === "done") return { ok: false, error: "It's already done" };
-  if (p.state === "ready") return { ok: false, error: "It's waiting for a manager to check you" };
+  const { skill, progress: p, hasQuiz, drafted } = mine.row;
+  const can = canMarkDone(skill, p, { asked: hasQuiz, drafted });
+  if (!can.ok) return can;
   await store().addTrainingEvent({ personId: who.ctx.person.id, skillId: skill.id, kind: "done", byId: who.ctx.person.id });
   revalidateTraining(`/library/training/${skill.id}`);
   return { ok: true };
@@ -1756,6 +1763,9 @@ export async function saveSkill(skillId: string, rev: number, input: unknown): P
   const c = await skillFrom(input);
   if (!c.ok) return c;
   const db = store();
+  const was = await db.trainingSkill(id.data);
+  if (!was) return { ok: false, error: "That skill isn't there any more" };
+  if (was.retiredAt) return { ok: false, error: "This skill is retired: bring it back before changing it" };
   const next = await db.saveTrainingSkill(id.data, rev, c.value);
   if (!next) return { ok: false, error: "Someone else changed this skill meanwhile. Reload the page to see their changes" };
   await db.audit({ actorId: who.ctx.person.id, action: "training.skill", detail: `Changed the skill ${c.value.title}` });
@@ -1817,6 +1827,7 @@ export async function retireQuestion(skillId: string, questionId: string): Promi
   const db = store();
   const skill = await db.trainingSkill(sid.data);
   if (!skill || !(await db.trainingQuestions([skill.id])).some((q) => q.id === qid.data)) return { ok: false, error: "That question isn't there any more" };
+  if (skill.retiredAt) return { ok: false, error: "This skill is retired: bring it back before changing its quiz" };
   await db.retireTrainingQuestion(qid.data, who.ctx.person.id);
   await db.audit({ actorId: who.ctx.person.id, action: "training.question", detail: `Took a question off the quiz for ${skill.title}` });
   revalidateTraining("/manage/training/skills", `/manage/training/skills/${skill.id}`);
