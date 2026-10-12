@@ -11,7 +11,8 @@ import { EquipmentForm } from "./EquipmentForm";
 export const dynamic = "force-dynamic";
 
 /** The equipment register for a site: open problems first, then every piece of kit with its service date. */
-export default async function ManageEquipment({ searchParams }: { searchParams: { site?: string } }) {
+export default async function ManageEquipment(props: { searchParams: Promise<{ site?: string }> }) {
+  const searchParams = await props.searchParams;
   const ctx = await requireManager();
   const { sites, site } = await pickSite(ctx.managed, searchParams.site, ctx.site.id);
   const db = store();

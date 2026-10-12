@@ -64,7 +64,7 @@ async function startSession(personId: string, siteId: SiteId, deviceId?: string,
   await db.updatePerson(personId, { pinFailed: 0, pinLockedUntil: undefined });
   const ttl = scope === "shifts" ? SHIFTS_TTL_MS : SESSION_TTL_MS;
   const s = await db.createSession(personId, siteId, ttl, deviceId, scope);
-  cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: ttl / 1000, path: "/" });
+  (await cookies()).set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: ttl / 1000, path: "/" });
 }
 
 /**
@@ -108,20 +108,20 @@ export async function pairDevice(input: string): Promise<ActionResult> {
   const token = newDeviceToken();
   const device = await store().redeemPairing(sha256(code), sha256(token), Date.now());
   if (!device) return { ok: false, error: "Code not recognised, already used or expired. Ask an owner for a new one" };
-  cookies().set(DEVICE_COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: DEVICE_COOKIE_MAX_AGE, path: "/" });
-  cookies().delete(SESSION_COOKIE);
+  (await cookies()).set(DEVICE_COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: DEVICE_COOKIE_MAX_AGE, path: "/" });
+  (await cookies()).delete(SESSION_COOKIE);
   await store().audit({ siteId: device.siteId, action: "device.paired", detail: `${device.label} set up` });
   return { ok: true };
 }
 
 export async function signOut() {
-  const sid = cookies().get(SESSION_COOKIE)?.value;
+  const sid = (await cookies()).get(SESSION_COOKIE)?.value;
   if (sid) {
     const db = store();
     const s = await db.session(sid);
     if (s) await db.revokeSessions({ personId: s.personId, siteId: s.siteId }, "signed out");
   }
-  cookies().delete(SESSION_COOKIE);
+  (await cookies()).delete(SESSION_COOKIE);
   redirect("/login");
 }
 
@@ -177,7 +177,7 @@ export async function signOffRun(listId: string, pin: string): Promise<ActionRes
     await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "signoff.failed", detail: "Wrong PIN at sign-off" });
     if (isPinLocked(patch, now)) {
       await db.revokeSessions({ personId: ctx.person.id }, "too many wrong PINs at sign-off");
-      cookies().delete(SESSION_COOKIE);
+      (await cookies()).delete(SESSION_COOKIE);
       return { ok: false, error: "Too many wrong PINs. You've been signed out for 15 minutes" };
     }
     return { ok: false, error: "PIN doesn't match" };
@@ -396,7 +396,7 @@ export async function switchSite(siteId: string): Promise<void> {
   await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
   const prev = await db.session(ctx.sessionId);
   const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS, prev?.deviceId);
-  cookies().set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
+  (await cookies()).set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
   redirect("/today");
 }
 
@@ -496,7 +496,7 @@ export async function changeMyPin(currentPin: string, nextPin: string, confirmPi
     await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "pin_change.failed", detail: "Wrong current PIN" });
     if (isPinLocked(patch, now)) {
       await db.revokeSessions({ personId: ctx.person.id }, "too many wrong PINs");
-      cookies().delete(SESSION_COOKIE);
+      (await cookies()).delete(SESSION_COOKIE);
       return { ok: false, error: "Too many wrong PINs. You've been signed out for 15 minutes" };
     }
     return { ok: false, error: ctx.person.pinMustChange ? "That isn't the temporary PIN you were given" : "Your current PIN doesn't match" };
@@ -550,7 +550,7 @@ export async function connectRotaSheet(siteId: string): Promise<ActionResult & {
   if (!site) return { ok: false, error: "Site not found" };
   const token = newDeviceToken();
   await db.setRotaToken(site.id, sha256(token), ctx.person.id);
-  const h = headers();
+  const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "phoco-ops-hub.vercel.app";
   const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "rota.connect", detail: `Rota sheet connection created for ${site.name} (any older connection stops working)` });

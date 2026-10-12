@@ -20,7 +20,8 @@ const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "shor
  * The task centre: everything open at the sites a manager runs, in one list by priority. Manual tasks are added
  * and ticked here; alerts can be resolved here; everything else links to where it's dealt with.
  */
-export default async function TaskCentre({ searchParams }: { searchParams: { site?: string } }) {
+export default async function TaskCentre(props: { searchParams: Promise<{ site?: string }> }) {
+  const searchParams = await props.searchParams;
   const ctx = await requireManager();
   const db = store();
   const now = Date.now();

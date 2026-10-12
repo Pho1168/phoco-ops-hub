@@ -9,7 +9,8 @@ import { itemStatus, RANK } from "./status";
 export const dynamic = "force-dynamic";
 
 /** The site's equipment and how each piece is. Tap one to see how to use it or report a problem. Tablet or own phone. */
-export default async function EquipmentList({ searchParams }: { searchParams: { site?: string } }) {
+export default async function EquipmentList(props: { searchParams: Promise<{ site?: string }> }) {
+  const searchParams = await props.searchParams;
   const ctx = await current();
   if (!ctx) redirect("/login");
   if (ctx.person.pinMustChange) redirect("/pin");

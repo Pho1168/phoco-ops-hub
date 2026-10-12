@@ -13,7 +13,7 @@ export const newDeviceToken = () => randomBytes(32).toString("base64url");
 /** The registered device this browser belongs to, if any (active or removed). Demo mode has no device check. */
 export async function currentDevice(): Promise<Device | null> {
   if (DEMO_MODE) return null;
-  const token = cookies().get(DEVICE_COOKIE)?.value;
+  const token = (await cookies()).get(DEVICE_COOKIE)?.value;
   if (!token || token.length > 100) return null;
   return (await store().deviceByToken(sha256(token))) ?? null;
 }

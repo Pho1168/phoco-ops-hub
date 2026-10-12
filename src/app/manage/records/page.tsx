@@ -19,7 +19,10 @@ const STATUS = { on_time: ["On time", "done"], late: ["Signed late", "warn"], no
  * Inspection mode: the food-safety records an Environmental Health Officer asks for, for one site and date range.
  * Owners and managers. Printable, and the temperature log downloads as CSV.
  */
-export default async function Records({ searchParams }: { searchParams: { site?: string; from?: string; to?: string } }) {
+export default async function Records(
+  props: { searchParams: Promise<{ site?: string; from?: string; to?: string }> }
+) {
+  const searchParams = await props.searchParams;
   const ctx = await requireManager();
   const { sites, site } = await pickSite(ctx.managed, searchParams.site, ctx.site.id);
   const today = londonDate(Date.now());

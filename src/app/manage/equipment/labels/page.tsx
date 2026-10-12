@@ -8,11 +8,12 @@ import { PrintButton } from "@/app/manage/records/PrintButton";
 export const dynamic = "force-dynamic";
 
 /** Printable QR labels: one per piece of kit. Scanning opens its page to see how to use it or report a problem. */
-export default async function Labels({ searchParams }: { searchParams: { site?: string } }) {
+export default async function Labels(props: { searchParams: Promise<{ site?: string }> }) {
+  const searchParams = await props.searchParams;
   const ctx = await requireManager();
   const { site } = await pickSite(ctx.managed, searchParams.site, ctx.site.id);
   const items = await store().equipment(site.id);
-  const h = headers();
+  const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "phoco-ops-hub.vercel.app";
   const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const labels = await Promise.all(items.map(async (eq) => ({

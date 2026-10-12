@@ -17,7 +17,8 @@ const ROLE: Record<Role, string> = { manager: "Manager", staff: "Staff", owner: 
  * Who holds which certificate at a site, what's running out, and whether the site has a first aider, a Level 3
  * supervisor and a fire marshal. Owners and managers; right to work shows for owners only.
  */
-export default async function Certificates({ searchParams }: { searchParams: { site?: string } }) {
+export default async function Certificates(props: { searchParams: Promise<{ site?: string }> }) {
+  const searchParams = await props.searchParams;
   const ctx = await requireManager();
   const { sites, site } = await pickSite(ctx.managed, searchParams.site, ctx.site.id);
   const db = store();
