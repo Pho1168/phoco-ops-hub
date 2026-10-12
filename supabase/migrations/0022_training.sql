@@ -81,11 +81,15 @@ end $$;
 create or replace trigger training_questions_guard before update or delete on training_questions
   for each row execute function training_question_guard();
 
--- Each pathway's deadlines, in days from the day someone started in that section.
+-- Each pathway's deadlines, in days from the day someone started in that section. A change is dated, with the days it
+-- had before, so shortening them is fair to people already training.
 create table if not exists training_pathways (
   section        text primary key check (section in ('FOH', 'BOH', 'PROD')),
   induction_days integer not null default 7 check (induction_days between 1 and 60),
   all_days       integer not null default 42 check (all_days between 1 and 365),
+  changed_at     timestamptz,
+  induction_was  integer,
+  all_was        integer,
   updated_by     uuid references people(id),
   updated_at     timestamptz not null default now(),
   check (induction_days <= all_days)

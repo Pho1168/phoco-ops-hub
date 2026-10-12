@@ -209,6 +209,23 @@ describe("training: the passport", () => {
     expect(canConfirmNow(h, p, true)).toMatchObject({ ok: false, error: "They need to pass the quiz first" });
     // Nobody who hadn't said they were ready is affected.
     expect(progress(h, { ...base, startedOn: "2026-08-01", hasQuiz: true, quizSince: T("2026-10-11"), events: [] })).toMatchObject({ dueOn: "2026-09-12", overdue: true });
+    // The same when a refresher had fallen due, or a manager had taken it back, and they'd said they were ready again.
+    const hr = skill("hr", { handsOn: true, refresherMonths: 12 });
+    const quizNow = { ...long, hasQuiz: true, quizSince: T("2026-10-11") };
+    expect(progress(hr, { ...long, events: [ev("confirmed", "2025-10-01", { byId: "chef" }), ev("done", "2026-10-02")] })).toMatchObject({ state: "ready" });
+    expect(progress(hr, { ...quizNow, events: [ev("confirmed", "2025-10-01", { byId: "chef" }), ev("done", "2026-10-02")] }))
+      .toMatchObject({ state: "refresher", why: "quiz", whyOn: "2026-10-11", dueOn: "2026-10-25", overdue: false });
+    expect(progress(h, { ...quizNow, events: [ev("confirmed", "2026-09-01", { byId: "chef" }), ev("reset", "2026-09-20", { byId: "chef", note: "Again" }), ev("done", "2026-09-25")] }))
+      .toMatchObject({ state: "refresher", why: "quiz", dueOn: "2026-10-25", overdue: false });
+  });
+  it("a pathway's deadlines shortened later: the new days from the change, never later than before", () => {
+    const pathway = { inductionDays: 7, allDays: 14, changedAt: T("2026-10-10"), inductionWas: 7, allWas: 90 };
+    const s = skill("s", { addedAt: T("2026-01-01") });
+    expect(progress(s, { ...base, pathway, startedOn: "2026-08-01", events: [] })).toMatchObject({ dueOn: "2026-10-24", overdue: false });
+    expect(progress(s, { ...base, pathway, startedOn: "2026-06-01", events: [] })).toMatchObject({ dueOn: "2026-08-30", overdue: true }); // overdue before too
+    expect(progress(s, { ...base, pathway, startedOn: "2026-10-11", events: [] })).toMatchObject({ dueOn: "2026-10-25" }); // started after: the new days
+    // Lengthened: the new, later date.
+    expect(progress(s, { ...base, pathway: { ...pathway, allDays: 120, allWas: 42 }, startedOn: "2026-08-01", events: [] }).dueOn).toBe("2026-11-29");
   });
 });
 

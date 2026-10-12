@@ -940,7 +940,10 @@ export const demoStore: Store = {
   async trainingPathways() { return S().trainingPathways.map((p) => ({ ...p })); },
   async saveTrainingPathway(p) {
     const x = S().trainingPathways.find((y) => y.section === p.section);
-    if (x) Object.assign(x, p); else S().trainingPathways.push({ ...p });
+    if (!x) { S().trainingPathways.push({ section: p.section, inductionDays: p.inductionDays, allDays: p.allDays }); return; }
+    // As the SQL store: a change is dated, with the days it had before.
+    if (x.inductionDays !== p.inductionDays || x.allDays !== p.allDays) Object.assign(x, { changedAt: Date.now(), inductionWas: x.inductionDays, allWas: x.allDays });
+    Object.assign(x, { inductionDays: p.inductionDays, allDays: p.allDays });
   },
   async trainingStarts(personIds) {
     // The latest start in each section counts.

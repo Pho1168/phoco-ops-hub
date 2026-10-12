@@ -1379,13 +1379,21 @@ export const sqlStore: Store = {
   },
   async trainingPathways() {
     const q = sql();
-    const rows = await q<{ section: Area; induction_days: number; all_days: number }[]>`select section, induction_days, all_days from training_pathways`;
-    return rows.map((r): Pathway => ({ section: r.section, inductionDays: r.induction_days, allDays: r.all_days }));
+    const rows = await q<{ section: Area; induction_days: number; all_days: number; changed_at: Date | null; induction_was: number | null; all_was: number | null }[]>`
+      select section, induction_days, all_days, changed_at, induction_was, all_was from training_pathways`;
+    return rows.map((r): Pathway => ({
+      section: r.section, inductionDays: r.induction_days, allDays: r.all_days, changedAt: ms(r.changed_at), inductionWas: opt(r.induction_was), allWas: opt(r.all_was),
+    }));
   },
   async saveTrainingPathway(p, by) {
     const q = sql();
+    // A change is dated, with the days it had before (training_pathways.* in DO UPDATE are the values before it).
     await q`insert into training_pathways (section, induction_days, all_days, updated_by, updated_at) values (${p.section}, ${p.inductionDays}, ${p.allDays}, ${by}, now())
-      on conflict (section) do update set induction_days = excluded.induction_days, all_days = excluded.all_days, updated_by = excluded.updated_by, updated_at = now()`;
+      on conflict (section) do update set
+        changed_at = case when (training_pathways.induction_days, training_pathways.all_days) <> (excluded.induction_days, excluded.all_days) then now() else training_pathways.changed_at end,
+        induction_was = case when (training_pathways.induction_days, training_pathways.all_days) <> (excluded.induction_days, excluded.all_days) then training_pathways.induction_days else training_pathways.induction_was end,
+        all_was = case when (training_pathways.induction_days, training_pathways.all_days) <> (excluded.induction_days, excluded.all_days) then training_pathways.all_days else training_pathways.all_was end,
+        induction_days = excluded.induction_days, all_days = excluded.all_days, updated_by = excluded.updated_by, updated_at = now()`;
   },
   async trainingStarts(personIds) {
     const q = sql();

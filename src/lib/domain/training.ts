@@ -73,8 +73,11 @@ export interface Question {
   updatedAt: number;
 }
 
-/** A pathway's deadlines, in days from the day someone started in that section. */
-export interface Pathway { section: Area; inductionDays: number; allDays: number }
+/**
+ * A pathway's deadlines, in days from the day someone started in that section. `changedAt`, `inductionWas` and
+ * `allWas`: when they last changed and from what, so shortening them is fair to people already training.
+ */
+export interface Pathway { section: Area; inductionDays: number; allDays: number; changedAt?: number; inductionWas?: number; allWas?: number }
 export const DEFAULT_PATHWAY = { inductionDays: 7, allDays: 42 } as const;
 
 /**
@@ -188,7 +191,7 @@ export interface ProgressInput {
   events: TrainingEvent[];
   /** When they (re)started training in the skill's section. */
   startedOn?: string;
-  pathway: Pick<Pathway, "inductionDays" | "allDays">;
+  pathway: Pick<Pathway, "inductionDays" | "allDays" | "changedAt" | "inductionWas" | "allWas">;
   /** The latest major change to an SOP or recipe it links to. */
   changedAt?: number;
   /** It has a quiz (approved questions) now, asked since this time (its earliest approved question). */
@@ -217,11 +220,16 @@ export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresher
   };
   const finish = (p: Progress): Progress => ({ ...p, overdue: p.state !== "done" && p.state !== "ready" && !!p.dueOn && p.dueOn < x.today });
   const who = (e: TrainingEvent) => ({ doneAt: e.at, doneBy: e.byName, doneKind: e.kind as Progress["doneKind"] });
+  type Due = { dueOn: string; why?: Progress["why"]; whyOn?: string };
+  const later = (a: Due, b?: Due): Due => (b && b.dueOn > a.dueOn ? b : a);
+  const grace = (from: string, why?: Progress["why"]): Due => ({ dueOn: addDays(from, REDO_DAYS), whyOn: from, ...(why ? { why } : {}) });
   // Back after leaving or a site closure (a new start): at least REDO_DAYS from then for anything to do again.
-  const back = (due: { dueOn: string; whyOn: string }) => {
-    const d = x.startedOn ? addDays(x.startedOn, REDO_DAYS) : undefined;
-    return d && d > due.dueOn ? { dueOn: d, whyOn: x.startedOn! } : due;
-  };
+  const back = (why: Progress["why"]) => (x.startedOn ? grace(x.startedOn, why) : undefined);
+  // They'd said they were ready (since `from`) while it had no quiz, and then it got one: the quiz first, with
+  // REDO_DAYS from when it came.
+  const newQuiz = (from: number, ready?: number): Due | undefined =>
+    !ready && skill.handsOn && x.hasQuiz && x.quizSince && evs.some((e) => e.kind === "done" && e.at > from && e.at < x.quizSince!)
+      ? grace(londonDate(x.quizSince), "quiz") : undefined;
 
   if (done) {
     const expires = skill.refresherMonths ? addMonths(londonDate(done.at), skill.refresherMonths) : undefined;
@@ -233,46 +241,44 @@ export function progress(skill: Pick<Skill, "handsOn" | "induction" | "refresher
     if (expires > x.today) return finish(base("done", { ...who(done), dueOn: expires, readyAt, renewal: daysBetween(x.today, expires) <= REFRESHER_SOON_DAYS }));
     // Its refresher has fallen due. If the refresher was changed after they did it: no sooner than under the old one
     // (none: never), or two weeks after the change, whichever comes first.
-    let due = { dueOn: expires, whyOn: expires };
+    let due: Due = { dueOn: expires, whyOn: expires, why: "expired" };
     if (skill.refresherFrom && done.at < skill.refresherFrom) {
-      const from = londonDate(skill.refresherFrom), grace = addDays(from, REDO_DAYS);
+      const g = grace(londonDate(skill.refresherFrom), "expired");
       const was = skill.refresherWas ? addMonths(londonDate(done.at), skill.refresherWas) : undefined;
-      const cap = was && was < grace ? { dueOn: was, whyOn: was } : { dueOn: grace, whyOn: from };
-      if (cap.dueOn > due.dueOn) due = cap;
+      due = later(due, was && was < g.dueOn ? { dueOn: was, whyOn: was, why: "expired" } : g);
     }
-    return finish(base(readyAt ? "ready" : "refresher", { ...who(done), readyAt, ...back(due), why: "expired" }));
+    due = later(later(due, back("expired")), newQuiz(opens, readyAt));
+    return finish(base(readyAt ? "ready" : "refresher", { ...who(done), readyAt, ...due }));
   }
   const readyAt = readyAfter(cutoff);
   if (prior) {
     const why = lastReset >= (x.changedAt ?? 0) ? "reset" : "changed";
-    const from = londonDate(cutoff);
-    return finish(base(readyAt ? "ready" : "refresher", { ...who(prior), readyAt, ...back({ dueOn: addDays(from, REDO_DAYS), whyOn: from }), why }));
+    const due = later(later(grace(londonDate(cutoff), why), back(why)), newQuiz(cutoff, readyAt));
+    return finish(base(readyAt ? "ready" : "refresher", { ...who(prior), readyAt, ...due }));
   }
   // Never done: due a set time after they started in the section or it joined their pathway, whichever is later.
   const added = londonDate(skill.addedAt);
   const start = x.startedOn && x.startedOn > added ? x.startedOn : added;
-  let dueOn = addDays(start, skill.induction ? x.pathway.inductionDays : x.pathway.allDays);
+  const pw = x.pathway;
+  const days = (induction: number, all: number) => (skill.induction ? induction : all);
+  let due: Due = { dueOn: addDays(start, days(pw.inductionDays, pw.allDays)) };
+  // The pathway's deadlines were shortened after they started: the new days from the change, but no later than before.
+  if (pw.changedAt) {
+    const change = addDays(londonDate(pw.changedAt), days(pw.inductionDays, pw.allDays));
+    const before = addDays(start, days(pw.inductionWas ?? pw.inductionDays, pw.allWas ?? pw.allDays));
+    due = later(due, { dueOn: change < before ? change : before });
+  }
   // Made part of induction after they started: the induction days from the change, but no later than before.
   if (skill.induction && skill.inductionFrom) {
-    const change = addDays(londonDate(skill.inductionFrom), x.pathway.inductionDays), before = addDays(start, x.pathway.allDays);
-    const cap = change < before ? change : before;
-    if (cap > dueOn) dueOn = cap;
+    const change = addDays(londonDate(skill.inductionFrom), pw.inductionDays), before = addDays(start, pw.allDays);
+    due = later(due, { dueOn: change < before ? change : before });
   }
-  let why: Progress["why"], whyOn: string | undefined;
   // A manager took back their readiness: at least two weeks from then.
-  if (lastReset) {
-    whyOn = londonDate(lastReset); why = "reset";
-    if (addDays(whyOn, REDO_DAYS) > dueOn) dueOn = addDays(whyOn, REDO_DAYS);
-  }
-  // They'd said they were ready before it had a quiz: now the quiz comes first, with two weeks from when it was added.
-  if (!readyAt && skill.handsOn && x.hasQuiz && x.quizSince && evs.some((e) => e.kind === "done" && e.at > cutoff && e.at < x.quizSince!)) {
-    const q = londonDate(x.quizSince);
-    if (addDays(q, REDO_DAYS) > dueOn) dueOn = addDays(q, REDO_DAYS);
-    if (!whyOn || q >= whyOn) { why = "quiz"; whyOn = q; }
-  }
-  const extra = why ? { dueOn, why, whyOn } : { dueOn };
-  if (readyAt) return finish(base("ready", { readyAt, ...extra }));
-  return finish(base(attemptsSince(cutoff).length ? "in_training" : "not_started", extra));
+  if (lastReset) due = { dueOn: later(due, grace(londonDate(lastReset))).dueOn, why: "reset", whyOn: londonDate(lastReset) };
+  const q = newQuiz(cutoff, readyAt);
+  if (q && (!due.whyOn || q.whyOn! >= due.whyOn)) due = { dueOn: later(due, q).dueOn, why: "quiz", whyOn: q.whyOn };
+  if (readyAt) return finish(base("ready", { readyAt, ...due }));
+  return finish(base(attemptsSince(cutoff).length ? "in_training" : "not_started", due));
 }
 
 /**
