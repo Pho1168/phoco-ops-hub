@@ -140,7 +140,7 @@ function seed(): State {
       { id: "SYD", name: "Sydenham", kind: "restaurant", status: "closed", closedReason: "Closed until it reopens" },
     ],
     people: [
-      p("DEMO-OWN", "Owner (demo)", [{ siteId: "EAS", role: "owner", sections: ["FOH", "BOH"] }, { siteId: "WEM", role: "owner", sections: ["PROD"] }, { siteId: "SYD", role: "owner", sections: [] }], owner),
+      { ...p("DEMO-OWN", "Owner (demo)", [{ siteId: "EAS", role: "owner", sections: ["FOH", "BOH"] }, { siteId: "WEM", role: "owner", sections: ["PROD"] }, { siteId: "SYD", role: "owner", sections: [] }], owner), seesRightToWork: true },
       p("DEMO-FOH", "FOH staff (demo)", [{ siteId: "EAS", role: "staff", sections: ["FOH"] }], staff),
       p("DEMO-BOH", "BOH staff (demo)", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }], staff),
       p("DEMO-MGR", "Manager (demo)", [{ siteId: "EAS", role: "manager", sections: ["FOH", "BOH"] }], staff),

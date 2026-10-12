@@ -30,6 +30,8 @@ export interface Person {
   pinLockedUntil?: number; // epoch ms
   /** Set when an owner gives a temporary PIN; the person must choose their own before doing anything else. */
   pinMustChange?: boolean;
+  /** May see and record right to work checks. Only the owner asked for this; nobody else unless they decide. */
+  seesRightToWork?: boolean;
   access: SiteAccess[];
 }
 
