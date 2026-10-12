@@ -8,6 +8,7 @@ import type { Certificate, CertKind } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent, EquipmentKind, EventKind, Severity } from "@/lib/domain/equipment";
 import type { Priority, Task, TaskCategory, TaskStatus } from "@/lib/domain/tasks";
 import type { LateMinutes, ReplyKind, ShiftReply } from "@/lib/domain/reminders";
+import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -92,6 +93,36 @@ const certFrom = (r: CertRow): Certificate => ({
   id: r.id, personId: r.person_id, kind: r.kind, issuedOn: opt(r.issued_on), expiresOn: opt(r.expires_on), provider: opt(r.provider), reference: opt(r.reference),
   note: opt(r.note), createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(),
 });
+interface CoverRow {
+  id: string; shift_id: string; site_id: SiteId; site_name: string; person_id: string; person_name: string; section: string; note: string | null;
+  status: CoverStatus; created_at: Date; covered_by: string | null; covered_by_name: string | null; decided_by: string | null; decided_by_name: string | null;
+  decided_at: Date | null; decision_note: string | null; cancelled_by_name: string | null; cover_cancelled_at: Date | null; cancel_note: string | null;
+  starts_at: Date; ends_at: Date; cancelled_at: Date | null; shift_person_id: string; coverer_on_rota: boolean;
+  offers: { id: string; person_id: string; name: string; created_at: string; withdrawn_at: string | null }[];
+}
+const coverSelect = (q: postgres.Sql, where: postgres.PendingQuery<postgres.Row[]>) => q<CoverRow[]>`
+  select c.id, c.shift_id, c.site_id, si.name as site_name, c.person_id, p.display_name as person_name, c.section, c.note, c.status, c.created_at,
+    c.covered_by, cb.display_name as covered_by_name, c.decided_by, d.display_name as decided_by_name, c.decided_at, c.decision_note,
+    xp.display_name as cancelled_by_name, c.cancelled_at as cover_cancelled_at, c.cancel_note,
+    s.starts_at, s.ends_at, s.cancelled_at, s.person_id as shift_person_id,
+    (c.covered_by is not null and exists (select 1 from shifts x where x.person_id = c.covered_by and x.site_id = c.site_id and x.cancelled_at is null
+       and x.starts_at < s.ends_at and s.starts_at < x.ends_at)) as coverer_on_rota,
+    coalesce((select json_agg(json_build_object('id', o.id, 'person_id', o.person_id, 'name', op.display_name, 'created_at', o.created_at, 'withdrawn_at', o.withdrawn_at) order by o.created_at)
+              from cover_offers o join people op on op.id = o.person_id where o.request_id = c.id), '[]') as offers
+  from cover_requests c join shifts s on s.id = c.shift_id join sites si on si.id = c.site_id join people p on p.id = c.person_id
+  left join people cb on cb.id = c.covered_by left join people d on d.id = c.decided_by left join people xp on xp.id = c.cancelled_by
+  ${where}
+  order by c.created_at desc`;
+const coverFrom = (r: CoverRow): CoverRequest => ({
+  id: r.id, shiftId: r.shift_id, siteId: r.site_id, siteName: r.site_name, personId: r.person_id, personName: r.person_name, section: r.section,
+  note: opt(r.note), status: r.status, createdAt: r.created_at.getTime(), coveredBy: opt(r.covered_by), coveredByName: opt(r.covered_by_name),
+  decidedBy: opt(r.decided_by), decidedByName: opt(r.decided_by_name), decidedAt: ms(r.decided_at), decisionNote: opt(r.decision_note),
+  cancelledByName: opt(r.cancelled_by_name), cancelledAt: ms(r.cover_cancelled_at), cancelNote: opt(r.cancel_note),
+  date: londonDate(r.starts_at.getTime()), start: londonHM(r.starts_at.getTime()), end: londonHM(r.ends_at.getTime()),
+  shiftCancelled: !!r.cancelled_at, shiftPersonId: r.shift_person_id, covererOnRota: r.coverer_on_rota,
+  offers: r.offers.map((o) => ({ id: o.id, personId: o.person_id, personName: o.name, createdAt: Date.parse(o.created_at), withdrawnAt: o.withdrawn_at ? Date.parse(o.withdrawn_at) : undefined })),
+});
+
 interface ReplyRow { id: string; shift_id: string; person_id: string; site_id: SiteId; kind: ReplyKind; late_minutes: number | null; created_at: Date }
 const replyFrom = (r: ReplyRow): ShiftReply => ({ id: r.id, shiftId: r.shift_id, personId: r.person_id, siteId: r.site_id, kind: r.kind,
   lateMinutes: r.late_minutes === null ? undefined : (r.late_minutes as LateMinutes), createdAt: r.created_at.getTime() });
@@ -929,6 +960,67 @@ export const sqlStore: Store = {
     const q = sql();
     const [first] = await q<{ d: string | null }[]>`select to_char(min(business_date), 'YYYY-MM-DD') as d from checklist_runs where site_id = ${siteId}`;
     return first?.d ?? undefined;
+  },
+
+  // ---------- shift cover ----------
+  async coverRequests(f) {
+    if (f.personId && !isUuid(f.personId)) return [];
+    const q = sql();
+    const where = q`where true
+      ${f.siteIds ? q`and c.site_id = any(${f.siteIds}::text[])` : q``}
+      ${f.personId ? q`and c.person_id = ${f.personId}` : q``}
+      ${f.shiftEndsAfter !== undefined ? q`and s.ends_at > ${new Date(f.shiftEndsAfter)}` : q``}
+      ${f.live ? q`and c.status in ('open', 'approved')` : q``}`;
+    return (await coverSelect(q, where)).map(coverFrom);
+  },
+  async coverRequest(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await coverSelect(q, q`where c.id = ${id}`);
+    return r ? coverFrom(r) : undefined;
+  },
+  async addCoverRequest(r) {
+    const q = sql();
+    const [row] = await q<{ id: string }[]>`
+      insert into cover_requests (shift_id, site_id, person_id, section, note) values (${r.shiftId}, ${r.siteId}, ${r.personId}, ${r.section}, ${r.note ?? null})
+      on conflict (shift_id) where status in ('open', 'approved') do nothing returning id`;
+    return row?.id;
+  },
+  async decideCover(id, d) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    if (d.status === "cancelled") {
+      return (await q`update cover_requests set status = 'cancelled', cancelled_by = ${d.personId}, cancelled_at = now(), cancel_note = ${d.note ?? null}
+        where id = ${id} and status = 'approved' returning id`).length > 0;
+    }
+    if (d.status === "withdrawn") {
+      return (await q`update cover_requests set status = 'withdrawn', withdrawn_at = now() where id = ${id} and status = 'open' and person_id = ${d.personId} returning id`).length > 0;
+    }
+    if (d.status === "approved") {
+      if (!d.coveredBy || !isUuid(d.coveredBy)) return false;
+      return (await q`update cover_requests set status = 'approved', covered_by = ${d.coveredBy}, decided_by = ${d.personId}, decided_at = now(), decision_note = ${d.note ?? null}
+        where id = ${id} and status = 'open'
+          and exists (select 1 from cover_offers o where o.request_id = ${id} and o.person_id = ${d.coveredBy} and o.withdrawn_at is null)
+        returning id`).length > 0;
+    }
+    return (await q`update cover_requests set status = 'declined', decided_by = ${d.personId}, decided_at = now(), decision_note = ${d.note ?? null}
+      where id = ${id} and status = 'open' returning id`).length > 0;
+  },
+  async addCoverOffer(requestId, personId) {
+    const q = sql();
+    const [row] = await q<{ id: string }[]>`
+      insert into cover_offers (request_id, person_id)
+      select ${requestId}, ${personId} where exists (select 1 from cover_requests where id = ${requestId} and status = 'open')
+      on conflict (request_id, person_id) where withdrawn_at is null do nothing returning id`;
+    return row?.id;
+  },
+  async withdrawCoverOffer(requestId, personId) {
+    if (!isUuid(requestId) || !isUuid(personId)) return undefined;
+    const q = sql();
+    const [row] = await q<{ id: string }[]>`update cover_offers set withdrawn_at = now()
+      where request_id = ${requestId} and person_id = ${personId} and withdrawn_at is null
+        and exists (select 1 from cover_requests c where c.id = ${requestId} and c.status = 'open') returning id`;
+    return row?.id;
   },
 
   // ---------- gas off at close ----------

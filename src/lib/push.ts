@@ -5,9 +5,11 @@ import { store } from "@/lib/data";
  * Web push. The VAPID key pair (it identifies this app to the phone's push service) is generated on first
  * use and kept in the database, so there is nothing to configure on the hosting side.
  */
+const kept = globalThis as unknown as { __phocoVapid?: { publicKey: string; privateKey: string } };
 export async function vapidKeys(): Promise<{ publicKey: string; privateKey: string }> {
-  const raw = await store().secret("vapid", () => JSON.stringify(webpush.generateVAPIDKeys()));
-  return JSON.parse(raw);
+  // The pair never changes once made, so it's read from the database once per server instance.
+  if (!kept.__phocoVapid) kept.__phocoVapid = JSON.parse(await store().secret("vapid", () => JSON.stringify(webpush.generateVAPIDKeys())));
+  return kept.__phocoVapid!;
 }
 
 /** `tag`: one per message, so a new notification doesn't replace the last one on the phone. */

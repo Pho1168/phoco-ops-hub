@@ -114,9 +114,14 @@ export async function queueCertReminders(now = Date.now(), db: Store = store()):
  */
 export async function deliverDue(now = Date.now(), personIds?: string[]): Promise<number> {
   const db = store();
+  const due = await db.dueNotices(now, personIds ? 50 : 200, personIds);
+  const HIGH = new Set(["shift", "reply", "gas", "cover"]);
   let sent = 0;
-  for (const n of await db.dueNotices(now, personIds ? 50 : 200, personIds)) {
-    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: n.url ?? "/me", tag: `${n.kind}-${n.id}` }, n.kind === "shift" || n.kind === "reply" || n.kind === "gas" ? "high" : "normal");
+  // Five at a time: an action that messages a whole team stays quick, without opening many connections at once.
+  for (let i = 0; i < due.length; i += 5) {
+    const batch = await Promise.all(due.slice(i, i + 5).map((n) =>
+      pushToPerson(n.personId, { title: n.title, body: n.body, url: n.url ?? "/me", tag: `${n.kind}-${n.id}` }, HIGH.has(n.kind) ? "high" : "normal")));
+    sent += batch.reduce((t, x) => t + x, 0);
   }
   return sent;
 }
