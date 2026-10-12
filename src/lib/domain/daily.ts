@@ -106,9 +106,14 @@ export function gasDay(siteId: SiteId, date: string, shifts: (ShiftTimes & { id?
   return { siteId, date, closeAt, closers };
 }
 
+/** The day the gas check went live. Closes before it aren't judged: there was nothing to tap then. */
+export const GAS_CHECKS_START = "2026-10-12";
+/** A close is expected to have a gas check if the site was on the rota that day, from the day the check went live. */
+export const gasExpected = (date: string, onRota: boolean) => onRota && date >= GAS_CHECKS_START;
+
 /** The last close whose gas check window is over (6 hours after it), for "Last close" on the Owner screen. */
 export function lastCloseDay(days: (GasDay | undefined)[], now: number): GasDay | undefined {
-  return days.filter((d): d is GasDay => !!d && d.closeAt + GAS_OPEN_HOURS * 3_600_000 <= now).sort((a, b) => b.closeAt - a.closeAt)[0];
+  return days.filter((d): d is GasDay => !!d && d.date >= GAS_CHECKS_START && d.closeAt + GAS_OPEN_HOURS * 3_600_000 <= now).sort((a, b) => b.closeAt - a.closeAt)[0];
 }
 
 export type GasState = "later" | "due" | "overdue" | "done" | "missed";
@@ -157,8 +162,10 @@ export function gasConfirmedMessages(site: { id: SiteId; name: string }, d: GasD
 
 export interface DayFacts {
   siteName: string;
-  /** False when the site had no published shifts that day: then gas isn't expected. */
+  /** False when the site had no published shifts that day. */
   onRota: boolean;
+  /** On the rota, on or after the day the gas check went live (gasExpected). */
+  gasExpected: boolean;
   checks: { expected: number; signed: number; missed: string[] };
   outOfRange: number;
   alertsRaised: number;
@@ -172,7 +179,7 @@ export interface DayFacts {
 /** One line per site, the important things first. */
 export function dayLine(f: DayFacts): string {
   const bits: string[] = [];
-  if (f.onRota && !f.gas) bits.push("NO gas-off check");
+  if (f.gasExpected && !f.gas) bits.push("NO gas-off check");
   if (f.checks.expected) bits.push(`${f.checks.signed}/${f.checks.expected} checks signed${f.checks.missed.length ? ` (missed: ${f.checks.missed.slice(0, 3).join(", ")}${f.checks.missed.length > 3 ? "…" : ""})` : ""}`);
   if (f.outOfRange) bits.push(`${plural(f.outOfRange, "temperature")} out of range`);
   if (f.alertsRaised) bits.push(`${plural(f.alertsRaised, "alert")}`);

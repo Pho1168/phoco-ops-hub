@@ -1,6 +1,6 @@
 import { store } from "@/lib/data";
 import type { Alert, Store } from "@/lib/data/store";
-import { gasDay, gasState, lastCloseDay, openGasDay, readyToOpen, type DayFacts, type GasCheck, type GasDay, type GasState, type Ready, type ReadyInput } from "@/lib/domain/daily";
+import { gasDay, gasExpected, gasState, lastCloseDay, openGasDay, readyToOpen, type DayFacts, type GasCheck, type GasDay, type GasState, type Ready, type ReadyInput } from "@/lib/domain/daily";
 import { faultsOf, keepsFoodSafe, type Equipment, type EquipmentEvent } from "@/lib/domain/equipment";
 import { datesBetween, readingLog, signoffLog } from "@/lib/domain/records";
 import { latestReplies } from "@/lib/domain/reminders";
@@ -128,6 +128,7 @@ export async function dayFacts(site: Site, date: string, now = Date.now(), db: S
   return {
     siteName: site.name,
     onRota: shifts.length > 0,
+    gasExpected: gasExpected(date, shifts.length > 0),
     checks: { expected: signoffs.length, signed: signoffs.filter((r) => r.status !== "not_signed").length, missed: signoffs.filter((r) => r.status === "not_signed").map((r) => r.listName) },
     outOfRange: readingLog(data.answers).filter((r) => r.date === date && (r.outcome === "warn" || r.outcome === "bad")).length,
     alertsRaised: data.alerts.filter((a) => a.createdAt >= from && a.createdAt < until).length,
