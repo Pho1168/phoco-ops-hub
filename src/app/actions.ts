@@ -21,6 +21,8 @@ import { canManageEquipment, canUseEquipment, faultReportedMessages, faultsOf, s
   EQUIPMENT_KINDS, INSTRUCTIONS_MAX, NAME_MAX, SEVERITY_LABEL, TEXT_MAX, type EquipmentKind } from "@/lib/domain/equipment";
 import { deliverDue, queueShiftReminders } from "@/lib/rota-service";
 import { canReply, replyMessages, replySendAfter, replyText, sameReply, type LateMinutes } from "@/lib/domain/reminders";
+import { gasConfirmedMessages } from "@/lib/domain/daily";
+import { gasFor } from "@/lib/daily-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
@@ -634,6 +636,41 @@ export async function replyToShift(input: unknown): Promise<ActionResult> {
   if (told.length) await deliverDue(now, told);
   if (saved.added) await db.audit({ actorId: ctx.person.id, siteId: shift.siteId, action: "shift.reply", detail: `${replyText(reply)}: ${shift.date === today ? "today" : dayMonthYear(shift.date)} ${shift.start}–${shift.end} (${shift.section})` });
   revalidatePath("/me"); revalidatePath("/today"); revalidatePath("/owner");
+  return { ok: true };
+}
+
+// ---------- gas off at close ----------
+
+/**
+ * "All gas is off": anyone working at the site, on the shop tablet or their own phone, from 15 minutes before the
+ * last shift ends. The first tap of the day counts; who, when and which kind of device are kept. If managers were
+ * already alerted that nobody had checked, they hear it's done.
+ */
+export async function confirmGasOff(siteId: string): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  const id = SiteIdZ.safeParse(siteId);
+  if (!id.success) return { ok: false, error: "Choose a site" };
+  const db = store();
+  const site = await db.site(id.data);
+  if (!site || ctx.person.status !== "active" || !ctx.person.access.some((a) => a.siteId === site.id)) return { ok: false, error: "You can only do the gas check at your own site" };
+  const now = Date.now();
+  const g = await gasFor(site, now, db);
+  if (!g) return { ok: false, error: "There's no gas check to do right now" };
+  if (g.check) return { ok: true }; // already done
+  const onTablet = !!(await db.session(ctx.sessionId))?.deviceId;
+  if (!(await db.addGasCheck({ siteId: site.id, date: g.day.date, personId: ctx.person.id, onTablet }))) return { ok: true }; // someone has just done it
+  const managers = siteManagers(await db.people(), site.id);
+  const sentAlert = await db.noticeKeys(managers.map((p) => `gasalert|${site.id}|${g.day.date}|${p.id}`));
+  const alerted = managers.filter((p) => sentAlert.has(`gasalert|${site.id}|${g.day.date}|${p.id}`)).map((p) => p.id);
+  const told: string[] = [];
+  for (const m of gasConfirmedMessages(site, g.day, ctx.person.name, onTablet, now, alerted)) {
+    if (await db.queueNotice({ personId: m.personId, kind: "gas", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: now, url: m.url })) told.push(m.personId);
+  }
+  if (told.length) await deliverDue(now, told);
+  await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "gas.off", detail: `All gas off at close (${dayMonthYear(g.day.date)}), ${onTablet ? "on the tablet" : "on their own phone"}` });
+  revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/owner");
   return { ok: true };
 }
 

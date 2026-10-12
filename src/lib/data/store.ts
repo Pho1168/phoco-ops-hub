@@ -9,13 +9,14 @@ import type { Certificate } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent, EquipmentInput } from "@/lib/domain/equipment";
 import type { Task, TaskInput, TaskStatus } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
+import type { GasCheck } from "@/lib/domain/daily";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
 /** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
-export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply";
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply" | "gas" | "ready" | "daily";
 export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number; url?: string }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
@@ -166,6 +167,12 @@ export interface Store {
   reopenTask(id: string, personId: string): Promise<boolean>;
   /** Open → cancelled. False if it isn't open. */
   cancelTask(id: string, personId: string): Promise<boolean>;
+
+  // Gas off at close (one per site per day; never changed)
+  /** Gas checks at these sites between two London dates (inclusive). */
+  gasChecks(siteIds: SiteId[], from: string, to: string): Promise<GasCheck[]>;
+  /** Records the day's gas check. False if someone has already done it (the first tap counts). */
+  addGasCheck(c: { siteId: SiteId; date: string; personId: string; onTablet: boolean }): Promise<boolean>;
 
   // Rota (read from the site Google Sheets; never written back)
   rotaSources(): Promise<RotaSource[]>;

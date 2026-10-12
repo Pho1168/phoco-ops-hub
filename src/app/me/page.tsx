@@ -14,8 +14,11 @@ import { certStatus, expectedKinds, statusText, visibleTypes } from "@/lib/domai
 import { CHIP } from "@/app/manage/certificates/cells";
 import { dueText, isForPerson, priorityCode, taskOrder } from "@/lib/domain/tasks";
 import { TaskDone } from "@/components/TaskDone";
-import { latestReplies, replyOpen, replyText, type ShiftReply as Reply } from "@/lib/domain/reminders";
+import { latestReplies, replyOpen, replyText, sectionName, type ShiftReply as Reply } from "@/lib/domain/reminders";
 import { ShiftReply } from "./ShiftReply";
+import { GasCheck } from "@/components/GasCheck";
+import { gasFor } from "@/lib/daily-service";
+import { londonHM } from "@/lib/domain/time";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -49,6 +52,14 @@ export default async function MyShifts() {
   const replyable = shifts.filter((s) => replyOpen(s, now));
   const replies = replyable.length ? latestReplies(await db.shiftReplies(replyable.map((s) => s.id))) : new Map<string, Reply>();
   const TONE = { on_my_way: "done", late: "late", cant_make_it: "bad" } as const;
+  // The gas check at close, for the people on until the end (closers) at a site where it's due now.
+  const recentSites = Array.from(new Set((await db.shiftsForPerson(ctx.person.id, addDays(today, -1), today)).filter((s) => s.published && !s.cancelled).map((s) => s.siteId)));
+  const allSites = await db.sites();
+  const gasCards = (await Promise.all(recentSites.map(async (id) => {
+    const site = allSites.find((x) => x.id === id);
+    const g = site ? await gasFor(site, now) : undefined;
+    return site && g && (g.state === "due" || g.state === "overdue" || g.state === "done") && g.day.closers.includes(ctx.person.id) ? { site, g } : undefined;
+  }))).filter((x) => x !== undefined);
 
   const days = new Map<string, typeof shifts>();
   for (const s of shifts) days.set(s.date, [...(days.get(s.date) ?? []), s]);
@@ -71,6 +82,11 @@ export default async function MyShifts() {
 
         <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName, when: when(n.createdAt) }))} />
 
+        {gasCards.map(({ site, g }) => (
+          <GasCheck key={site.id} siteId={site.id} siteName={site.name} state={g.state as "due" | "overdue" | "done"} closeAt={londonHM(g.day.closeAt)}
+            done={g.check ? `Checked by ${g.check.personName} at ${londonHM(g.check.createdAt)}` : undefined} />
+        ))}
+
         {!onTablet && <RemindersToggle publicKey={publicKey} />}
 
         <section className="stack">
@@ -86,7 +102,7 @@ export default async function MyShifts() {
                   const r = replies.get(s.id);
                   return (
                     <div key={s.id}><span className="stat" style={{ fontSize: 24 }}>{s.start}–{s.end}</span>
-                      <div className="muted">{s.siteName} · {s.section === "FOH" ? "Front of house" : s.section === "BOH" ? "Back of house" : s.section}</div>
+                      <div className="muted">{s.siteName} · {sectionName(s.section)}</div>
                       {replyOpen(s, now) && <ShiftReply shiftId={s.id} current={r ? { text: replyText(r), tone: TONE[r.kind] } : undefined} />}
                     </div>
                   );

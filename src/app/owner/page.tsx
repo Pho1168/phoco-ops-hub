@@ -12,6 +12,8 @@ import { ManageTiles } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { teamRowsView, teamToday } from "@/lib/team-today";
+import { gasFor, lastClose, readyFor } from "@/lib/daily-service";
+import { londonHM } from "@/lib/domain/time";
 
 export const dynamic = "force-dynamic";
 
@@ -20,18 +22,29 @@ export default async function Owner() {
   if (!ctx.isOwner) redirect("/today");
   const db = store();
   const { date, hm } = londonNow();
+  const now = Date.now();
   const sites = (await db.sites()).filter((s) => s.id !== "SYD" || s.status === "open");
   const summaries: SiteSummary[] = await Promise.all(sites.map(async (s) => {
     const lists = await db.checklists(s.id);
     let signed = 0, overdue = 0;
+    const states: { name: string; due?: string; signed: boolean }[] = [];
     for (const l of lists) {
       const run = await db.run(l.id, date);
       const st = runState(progress(l, run.answers), !!run.signedAt, l.due, hm);
       if (st === "done") signed++;
       if (st === "overdue") overdue++;
+      states.push({ name: l.name, due: l.due, signed: !!run.signedAt });
     }
     const alerts = (await db.alerts(s.id)).filter((a) => !a.resolvedAt).map((a) => ({ id: a.id, title: a.title, detail: a.detail, critical: a.level === "critical" }));
-    return { id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason, lists: lists.length, signed, overdue, alerts };
+    const [ready, gas, last] = await Promise.all([readyFor(s, now, db, states), gasFor(s, now), lastClose(s, now)]);
+    const by = (c: { personName: string; createdAt: number; onTablet: boolean }) => `${c.personName} at ${londonHM(c.createdAt)}${c.onTablet ? " on the tablet" : " on their phone"}`;
+    const gasLine = gas && gas.state !== "later" && gas.state !== "missed"
+      ? gas.check ? { text: `Gas off: checked by ${by(gas.check)}`, tone: "good" as const }
+        : gas.state === "overdue" ? { text: `Gas check not done · last shift ended ${londonHM(gas.day.closeAt)}`, tone: "bad" as const }
+        : { text: `Gas check due now · last shift ends ${londonHM(gas.day.closeAt)}`, tone: "" as const }
+      : last ? last.check ? { text: `Last close: gas off, checked by ${by(last.check)}`, tone: "good" as const } : { text: "Last close: no gas-off check", tone: "bad" as const }
+      : undefined;
+    return { id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason, lists: lists.length, signed, overdue, alerts, ready, gas: gasLine };
   }));
   const all = await db.people();
   const names = new Map(all.map((p) => [p.id, p.name]));
@@ -60,7 +73,6 @@ export default async function Owner() {
       issues: r?.issues ?? [],
     };
   });
-  const now = Date.now();
   const team = teamRowsView(await teamToday(sites.filter((s) => s.status === "open").map((s) => s.id), now), now);
   const withPush = await db.peopleWithPush();
   const active = all.filter((p) => p.status === "active");

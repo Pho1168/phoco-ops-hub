@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { demoStore, resetDemo } from "@/lib/data/demo-store";
-import { queueCertReminders, queueServiceReminders, queueShiftReminders, queueWeeklyReport } from "@/lib/rota-service";
+import { queueCertReminders, queueDailyDigest, queueGasChecks, queueReadyAlerts, queueServiceReminders, queueShiftReminders, queueWeeklyReport } from "@/lib/rota-service";
 import { addDays, londonDate, londonToUtc } from "@/lib/domain/time";
 import { weekStartOf } from "@/lib/domain/rota";
 
@@ -108,6 +108,60 @@ describe("certificate reminders on the scheduler", () => {
     expect(await demoStore.shiftReplies(["s1"])).toHaveLength(1);
     const c = await demoStore.addShiftReply({ ...r, kind: "on_my_way", lateMinutes: undefined }, () => false);
     expect(c).toMatchObject({ added: true, previous: { id: a.reply.id } });
+    resetDemo();
+  });
+});
+
+describe("the daily loop on the scheduler", () => {
+  const day = "2026-11-04";
+  const at = (t: string, d = day) => londonToUtc(d, t);
+  async function rota() {
+    const week = weekStartOf(day);
+    const sh = (code: string, section: string, start: string, end: string) =>
+      ({ sourceKey: `EAS|${week}|${code}|${section}|2`, staffCode: code, section, week, date: day, start, end, endsNextDay: false });
+    await demoStore.applyShiftSync("EAS", { added: [sh("DEMO-FOH", "FOH", "11:00", "22:15"), sh("DEMO-BOH", "BOH", "11:00", "15:00")], changed: [], cancelled: [] },
+      new Map([["DEMO-FOH", "DEMO-FOH"], ["DEMO-BOH", "DEMO-BOH"]]));
+    await demoStore.setWeekStatuses("EAS", new Map([[week, "published"]]));
+  }
+
+  it("gas check: the closer is reminded 15 minutes before close, managers alerted 30 minutes after, nothing once it's done", async () => {
+    resetDemo();
+    await rota();
+    expect(await queueGasChecks(at("21:55"), demoStore)).toBe(0);
+    expect(await queueGasChecks(at("22:00"), demoStore)).toBe(1); // only the one on until close
+    expect(await queueGasChecks(at("22:10"), demoStore)).toBe(0);
+    expect((await demoStore.notices("DEMO-FOH", 10)).filter((n) => n.kind === "gas")[0]).toMatchObject({ title: "Gas check before you leave · Eastcote", sendAfter: at("22:00") });
+    expect(await queueGasChecks(at("22:45"), demoStore)).toBe(2); // the Eastcote manager and the owner
+    expect((await demoStore.notices("DEMO-MGR", 10)).filter((n) => n.kind === "gas")[0].title).toBe("No gas-off check at Eastcote");
+    await demoStore.addGasCheck({ siteId: "EAS", date: day, personId: "DEMO-FOH", onTablet: true });
+    expect(await queueGasChecks(at("23:00"), demoStore)).toBe(0);
+    expect(await demoStore.addGasCheck({ siteId: "EAS", date: day, personId: "DEMO-MGR", onTablet: false })).toBe(false); // the first tap counts
+    resetDemo();
+  });
+
+  it("not ready at the ready time tells managers and the owner once; a day with no rota tells nobody", async () => {
+    resetDemo();
+    expect(await queueReadyAlerts(at("12:05"), demoStore)).toBe(0); // no shifts that day
+    await rota();
+    expect(await queueReadyAlerts(at("11:55"), demoStore)).toBe(0);
+    expect(await queueReadyAlerts(at("12:05"), demoStore)).toBe(2);
+    expect(await queueReadyAlerts(at("12:15"), demoStore)).toBe(0);
+    const [m] = (await demoStore.notices("DEMO-OWN", 10)).filter((n) => n.kind === "ready");
+    expect(m.title).toBe("Eastcote not ready to open (12:00)");
+    expect(m.body).toContain("Not signed:");
+    resetDemo();
+  });
+
+  it("yesterday at a glance goes to owners and managers at 08:00, once, leaving out sites that weren't in use", async () => {
+    resetDemo();
+    await rota();
+    const next = at("08:05", "2026-11-05");
+    expect(await queueDailyDigest(next, demoStore)).toBe(2);
+    expect(await queueDailyDigest(next + 600_000, demoStore)).toBe(0);
+    const [own] = (await demoStore.notices("DEMO-OWN", 10)).filter((n) => n.kind === "daily");
+    expect(own.title).toBe("Yesterday at a glance: Wed 4 Nov");
+    expect(own.body).toContain("Eastcote: NO gas-off check");
+    expect(own.body).not.toContain("Wembley"); // no rota or records there that day
     resetDemo();
   });
 });

@@ -12,6 +12,7 @@ import type { Certificate } from "@/lib/domain/certificates";
 import type { Equipment, EquipmentEvent } from "@/lib/domain/equipment";
 import type { Task } from "@/lib/domain/tasks";
 import type { ShiftReply } from "@/lib/domain/reminders";
+import type { GasCheck } from "@/lib/domain/daily";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 
@@ -79,6 +80,7 @@ interface State {
   equipmentEvents: EquipmentEvent[];
   tasks: Task[];
   shiftReplies: ShiftReply[];
+  gasChecks: Omit<GasCheck, "personName">[];
 }
 
 /** Sample records so the certificates screens have something to show in demo mode. */
@@ -137,8 +139,8 @@ function seed(): State {
     ({ id, staffCode: id, name, status: "active", pinFailed: 0, pinHash: pin, access });
   return {
     sites: [
-      { id: "EAS", name: "Eastcote", kind: "restaurant", status: "open" },
-      { id: "WEM", name: "Wembley", kind: "production", status: "open" },
+      { id: "EAS", name: "Eastcote", kind: "restaurant", status: "open", readyBy: "12:00" },
+      { id: "WEM", name: "Wembley", kind: "production", status: "open", readyBy: "08:00" },
       { id: "SYD", name: "Sydenham", kind: "restaurant", status: "closed", closedReason: "Closed until it reopens" },
     ],
     people: [
@@ -159,7 +161,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [],
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [],
   };
 }
 
@@ -528,6 +530,15 @@ export const demoStore: Store = {
     return S().shifts.filter((s) => s.date === date && !s.cancelled && S().weeks.get(`${s.siteId}|${s.week}`) === "published")
       .map((s) => ({ id: s.id, siteId: s.siteId, siteName: names.get(s.siteId) ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
         published: true, cancelled: false, personId: s.personId, staffCode: s.staffCode }));
+  },
+  async gasChecks(siteIds, from, to) {
+    return S().gasChecks.filter((g) => siteIds.includes(g.siteId) && g.date >= from && g.date <= to)
+      .map((g) => ({ ...g, personName: nameOf(g.personId) ?? "" })).sort((a, b) => a.date.localeCompare(b.date));
+  },
+  async addGasCheck(c) {
+    if (S().gasChecks.some((g) => g.siteId === c.siteId && g.date === c.date)) return false;
+    S().gasChecks.push({ ...c, createdAt: Date.now() });
+    return true;
   },
   async shift(id) {
     const s = S().shifts.find((x) => x.id === id);

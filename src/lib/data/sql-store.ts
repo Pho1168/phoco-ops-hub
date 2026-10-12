@@ -115,8 +115,8 @@ function toPerson(r: PersonRow): Person {
   };
 }
 
-function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null }): Site {
-  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason) };
+function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null; ready_by: string | null }): Site {
+  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason), readyBy: r.ready_by ?? undefined };
 }
 
 async function selectPeople(where: postgres.PendingQuery<postgres.Row[]> | null): Promise<Person[]> {
@@ -204,12 +204,12 @@ async function prepHandoversWhere(where: postgres.PendingQuery<postgres.Row[]>, 
 export const sqlStore: Store = {
   async sites() {
     const q = sql();
-    return (await q`select id, name, kind, status, closed_reason from sites order by case id when 'EAS' then 1 when 'WEM' then 2 else 3 end`)
+    return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by from sites order by case id when 'EAS' then 1 when 'WEM' then 2 else 3 end`)
       .map((r) => toSite(r as Parameters<typeof toSite>[0]));
   },
   async site(id) {
     const q = sql();
-    const [r] = await q`select id, name, kind, status, closed_reason from sites where id = ${id}`;
+    const [r] = await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by from sites where id = ${id}`;
     return r ? toSite(r as Parameters<typeof toSite>[0]) : undefined;
   },
   async setSiteStatus(id, status, reason) {
@@ -923,6 +923,23 @@ export const sqlStore: Store = {
       date: londonDate(r.starts_at.getTime()), start: londonHM(r.starts_at.getTime()), end: londonHM(r.ends_at.getTime()),
       published: r.status === "published", cancelled: !!r.cancelled_at, personId: r.person_id, staffCode: r.staff_code,
     };
+  },
+
+  // ---------- gas off at close ----------
+  async gasChecks(siteIds, from, to) {
+    if (!siteIds.length) return [];
+    const q = sql();
+    const rows = await q<{ site_id: SiteId; business_date: string; person_id: string; name: string; on_tablet: boolean; created_at: Date }[]>`
+      select g.site_id, to_char(g.business_date, 'YYYY-MM-DD') as business_date, g.person_id, p.display_name as name, g.on_tablet, g.created_at
+      from gas_checks g join people p on p.id = g.person_id
+      where g.site_id = any(${siteIds}::text[]) and g.business_date between ${from} and ${to} order by g.business_date`;
+    return rows.map((r) => ({ siteId: r.site_id, date: r.business_date, personId: r.person_id, personName: r.name, onTablet: r.on_tablet, createdAt: r.created_at.getTime() }));
+  },
+  async addGasCheck(c) {
+    const q = sql();
+    const r = await q`insert into gas_checks (site_id, business_date, person_id, on_tablet) values (${c.siteId}, ${c.date}, ${c.personId}, ${c.onTablet})
+                      on conflict (site_id, business_date) do nothing`;
+    return r.count > 0;
   },
 
   // ---------- replies to shift reminders ----------
