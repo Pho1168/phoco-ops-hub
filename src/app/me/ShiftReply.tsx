@@ -7,8 +7,8 @@ import { replyToShift } from "@/app/actions";
 type Kind = "on_my_way" | "late" | "cant_make_it";
 const THANKS: Record<Kind, string> = {
   on_my_way: "Thanks. See you soon.",
-  late: "Thanks. Your manager has been told.",
-  cant_make_it: "Your manager has been told. Please phone them as well.",
+  late: "Thanks. Your manager can see this now.",
+  cant_make_it: "Your manager can see this now. Please phone them as well.",
 };
 
 /** On my way / Running late / Can't make it, under a shift that starts soon or is on now. */

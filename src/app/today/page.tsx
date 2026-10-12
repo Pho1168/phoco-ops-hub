@@ -47,7 +47,7 @@ export default async function Today() {
   const myTasks = siteTasks.filter((t) => t.status === "open" && isForPerson(t, ctx.person)).sort(taskOrder(date));
   const justDone = siteTasks.filter((t) => t.status === "done" && t.doneBy === ctx.person.id);
   // Managers see today's team with their replies (late, can't make it) on the tablet.
-  const team = ctx.isManager ? teamRowsView(await teamToday([ctx.site.id], now)) : [];
+  const team = ctx.isManager ? teamRowsView(await teamToday([ctx.site.id], now), now) : [];
   const away = team.filter((r) => r.alertUntil && now < r.alertUntil);
   const down = kit.map((eq) => ({ eq, f: faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down") }))
     .filter((x) => x.f.length).map(({ eq, f }) => ({ eq, since: Math.min(...f.map((x) => x.fault.createdAt)), body: f[f.length - 1].fault.body }));

@@ -536,12 +536,15 @@ export const demoStore: Store = {
       published: S().weeks.get(`${s.siteId}|${s.week}`) === "published", cancelled: s.cancelled, personId: s.personId, staffCode: s.staffCode };
   },
   async shiftReplies(shiftIds) { return S().shiftReplies.filter((r) => shiftIds.includes(r.shiftId)).sort((a, b) => a.createdAt - b.createdAt); },
-  async addShiftReply(r) {
-    const id = randomUUID();
+  async addShiftReply(r, isRepeat) {
+    const mine = S().shiftReplies.filter((x) => x.shiftId === r.shiftId).sort((a, b) => b.createdAt - a.createdAt);
+    const [latest, before] = mine;
+    if (latest && isRepeat(latest)) return { reply: { ...latest }, previous: before && { ...before }, added: false };
     // Strictly increasing times, so "latest" is well defined even within one millisecond.
     const last = S().shiftReplies.reduce((m, x) => Math.max(m, x.createdAt), 0);
-    S().shiftReplies.push({ ...r, id, createdAt: Math.max(Date.now(), last + 1) });
-    return id;
+    const reply = { ...r, id: randomUUID(), createdAt: Math.max(Date.now(), last + 1) };
+    S().shiftReplies.push(reply);
+    return { reply: { ...reply }, previous: latest && { ...latest }, added: true };
   },
   async noticeKeys(keys) {
     return new Map(S().notices.filter((n) => n.dedupeKey && keys.includes(n.dedupeKey)).map((n) => [n.dedupeKey!, n.createdAt]));

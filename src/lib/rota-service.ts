@@ -107,7 +107,7 @@ export async function deliverDue(now = Date.now(), personIds?: string[]): Promis
   const db = store();
   let sent = 0;
   for (const n of await db.dueNotices(now, personIds ? 50 : 200, personIds)) {
-    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: n.url ?? "/me", tag: `${n.kind}-${n.id}` });
+    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: n.url ?? "/me", tag: `${n.kind}-${n.id}` }, n.kind === "shift" || n.kind === "reply" ? "high" : "normal");
   }
   return sent;
 }

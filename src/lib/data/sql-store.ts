@@ -92,6 +92,10 @@ const certFrom = (r: CertRow): Certificate => ({
   id: r.id, personId: r.person_id, kind: r.kind, issuedOn: opt(r.issued_on), expiresOn: opt(r.expires_on), provider: opt(r.provider), reference: opt(r.reference),
   note: opt(r.note), createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(),
 });
+interface ReplyRow { id: string; shift_id: string; person_id: string; site_id: SiteId; kind: ReplyKind; late_minutes: number | null; created_at: Date }
+const replyFrom = (r: ReplyRow): ShiftReply => ({ id: r.id, shiftId: r.shift_id, personId: r.person_id, siteId: r.site_id, kind: r.kind,
+  lateMinutes: r.late_minutes === null ? undefined : (r.late_minutes as LateMinutes), createdAt: r.created_at.getTime() });
+
 // The database stores an un-ticked item as 'cleared'; the app calls it 'todo'.
 const toDbOutcome = (o: Outcome) => (o === "todo" ? "cleared" : o);
 const fromDbOutcome = (o: string): Outcome => (o === "cleared" ? "todo" : (o as Outcome));
@@ -926,18 +930,24 @@ export const sqlStore: Store = {
     const ids = shiftIds.filter(isUuid);
     if (!ids.length) return [];
     const q = sql();
-    const rows = await q<{ id: string; shift_id: string; person_id: string; site_id: SiteId; kind: ReplyKind; late_minutes: number | null; created_at: Date }[]>`
+    const rows = await q<ReplyRow[]>`
       select id, shift_id, person_id, site_id, kind, late_minutes, created_at from shift_replies
       where shift_id = any(${ids}::uuid[]) order by created_at, id`;
-    return rows.map((r): ShiftReply => ({ id: r.id, shiftId: r.shift_id, personId: r.person_id, siteId: r.site_id, kind: r.kind,
-      lateMinutes: r.late_minutes === null ? undefined : (r.late_minutes as LateMinutes), createdAt: r.created_at.getTime() }));
+    return rows.map(replyFrom);
   },
-  async addShiftReply(r) {
-    const q = sql();
-    const [row] = await q<{ id: string }[]>`
-      insert into shift_replies (shift_id, person_id, site_id, kind, late_minutes)
-      values (${r.shiftId}, ${r.personId}, ${r.siteId}, ${r.kind}, ${r.lateMinutes ?? null}) returning id`;
-    return row.id;
+  async addShiftReply(r, isRepeat) {
+    return withTx(async (tx) => {
+      await tx`select id from shifts where id = ${r.shiftId} for update`; // one reply at a time per shift
+      const [latest, before] = (await tx<ReplyRow[]>`
+        select id, shift_id, person_id, site_id, kind, late_minutes, created_at from shift_replies
+        where shift_id = ${r.shiftId} order by created_at desc, id desc limit 2`).map(replyFrom);
+      if (latest && isRepeat(latest)) return { reply: latest, previous: before, added: false };
+      const [row] = await tx<ReplyRow[]>`
+        insert into shift_replies (shift_id, person_id, site_id, kind, late_minutes)
+        values (${r.shiftId}, ${r.personId}, ${r.siteId}, ${r.kind}, ${r.lateMinutes ?? null})
+        returning id, shift_id, person_id, site_id, kind, late_minutes, created_at`;
+      return { reply: replyFrom(row), previous: latest, added: true };
+    });
   },
 
   // ---------- messages and push ----------
@@ -963,7 +973,7 @@ export const sqlStore: Store = {
   async noticeKeys(keys) {
     if (!keys.length) return new Map();
     const q = sql();
-    const rows = await q<{ dedupe_key: string; created_at: Date }[]>`select dedupe_key, created_at from notifications where dedupe_key = any(${keys})`;
+    const rows = await q<{ dedupe_key: string; created_at: Date }[]>`select dedupe_key, created_at from notifications where dedupe_key = any(${keys}::text[])`;
     return new Map(rows.map((r) => [r.dedupe_key, r.created_at.getTime()]));
   },
   async notices(personId, limit) {

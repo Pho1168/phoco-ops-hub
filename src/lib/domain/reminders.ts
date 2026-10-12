@@ -13,8 +13,10 @@ import type { Person, SiteId } from "./types";
  */
 
 export const SHIFT_REMINDER_LEAD_MIN = 120;
-/** A reminder doesn't go before 05:00 London, unless the shift itself starts before then. */
+/** A reminder doesn't go before 05:00 London, unless the shift starts before 05:30: then it keeps its 2 hours. */
 export const SHIFT_REMINDER_EARLIEST = "05:00";
+/** Moved to 05:00, a reminder still comes at least this long before the shift (the scheduler runs every 10 minutes). */
+const MIN_NOTICE_MS = 30 * 60_000;
 
 export interface ShiftTimes { date: string; start: string; end: string }
 export interface ReminderShift extends ShiftTimes { id: string; personId: string; siteId: SiteId; siteName: string; section: string }
@@ -23,12 +25,12 @@ export const shiftStart = (s: ShiftTimes) => londonToUtc(s.date, s.start);
 /** A shift that ends at or before its start time ends the next day. */
 export const shiftEnd = (s: ShiftTimes) => londonToUtc(s.end <= s.start ? addDays(s.date, 1) : s.date, s.end);
 
-/** When a shift's reminder is due: 2 hours before it starts, but not before 05:00 unless the shift starts earlier still. */
+/** When a shift's reminder is due: 2 hours before it starts, but not before 05:00 unless the shift starts before 05:30. */
 export function reminderAt(s: ShiftTimes): number {
   const start = shiftStart(s);
   const at = start - SHIFT_REMINDER_LEAD_MIN * 60_000;
   const earliest = londonToUtc(s.date, SHIFT_REMINDER_EARLIEST);
-  return at < earliest && earliest < start ? earliest : at;
+  return at < earliest && start - earliest >= MIN_NOTICE_MS ? earliest : at;
 }
 
 /** One reminder per person per shift. A shift that moves to a new time gets a new one. */
@@ -44,6 +46,14 @@ export function startingLaterToday<T extends ShiftTimes>(shifts: T[], today: str
   return shifts.filter((s) => s.date === today && now < shiftStart(s));
 }
 
+/**
+ * The shifts on today's team list: today's, last night's that haven't ended yet, and tonight's after midnight once
+ * they're within 6 hours (so a late-night reply about them shows straight away).
+ */
+export function todaysShifts<T extends ShiftTimes>(shifts: T[], today: string, now: number): T[] {
+  return shifts.filter((s) => s.date === today || (s.date < today && shiftEnd(s) > now) || (s.date > today && shiftStart(s) - now <= 6 * 3_600_000));
+}
+
 const SECTION_NAME: Record<string, string> = { FOH: "Front of house", BOH: "Back of house", PROD: "Production" };
 export const sectionName = (s: string) => SECTION_NAME[s] ?? s;
 
@@ -52,19 +62,27 @@ export const sectionName = (s: string) => SECTION_NAME[s] ?? s;
 export interface HandoverNote { category: string; body: string; needsAction: boolean; closedAt?: number; createdAt: number }
 /** What's waiting at a site, as it goes into a reminder on someone's phone. */
 export interface Waiting {
-  /** Open notes that need action. Staff notes never leave the tablet; customer complaints go as a count only. */
+  /** Open notes that need action, in categories whose text may show on a lock screen. */
   actions: HandoverNote[];
+  /** Open customer complaints: only their number goes, as they can name a customer. */
   complaints: number;
   /** Prep still to do, urgent first. */
   prep: { name: string; urgent: boolean }[];
 }
 
-/** Notes that can show on a lock screen. Staff notes stay on the tablet; complaint notes can name a customer, so only their number goes. */
+/**
+ * Which handover note categories may reach a lock screen. Only these: anything else (staff notes, or a category
+ * added later and not listed here) stays on the tablet. A test checks every category is decided.
+ */
+export const PHONE_TEXT_CATEGORIES = ["Food safety", "Equipment", "Stock shortage", "Other"];
+export const PHONE_COUNT_CATEGORIES = ["Customer complaint"];
+export const TABLET_ONLY_CATEGORIES = ["Staff note"];
+
 export function waitingFrom(notes: HandoverNote[], prep: { name: string; urgent: boolean }[]): Waiting {
-  const open = notes.filter((n) => n.needsAction && !n.closedAt && n.category !== "Staff note");
+  const open = notes.filter((n) => n.needsAction && !n.closedAt);
   return {
-    actions: noteOrder(open.filter((n) => n.category !== "Customer complaint")),
-    complaints: open.filter((n) => n.category === "Customer complaint").length,
+    actions: noteOrder(open.filter((n) => PHONE_TEXT_CATEGORIES.includes(n.category))),
+    complaints: open.filter((n) => PHONE_COUNT_CATEGORIES.includes(n.category)).length,
     prep: [...prep].sort((a, b) => Number(b.urgent) - Number(a.urgent)),
   };
 }
@@ -105,19 +123,20 @@ export const LATE_MINUTES = [15, 30, 45] as const;
 export type LateMinutes = (typeof LATE_MINUTES)[number];
 export interface ShiftReply { id: string; shiftId: string; personId: string; siteId: SiteId; kind: ReplyKind; lateMinutes?: LateMinutes; createdAt: number }
 
-/** Replies open 12 hours before a shift starts and close when it ends. */
-export const REPLY_OPENS_HOURS = 12;
+/**
+ * Replies open at the start of the shift's day (or when its reminder goes, if that's earlier: a shift just after
+ * midnight) and close when the shift ends. So any reminder, even one the owner sends early, can be answered.
+ */
+export const replyOpensAt = (s: ShiftTimes) => Math.min(londonToUtc(s.date, "00:00"), reminderAt(s));
+export const replyOpen = (s: ShiftTimes, now: number) => now >= replyOpensAt(s) && now < shiftEnd(s);
 
 export function canReply(shift: ShiftTimes & { personId: string; published: boolean; cancelled: boolean }, personId: string, now: number): { ok: true } | { ok: false; error: string } {
   if (shift.personId !== personId) return { ok: false, error: "That isn't your shift" };
   if (!shift.published || shift.cancelled) return { ok: false, error: "That shift isn't on the rota any more" };
   if (now >= shiftEnd(shift)) return { ok: false, error: "That shift has finished" };
-  if (now < shiftStart(shift) - REPLY_OPENS_HOURS * 3_600_000) return { ok: false, error: "You can reply on the day of the shift" };
+  if (now < replyOpensAt(shift)) return { ok: false, error: "You can reply on the day of the shift" };
   return { ok: true };
 }
-
-/** Whether a shift shows the reply buttons (same window as `canReply`). */
-export const replyOpen = (s: ShiftTimes, now: number) => now < shiftEnd(s) && now >= shiftStart(s) - REPLY_OPENS_HOURS * 3_600_000;
 
 export function replyText(r: Pick<ShiftReply, "kind" | "lateMinutes">): string {
   return r.kind === "on_my_way" ? "On my way" : r.kind === "late" ? `Running about ${r.lateMinutes} min late` : "Can't make it";
@@ -126,6 +145,13 @@ export function replyText(r: Pick<ShiftReply, "kind" | "lateMinutes">): string {
 /** True when a reply says the same as the one before it (a second tap): nothing new to record or send. */
 export const sameReply = (a: Pick<ShiftReply, "kind" | "lateMinutes"> | undefined, b: Pick<ShiftReply, "kind" | "lateMinutes">) =>
   !!a && a.kind === b.kind && (a.lateMinutes ?? 0) === (b.lateMinutes ?? 0);
+
+/** How long a reply stays at the top of Today: a late one until half an hour after they said they'd be in, a can't-make-it until the shift ends. */
+export function replyAlertUntil(reply: Pick<ShiftReply, "kind" | "lateMinutes"> | undefined, s: ShiftTimes): number | undefined {
+  if (reply?.kind === "cant_make_it") return shiftEnd(s);
+  if (reply?.kind === "late") return shiftStart(s) + ((reply.lateMinutes ?? 0) + 30) * 60_000;
+  return undefined;
+}
 
 /** The latest reply for each shift (a newer reply replaces the last). */
 export function latestReplies(replies: ShiftReply[]): Map<string, ShiftReply> {
@@ -169,15 +195,18 @@ export function replyMessages(reply: ShiftReply, previous: ShiftReply | undefine
 export interface TeamDayRow {
   shiftId: string; personId: string; name: string; siteId: SiteId; siteName: string; section: string; date: string; start: string; end: string;
   started: boolean; ended: boolean; remindedAt?: number; reply?: ShiftReply; notificationsOn: boolean;
+  /** Until when the reply belongs at the top of Today (see replyAlertUntil). */
+  alertUntil?: number;
 }
 
 /** Today's shifts, earliest first, with each one's reminder and latest reply. */
 export function teamDay(shifts: (ReminderShift & { name: string })[], reminded: Map<string, number>, replies: ShiftReply[], withPush: Set<string>, now: number): TeamDayRow[] {
   const latest = latestReplies(replies);
   return shifts
-    .map((s) => ({
+    .map((s): TeamDayRow => ({
       shiftId: s.id, personId: s.personId, name: s.name, siteId: s.siteId, siteName: s.siteName, section: s.section, date: s.date, start: s.start, end: s.end,
       started: now >= shiftStart(s), ended: now >= shiftEnd(s), remindedAt: reminded.get(reminderKey(s)), reply: latest.get(s.id), notificationsOn: withPush.has(s.personId),
+      alertUntil: replyAlertUntil(latest.get(s.id), s),
     }))
-    .sort((a, b) => a.siteName.localeCompare(b.siteName) || a.start.localeCompare(b.start) || a.name.localeCompare(b.name));
+    .sort((a, b) => a.siteName.localeCompare(b.siteName) || shiftStart(a) - shiftStart(b) || a.name.localeCompare(b.name));
 }

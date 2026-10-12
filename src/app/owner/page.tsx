@@ -60,7 +60,8 @@ export default async function Owner() {
       issues: r?.issues ?? [],
     };
   });
-  const team = teamRowsView(await teamToday(sites.filter((s) => s.status === "open").map((s) => s.id)));
+  const now = Date.now();
+  const team = teamRowsView(await teamToday(sites.filter((s) => s.status === "open").map((s) => s.id), now), now);
   const withPush = await db.peopleWithPush();
   const active = all.filter((p) => p.status === "active");
   const missing = active.filter((p) => !withPush.has(p.id)).map((p) => p.name);

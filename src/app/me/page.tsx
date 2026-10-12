@@ -27,7 +27,12 @@ export default async function MyShifts() {
   const db = store();
   const today = londonDate(Date.now());
   const shifts = (await db.shiftsForPerson(ctx.person.id, today, addDays(today, 27))).filter((s) => s.published && !s.cancelled);
-  const notices = (await db.notices(ctx.person.id, 25)).filter((n) => n.kind !== "notice").slice(0, 15);
+  // Shift reminders and the evening-before list are only useful until the shift: older ones drop off, so they don't
+  // push rota changes, time off decisions and certificate warnings out of the list.
+  const now = Date.now();
+  const notices = (await db.notices(ctx.person.id, 60))
+    .filter((n) => n.kind !== "notice" && !(n.kind === "shift" && n.createdAt < now - 18 * 3_600_000) && !(n.kind === "evening" && n.createdAt < now - 36 * 3_600_000))
+    .slice(0, 15);
   const teamNotices = await db.teamNotices(0);
   const unread = unreadFor(teamNotices, ctx.person, today);
   const myTimeOff = (await db.timeOff({ personId: ctx.person.id, from: addDays(today, -60) })).filter((t) => t.status !== "cancelled" || t.endsOn >= today);
@@ -41,7 +46,6 @@ export default async function MyShifts() {
   const onTablet = !!session?.deviceId;
   const publicKey = onTablet ? "" : (await vapidKeys()).publicKey;
 
-  const now = Date.now();
   const replyable = shifts.filter((s) => replyOpen(s, now));
   const replies = replyable.length ? latestReplies(await db.shiftReplies(replyable.map((s) => s.id))) : new Map<string, Reply>();
   const TONE = { on_my_way: "done", late: "late", cant_make_it: "bad" } as const;

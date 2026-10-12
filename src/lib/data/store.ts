@@ -188,7 +188,11 @@ export interface Store {
   // Replies to shift reminders (kept: a new reply is added, the latest one counts)
   /** Replies about these shifts, oldest first. */
   shiftReplies(shiftIds: string[]): Promise<ShiftReply[]>;
-  addShiftReply(r: Omit<ShiftReply, "id" | "createdAt">): Promise<string>;
+  /**
+   * Adds a reply unless `isRepeat` says it repeats the latest one (a second tap, or a retry). Done under a lock on
+   * the shift, so two at once can't both be added. Returns the reply that stands now and the one before it.
+   */
+  addShiftReply(r: Omit<ShiftReply, "id" | "createdAt">, isRepeat: (latest: ShiftReply) => boolean): Promise<{ reply: ShiftReply; previous?: ShiftReply; added: boolean }>;
 
   // Messages and push
   /** `url`: the app page the phone notification opens (default My shifts). */

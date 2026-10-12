@@ -34,7 +34,7 @@ export function RemindersCard({ rows, active, pushOn, missing }: { rows: TeamRow
     <section className="card stack" aria-label="Shift reminders">
       <div className="row wrap">
         <h2 className="h-sec grow">Shift reminders</h2>
-        <span className={`chip ${pushOn < active ? "warn" : "done"}`}>Notifications on: {pushOn} of {active}</span>
+        <span className={`chip ${pushOn < active ? "warn" : "done"}`}>Notifications on: {pushOn} of {active} people</span>
       </div>
       <p className="muted" style={{ margin: 0 }}>Each shift gets a reminder 2 hours before it starts, with what&apos;s waiting from handover. Staff reply On my way, Running late or Can&apos;t make it, and managers hear about late ones straight away.</p>
       {missing.length > 0 && (
@@ -50,11 +50,11 @@ export function RemindersCard({ rows, active, pushOn, missing }: { rows: TeamRow
         </div>
       ))}
       {!rows.length && <div className="muted">Nobody is on a published rota today.</div>}
-      <div className="row wrap" style={{ gap: 10 }}>
-        <button type="button" className="btn accent" disabled={pending || !toSend} onClick={send}>Send reminders now{toSend ? ` (${toSend})` : ""}</button>
-        <span className="muted grow">{toSend
-          ? `Sends now to everyone starting later today who hasn't had theirs. Nobody gets two for the same shift.`
+      <div className="stack" style={{ gap: 6, marginTop: 4 }}>
+        <span className="muted">{toSend
+          ? "Sends now to everyone starting later today who hasn't had theirs. Nobody gets two for the same shift."
           : rows.some((r) => !r.started) ? "Everyone starting later today has had their reminder." : "No more shifts start today."}</span>
+        <button type="button" className="btn accent" style={{ alignSelf: "flex-start" }} disabled={pending || !toSend} onClick={send}>Send reminders now{toSend ? ` (${toSend})` : ""}</button>
       </div>
       {msg && <div className="alert good" role="status">{msg}</div>}
       {err && <div className="err" role="alert">{err}</div>}

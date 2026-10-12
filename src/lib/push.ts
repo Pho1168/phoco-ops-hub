@@ -13,8 +13,11 @@ export async function vapidKeys(): Promise<{ publicKey: string; privateKey: stri
 /** `tag`: one per message, so a new notification doesn't replace the last one on the phone. */
 export interface PushPayload { title: string; body: string; url: string; tag?: string }
 
-/** Sends to every phone the person turned reminders on for. Dead subscriptions are removed. */
-export async function pushToPerson(personId: string, payload: PushPayload): Promise<number> {
+/**
+ * Sends to every phone the person turned reminders on for. Dead subscriptions are removed. "high" asks the phone to
+ * deliver at once even when idle (shift reminders and replies about them); everything else can wait a little.
+ */
+export async function pushToPerson(personId: string, payload: PushPayload, urgency: "normal" | "high" = "normal"): Promise<number> {
   const db = store();
   const subs = await db.pushSubs(personId);
   if (!subs.length) return 0;
@@ -25,7 +28,7 @@ export async function pushToPerson(personId: string, payload: PushPayload): Prom
       await webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, JSON.stringify(payload), {
         vapidDetails: { subject: "mailto:admin@phoandco.com", publicKey: keys.publicKey, privateKey: keys.privateKey },
         TTL: 12 * 60 * 60,
-        urgency: "normal",
+        urgency,
       });
       sent++;
     } catch (e) {

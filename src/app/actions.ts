@@ -20,7 +20,7 @@ import { canComplete, categoryLabel, isForPerson, priorityCode, validateTask, TA
 import { canManageEquipment, canUseEquipment, faultReportedMessages, faultsOf, siteManagers, validateEquipment, validateService,
   EQUIPMENT_KINDS, INSTRUCTIONS_MAX, NAME_MAX, SEVERITY_LABEL, TEXT_MAX, type EquipmentKind } from "@/lib/domain/equipment";
 import { deliverDue, queueShiftReminders } from "@/lib/rota-service";
-import { canReply, latestReplies, replyMessages, replySendAfter, replyText, sameReply, type LateMinutes } from "@/lib/domain/reminders";
+import { canReply, replyMessages, replySendAfter, replyText, sameReply, type LateMinutes } from "@/lib/domain/reminders";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
@@ -623,16 +623,16 @@ export async function replyToShift(input: unknown): Promise<ActionResult> {
   const check = canReply(shift, ctx.person.id, now);
   if (!check.ok) return check;
   const reply = { kind: r.data.kind, lateMinutes: r.data.lateMinutes as LateMinutes | undefined };
-  const previous = latestReplies(await db.shiftReplies([shift.id])).get(shift.id);
-  if (sameReply(previous, reply)) return { ok: true }; // a second tap: already sent
-  const id = await db.addShiftReply({ shiftId: shift.id, personId: ctx.person.id, siteId: shift.siteId, ...reply });
+  // A repeat (second tap, or a retry after something failed) adds nothing, but its messages are queued again below:
+  // their keys mean managers are told once, and a retry still reaches them if the first try stopped half way.
+  const saved = await db.addShiftReply({ shiftId: shift.id, personId: ctx.person.id, siteId: shift.siteId, ...reply }, (latest) => sameReply(latest, reply));
   const today = londonDate(now);
   const told: string[] = [];
-  for (const m of replyMessages({ id, shiftId: shift.id, personId: ctx.person.id, siteId: shift.siteId, ...reply, createdAt: now }, previous, shift, ctx.person.name, await db.people(), today)) {
+  for (const m of replyMessages(saved.reply, saved.previous, shift, ctx.person.name, await db.people(), today)) {
     if (await db.queueNotice({ personId: m.personId, kind: "reply", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: replySendAfter(now, shift), url: m.url })) told.push(m.personId);
   }
   if (told.length) await deliverDue(now, told);
-  await db.audit({ actorId: ctx.person.id, siteId: shift.siteId, action: "shift.reply", detail: `${replyText(reply)}: ${shift.date === today ? "today" : dayMonthYear(shift.date)} ${shift.start}–${shift.end} (${shift.section})` });
+  if (saved.added) await db.audit({ actorId: ctx.person.id, siteId: shift.siteId, action: "shift.reply", detail: `${replyText(reply)}: ${shift.date === today ? "today" : dayMonthYear(shift.date)} ${shift.start}–${shift.end} (${shift.section})` });
   revalidatePath("/me"); revalidatePath("/today"); revalidatePath("/owner");
   return { ok: true };
 }

@@ -80,6 +80,34 @@ describe("certificate reminders on the scheduler", () => {
     expect(await queueShiftReminders(at("09:21"), demoStore, "now")).toEqual([]);
     expect(await queueShiftReminders(at("15:00"), demoStore)).toEqual([]);
     expect((await demoStore.notices("DEMO-BOH", 10)).filter((n) => n.kind === "shift")).toHaveLength(1);
+
+    // The 17:00 shift moves to 18:00 in the sheet: it gets a reminder for the new time, 2 hours before.
+    const moved = { ...sh("DEMO-BOH", "BOH", "18:00", "22:15") };
+    await demoStore.applyShiftSync("EAS", { added: [], changed: [{ before: { ...sh("DEMO-BOH", "BOH", "17:00", "22:15"), cancelled: false }, after: moved }], cancelled: [] },
+      new Map([["DEMO-BOH", "DEMO-BOH"]]));
+    expect(await queueShiftReminders(at("15:50"), demoStore)).toEqual([]);
+    expect(await queueShiftReminders(at("16:00"), demoStore)).toEqual(["DEMO-BOH"]);
+    expect((await demoStore.notices("DEMO-BOH", 10)).filter((n) => n.kind === "shift").map((n) => n.title)).toContain("Shift at 18:00 today · Eastcote");
+
+    // Cancelled shifts, and shifts in weeks that aren't published, get nothing.
+    await demoStore.applyShiftSync("EAS", { added: [], changed: [], cancelled: [{ ...moved, cancelled: false }] }, new Map());
+    const next = addDays(day, 7);
+    await demoStore.applyShiftSync("EAS", { added: [{ ...sh("DEMO-FOH", "FOH", "11:00", "15:00"), sourceKey: "draft-week", week: weekStartOf(next), date: next }], changed: [], cancelled: [] },
+      new Map([["DEMO-FOH", "DEMO-FOH"]]));
+    expect(await queueShiftReminders(londonToUtc(next, "09:30"), demoStore)).toEqual([]);
+    resetDemo();
+  });
+
+  it("a reply repeated or sent twice at once is stored once", async () => {
+    resetDemo();
+    const r = { shiftId: "s1", personId: "DEMO-FOH", siteId: "EAS" as const, kind: "late" as const, lateMinutes: 15 as const };
+    const same = (latest: { kind: string; lateMinutes?: number }) => latest.kind === r.kind && latest.lateMinutes === r.lateMinutes;
+    const [a, b] = await Promise.all([demoStore.addShiftReply(r, same), demoStore.addShiftReply(r, same)]);
+    expect([a.added, b.added].sort()).toEqual([false, true]);
+    expect(a.reply.id).toBe(b.reply.id);
+    expect(await demoStore.shiftReplies(["s1"])).toHaveLength(1);
+    const c = await demoStore.addShiftReply({ ...r, kind: "on_my_way", lateMinutes: undefined }, () => false);
+    expect(c).toMatchObject({ added: true, previous: { id: a.reply.id } });
     resetDemo();
   });
 });
