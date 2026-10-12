@@ -14,6 +14,7 @@ import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
 import type { Device } from "@/lib/domain/devices";
+import type { Pathway, Question, Skill, TrainingEvent } from "@/lib/domain/training";
 
 /**
  * Postgres implementation of Store, used when DATABASE_URL is set (Supabase in production).
@@ -265,6 +266,37 @@ async function prepHandoversWhere(where: postgres.PendingQuery<postgres.Row[]>, 
   }));
 }
 
+// ---------- training ----------
+interface SkillRow {
+  id: string; section: Area; grp: string; position: number; title: string; about: string; hands_on: boolean; induction: boolean; links: string[] | null;
+  video_url: string | null; refresher_months: number | null; pass_mark: number; created_at: Date; updated_at: Date; rev: number; retired_at: Date | null;
+}
+const toSkill = (r: SkillRow): Skill => ({
+  id: r.id, section: r.section, group: r.grp, position: r.position, title: r.title, about: r.about, handsOn: r.hands_on, induction: r.induction,
+  links: r.links ?? [], videoUrl: opt(r.video_url), refresherMonths: opt(r.refresher_months), passMark: r.pass_mark,
+  createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), rev: r.rev, retiredAt: ms(r.retired_at),
+});
+interface QuestionRow { id: string; skill_id: string; position: number; text: string; options: string[]; answer: number; approved_at: Date | null; created_at: Date; updated_at: Date }
+const toQuestion = (r: QuestionRow): Question => ({
+  id: r.id, skillId: r.skill_id, position: r.position, text: r.text, options: r.options, answer: r.answer, approved: !!r.approved_at,
+  approvedAt: ms(r.approved_at), createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(),
+});
+interface TrainingEventRow { id: string; person_id: string; skill_id: string; kind: TrainingEvent["kind"]; at: Date; by_id: string; by_name: string | null; score: number | null; passed: boolean | null; note: string | null }
+const toTrainingEvent = (r: TrainingEventRow): TrainingEvent => ({
+  id: r.id, personId: r.person_id, skillId: r.skill_id, kind: r.kind, at: r.at.getTime(), byId: r.by_id, byName: r.by_name ?? "",
+  score: opt(r.score), passed: opt(r.passed), note: opt(r.note),
+});
+/** One position change at a time in the skill list (adding, moving, bringing back). */
+const lockSkillOrder = (tx: postgres.ReservedSql) => tx`select pg_advisory_xact_lock(hashtext('training_skills.position'))`;
+/** A section someone works in as staff or a manager for the first time starts its training today. */
+async function recordStarts(tx: postgres.ReservedSql, personId: string, access: Person["access"]) {
+  const sections = Array.from(new Set(access.filter((a) => a.role === "staff" || a.role === "manager").flatMap((a) => a.sections)));
+  if (!sections.length) return;
+  await tx`insert into training_starts (person_id, section, started_on)
+    select ${personId}, s, (now() at time zone 'Europe/London')::date from unnest(${sections}::text[]) as s
+    on conflict (person_id, section) do nothing`;
+}
+
 export const sqlStore: Store = {
   async sites() {
     const q = sql();
@@ -313,6 +345,7 @@ export const sqlStore: Store = {
       for (const a of access) {
         await tx`insert into person_sites (person_id, site_id, role, sections) values (${p.id}, ${a.siteId}, ${a.role}, ${a.sections})`;
       }
+      await recordStarts(tx, p.id, access);
       return p.id;
     });
   },
@@ -323,6 +356,7 @@ export const sqlStore: Store = {
       for (const a of access) {
         await tx`insert into person_sites (person_id, site_id, role, sections) values (${personId}, ${a.siteId}, ${a.role}, ${a.sections})`;
       }
+      await recordStarts(tx, personId, access);
     });
   },
 
@@ -1184,6 +1218,167 @@ export const sqlStore: Store = {
     const r = await q`delete from media m where m.created_at < ${new Date(before)}
       and not exists (select 1 from library_versions v where v.status <> 'discarded' and strpos(v.body::text, m.id::text) > 0)`;
     return r.count;
+  },
+
+  // ---------- training ----------
+  async trainingSkills() {
+    const q = sql();
+    return (await q<SkillRow[]>`
+      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, rev, retired_at
+      from training_skills order by case section when 'FOH' then 1 when 'BOH' then 2 else 3 end, position, title`).map(toSkill);
+  },
+  async trainingSkill(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<SkillRow[]>`
+      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, rev, retired_at
+      from training_skills where id = ${id}`;
+    return r ? toSkill(r) : undefined;
+  },
+  async createTrainingSkill(s, by) {
+    return withTx(async (tx) => {
+      await lockSkillOrder(tx);
+      const [r] = await tx<{ id: string }[]>`
+        insert into training_skills (section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_by)
+        values (${s.section}, ${s.group}, (select coalesce(max(position), 0) + 1 from training_skills where section = ${s.section}), ${s.title}, ${s.about},
+          ${s.handsOn}, ${s.induction}, ${s.links}::uuid[], ${s.videoUrl ?? null}, ${s.refresherMonths ?? null}, ${s.passMark}, ${by})
+        returning id`;
+      return r.id;
+    });
+  },
+  async saveTrainingSkill(id, rev, s) {
+    if (!isUuid(id)) return undefined;
+    return withTx(async (tx) => {
+      await lockSkillOrder(tx);
+      // In SET, "section" and "position" are the values before the update: a new pathway puts it last there.
+      const [r] = await tx<{ rev: number }[]>`
+        update training_skills set grp = ${s.group}, title = ${s.title}, about = ${s.about}, hands_on = ${s.handsOn}, induction = ${s.induction},
+          links = ${s.links}::uuid[], video_url = ${s.videoUrl ?? null}, refresher_months = ${s.refresherMonths ?? null}, pass_mark = ${s.passMark},
+          position = case when section = ${s.section} then position
+            else (select coalesce(max(o.position), 0) + 1 from training_skills o where o.section = ${s.section}) end,
+          section = ${s.section}, updated_at = now(), rev = rev + 1
+        where id = ${id} and rev = ${rev} returning rev`;
+      return r?.rev;
+    });
+  },
+  async moveTrainingSkill(id, dir) {
+    if (!isUuid(id)) return false;
+    return withTx(async (tx) => {
+      await lockSkillOrder(tx);
+      const [me] = await tx<{ section: Area; position: number }[]>`select section, position from training_skills where id = ${id} and retired_at is null`;
+      if (!me) return false;
+      const [other] = await tx<{ id: string; position: number }[]>`
+        select id, position from training_skills where section = ${me.section} and retired_at is null and id <> ${id}
+          and ${dir < 0 ? tx`position < ${me.position}` : tx`position > ${me.position}`}
+        order by ${dir < 0 ? tx`position desc` : tx`position asc`} limit 1`;
+      if (!other) return false;
+      await tx`update training_skills set position = ${other.position} where id = ${id}`;
+      await tx`update training_skills set position = ${me.position} where id = ${other.id}`;
+      return true;
+    });
+  },
+  async retireTrainingSkill(id, by) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update training_skills set retired_at = now(), retired_by = ${by} where id = ${id} and retired_at is null`).count === 1;
+  },
+  async reinstateTrainingSkill(id) {
+    if (!isUuid(id)) return false;
+    return withTx(async (tx) => {
+      await lockSkillOrder(tx);
+      const r = await tx`update training_skills k set retired_at = null, retired_by = null,
+          position = (select coalesce(max(o.position), 0) + 1 from training_skills o where o.section = k.section and o.retired_at is null)
+        where k.id = ${id} and k.retired_at is not null`;
+      return r.count === 1;
+    });
+  },
+  async trainingQuestions(skillIds) {
+    const q = sql();
+    const ids = skillIds?.filter(isUuid);
+    if (ids && !ids.length) return [];
+    const rows = await q<QuestionRow[]>`
+      select id, skill_id, position, text, options, answer, approved_at, created_at, updated_at from training_questions
+      where retired_at is null ${ids ? q`and skill_id = any(${ids}::uuid[])` : q``}
+      order by skill_id, position, created_at`;
+    return rows.map(toQuestion);
+  },
+  async saveTrainingQuestion(x, by, approve) {
+    if (!isUuid(x.skillId) || (x.id !== undefined && !isUuid(x.id))) return undefined;
+    return withTx(async (tx) => {
+      // The skill's row is locked so two new questions can't take the same place.
+      const [skill] = await tx`select id from training_skills where id = ${x.skillId} and retired_at is null for update`;
+      if (!skill) return undefined;
+      const options = tx.json(x.options as unknown as postgres.JSONValue);
+      if (x.id) {
+        const [r] = await tx<{ id: string }[]>`update training_questions set text = ${x.text}, options = ${options}, answer = ${x.answer}, updated_at = now()
+          where id = ${x.id} and skill_id = ${x.skillId} and retired_at is null returning id`;
+        return r?.id;
+      }
+      const [r] = await tx<{ id: string }[]>`
+        insert into training_questions (skill_id, position, text, options, answer, approved_by, approved_at, created_by)
+        values (${x.skillId}, (select coalesce(max(position), 0) + 1 from training_questions where skill_id = ${x.skillId}), ${x.text}, ${options}, ${x.answer},
+          ${approve ? by : null}, ${approve ? tx`now()` : null}, ${by})
+        returning id`;
+      return r.id;
+    });
+  },
+  async approveTrainingQuestions(skillId, by) {
+    if (!isUuid(skillId)) return 0;
+    const q = sql();
+    return (await q`update training_questions set approved_by = ${by}, approved_at = now()
+      where skill_id = ${skillId} and approved_at is null and retired_at is null`).count;
+  },
+  async retireTrainingQuestion(id, by) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update training_questions set retired_at = now(), retired_by = ${by} where id = ${id} and retired_at is null`).count === 1;
+  },
+  async trainingPathways() {
+    const q = sql();
+    const rows = await q<{ section: Area; induction_days: number; all_days: number }[]>`select section, induction_days, all_days from training_pathways`;
+    return rows.map((r): Pathway => ({ section: r.section, inductionDays: r.induction_days, allDays: r.all_days }));
+  },
+  async saveTrainingPathway(p, by) {
+    const q = sql();
+    await q`insert into training_pathways (section, induction_days, all_days, updated_by, updated_at) values (${p.section}, ${p.inductionDays}, ${p.allDays}, ${by}, now())
+      on conflict (section) do update set induction_days = excluded.induction_days, all_days = excluded.all_days, updated_by = excluded.updated_by, updated_at = now()`;
+  },
+  async trainingStarts(personIds) {
+    const q = sql();
+    const ids = personIds?.filter(isUuid);
+    if (ids && !ids.length) return [];
+    const rows = await q<{ person_id: string; section: Area; started_on: string }[]>`
+      select person_id, section, started_on::text as started_on from training_starts ${ids ? q`where person_id = any(${ids}::uuid[])` : q``}`;
+    return rows.map((r) => ({ personId: r.person_id, section: r.section, startedOn: r.started_on }));
+  },
+  async trainingEvents(f) {
+    const q = sql();
+    const people = f.personIds?.filter(isUuid), skills = f.skillIds?.filter(isUuid);
+    if ((people && !people.length) || (skills && !skills.length)) return [];
+    const rows = await q<TrainingEventRow[]>`
+      select e.id, e.person_id, e.skill_id, e.kind, e.at, e.by_id, b.display_name as by_name, e.score, e.passed, e.note
+      from training_events e join people b on b.id = e.by_id
+      where true ${people ? q`and e.person_id = any(${people}::uuid[])` : q``} ${skills ? q`and e.skill_id = any(${skills}::uuid[])` : q``}
+      order by e.at, e.id`;
+    return rows.map(toTrainingEvent);
+  },
+  async addTrainingEvent(e) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into training_events (person_id, skill_id, kind, by_id, score, passed, detail, note)
+      values (${e.personId}, ${e.skillId}, ${e.kind}, ${e.byId}, ${e.score ?? null}, ${e.passed ?? null},
+        ${e.detail === undefined ? null : q.json(e.detail as postgres.JSONValue)}, ${e.note ?? null})
+      returning id`;
+    return r.id;
+  },
+  async libraryMajorChanges(docIds) {
+    const ids = docIds.filter(isUuid);
+    if (!ids.length) return new Map();
+    const q = sql();
+    const rows = await q<{ doc_id: string; at: Date }[]>`
+      select doc_id, max(published_at) as at from library_versions
+      where doc_id = any(${ids}::uuid[]) and change = 'major' and status in ('published', 'superseded') group by doc_id`;
+    return new Map(rows.map((r) => [r.doc_id, r.at.getTime()]));
   },
 
   // ---------- shift cover ----------

@@ -15,6 +15,8 @@ import { dueReminders, reminderKey, shiftReminderMessage, startingLaterToday, wa
 import { dailyDigest, gasConfirmedMessages, gasMessages, notReadyMessages, DAILY_DIGEST_FROM, DAILY_DIGEST_UNTIL, READY_ALERT_WINDOW_MIN, type DayFacts } from "@/lib/domain/daily";
 import { dayFacts, gasFor, readyFor, shiftsAround } from "@/lib/daily-service";
 import { PHOTO_KEEP_UNUSED_DAYS } from "@/lib/domain/library";
+import { trainingReminders } from "@/lib/domain/training";
+import { trainingData } from "@/lib/training-service";
 
 export interface RotaUpload { export: string[][]; weeks: string[][]; staff: string[][] }
 
@@ -92,7 +94,7 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
   }
   if (hm >= CERT_REMINDER_FROM && hm < CERT_REMINDER_UNTIL) {
     // Each morning job on its own: one failing mustn't stop the others or the sending below.
-    for (const job of [queueCertReminders, queueServiceReminders, queueWeeklyReport]) {
+    for (const job of [queueCertReminders, queueServiceReminders, queueWeeklyReport, queueTrainingReminders]) {
       try { queued += await job(now); } catch (e) { console.error(`tick: ${job.name} failed`, e); }
     }
     // Tidying: photos no SOP version uses (taken off a step, or from a draft never saved) go after a week.
@@ -107,6 +109,16 @@ export async function queueCertReminders(now = Date.now(), db: Store = store()):
   let queued = 0;
   for (const m of certReminderMessages(people, certs, londonDate(now))) {
     if (await db.queueNotice({ personId: m.personId, kind: "cert", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) queued++;
+  }
+  return queued;
+}
+
+/** Training: a refresher coming up or due, or a skill to do again. Each message has a key, so it's only queued once. */
+export async function queueTrainingReminders(now = Date.now(), db: Store = store()): Promise<number> {
+  const [people, sites, data] = await Promise.all([db.people(), db.sites(), trainingData(db)]);
+  let queued = 0;
+  for (const m of trainingReminders(people, sites, data, londonDate(now))) {
+    if (await db.queueNotice({ personId: m.personId, kind: "training", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) queued++;
   }
   return queued;
 }

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Icon } from "@/components/Icon";
 
-export interface ManageCounts { timeOffPending?: number; certIssues?: number; noticesActive?: number; equipmentIssues?: number; urgent?: number; coverToDo?: number; libraryToDo?: number; recipesToDo?: number }
+export interface ManageCounts { timeOffPending?: number; certIssues?: number; noticesActive?: number; equipmentIssues?: number; urgent?: number; coverToDo?: number; libraryToDo?: number; recipesToDo?: number; trainingToDo?: number }
 
 const TILES = [
   { href: "/manage/tasks", icon: "prep", title: "Task centre", text: "Everything open at your sites in one list, most urgent first", count: "urgent" as const, countLabel: "urgent" },
@@ -12,6 +12,7 @@ const TILES = [
   { href: "/manage/notices", icon: "notice", title: "Team notices", text: "Post a notice and see who has read it", count: "noticesActive" as const, countLabel: "live" },
   { href: "/manage/time-off", icon: "timeoff", title: "Time off", text: "Holiday requests to approve or decline", count: "timeOffPending" as const, countLabel: "to decide" },
   { href: "/manage/cover", icon: "handover", title: "Shift cover", text: "Who can cover a shift: approve, then update the rota sheet", count: "coverToDo" as const, countLabel: "to do" },
+  { href: "/manage/training", icon: "book", title: "Training", text: "Skills passports: confirm hands-on skills, see who's overdue", count: "trainingToDo" as const, countLabel: "to do" },
   { href: "/manage/certificates", icon: "cert", title: "Certificates", text: "Food hygiene, allergens, first aid and expiry dates", count: "certIssues" as const, countLabel: "need attention" },
   { href: "/manage/equipment", icon: "wrench", title: "Equipment", text: "Faults, repairs, servicing and QR labels", count: "equipmentIssues" as const, countLabel: "to sort" },
 ];

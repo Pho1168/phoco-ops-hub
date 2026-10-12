@@ -25,6 +25,8 @@ import { shiftStart } from "@/lib/domain/reminders";
 import { gasFor } from "@/lib/daily-service";
 import { londonHM } from "@/lib/domain/time";
 import { MustRead } from "@/components/MustRead";
+import { TrainingDue } from "@/components/TrainingDue";
+import { myTraining } from "@/lib/training-service";
 import { allergenChangesToConfirm, sopsToRead } from "@/lib/library-service";
 
 export const dynamic = "force-dynamic";
@@ -81,7 +83,7 @@ export default async function MyShifts() {
     offered: r.offers.some((o) => o.personId === ctx.person.id && !o.withdrawnAt),
   }));
 
-  const [toRead, allergenChanges] = await Promise.all([sopsToRead(ctx.person, db), allergenChangesToConfirm(ctx.person, db)]);
+  const [toRead, allergenChanges, training] = await Promise.all([sopsToRead(ctx.person, db), allergenChangesToConfirm(ctx.person, db), myTraining(ctx.person, allSites, db)]);
 
   const days = new Map<string, typeof shifts>();
   for (const s of shifts) days.set(s.date, [...(days.get(s.date) ?? []), s]);
@@ -101,11 +103,13 @@ export default async function MyShifts() {
           <div className="grow"><div className="eyebrow">Next 4 weeks · published rotas only</div><h1 className="h-display">My shifts</h1></div>
           <Link className="btn ghost small" href="/library">SOPs</Link>
           <Link className="btn ghost small" href="/library/allergens">Allergens</Link>
+          {training.rows.length > 0 && <Link className="btn ghost small" href="/library/training">Training</Link>}
           <Link className="btn ghost small" href="/rota">Team rota</Link>
         </div>
 
         <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName, when: when(n.createdAt) }))} />
         <MustRead docs={toRead} allergens={allergenChanges} />
+        <TrainingDue overdue={training.tally.overdue} again={training.tally.again} />
 
         {gasCards.map(({ site, g }) => (
           <GasCheck key={site.id} siteId={site.id} siteName={site.name} state={g.state as "due" | "overdue" | "done"} closeAt={londonHM(g.day.closeAt)} needsPin={onTablet}
