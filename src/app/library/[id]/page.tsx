@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { managedSites } from "@/lib/domain/access";
-import { canDraft, canReinstate, canRetire, CHANGE_TEXT, docReach, readStats, readsAny, reviewState, STATUS_TEXT, versionLabel, type LibraryVersion } from "@/lib/domain/library";
+import { canDraft, canReinstate, canRetire, CHANGE_TEXT, docReach, isKind, readStats, readsAny, reviewState, STATUS_TEXT, versionLabel, type LibraryDoc, type LibraryVersion, type SopBody } from "@/lib/domain/library";
+import type { DishBody, PrepBody } from "@/lib/domain/recipes";
 import { dayMonthYear, londonDate } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { erasedPhotos } from "@/lib/library-service";
@@ -11,12 +12,14 @@ import { SopView } from "../SopView";
 import { dayMonthYearAt, whoFor } from "../format";
 import { StepMode } from "./StepMode";
 import { AckButton, EditButton, RetireButton } from "./SopButtons";
+import { RecipeDoc } from "./RecipeDoc";
 
 export const dynamic = "force-dynamic";
 
 /**
  * One SOP: the published version for everyone it's for (tablet or own phone), with "I've read it". Managers also see
- * who has read it at their sites, any draft in progress, and every past version (?v=<version id>).
+ * who has read it at their sites, any draft in progress, and every past version (?v=<version id>). Recipes have their
+ * own page (RecipeDoc).
  */
 export default async function SopPage(props: { params: Promise<{ id: string }>; searchParams: Promise<{ v?: string }> }) {
   const [{ id }, { v: wanted }] = await Promise.all([props.params, props.searchParams]);
@@ -24,15 +27,17 @@ export default async function SopPage(props: { params: Promise<{ id: string }>; 
   if (!ctx) redirect("/login");
   if (ctx.person.pinMustChange) redirect("/pin");
   const db = store();
-  const doc = await db.libraryDoc(id);
-  if (!doc) notFound();
+  const found = await db.libraryDoc(id);
+  if (!found) notFound();
+  if (!isKind(found, "sop")) return <RecipeDoc ctx={ctx} doc={found as LibraryDoc<PrepBody | DishBody>} wanted={wanted} />;
+  const doc = found;
   const full = ctx.scope === "full";
   const writer = full && canDraft(ctx.person);
   if (doc.retiredAt && !writer) notFound();
-  let v: LibraryVersion | undefined = doc.published;
+  let v: LibraryVersion<SopBody> | undefined = doc.published;
   if (wanted && writer) {
     const other = await db.libraryVersion(wanted);
-    if (other && other.docId === doc.id && (other.status === "published" || other.status === "superseded")) v = other;
+    if (other && other.docId === doc.id && (other.status === "published" || other.status === "superseded")) v = other as LibraryVersion<SopBody>;
   }
   if (!v) {
     if (writer && doc.open && !doc.retiredAt) redirect(`/library/${doc.id}/draft`); // never published: the draft is all there is

@@ -2,10 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ackSop, eraseSopPhoto, reinstateSop, retireSop, startSopDraft } from "@/app/actions";
+import { ackVersion, erasePhoto, reinstateDoc, retireDoc, startDraft } from "@/app/actions";
 
-/** "I've read and understood it". */
-export function AckButton({ versionId }: { versionId: string }) {
+/** "I've read and understood it" (an SOP), or "I've seen the change" (a dish's allergens). */
+export function AckButton({ versionId, label = "I've read and understood it" }: { versionId: string; label?: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -13,9 +13,9 @@ export function AckButton({ versionId }: { versionId: string }) {
     <div className="stack" style={{ gap: 8 }}>
       <button type="button" className="btn accent" disabled={pending} onClick={() => start(async () => {
         setErr("");
-        const r = await ackSop(versionId);
+        const r = await ackVersion(versionId);
         if (!r.ok) setErr(r.error); else router.refresh();
-      })}>{pending ? "Saving…" : "I've read and understood it"}</button>
+      })}>{pending ? "Saving…" : label}</button>
       {err && <div className="err" role="alert">{err}</div>}
     </div>
   );
@@ -30,7 +30,7 @@ export function EditButton({ docId, hasDraft }: { docId: string; hasDraft: boole
     <>
       <button type="button" className="btn ghost small" disabled={pending} onClick={() => start(async () => {
         setErr("");
-        const r = await startSopDraft(docId);
+        const r = await startDraft(docId);
         if (!r.ok) setErr(r.error); else router.push(`/library/${docId}/draft`);
       })}>{hasDraft ? "Open the draft" : "Edit (new version)"}</button>
       {err && <div className="err" role="alert">{err}</div>}
@@ -38,8 +38,8 @@ export function EditButton({ docId, hasDraft }: { docId: string; hasDraft: boole
   );
 }
 
-/** Owners and operations managers: retire an SOP (with a reason), or bring a retired one back. */
-export function RetireButton({ docId, retired, title, hasDraft }: { docId: string; retired: boolean; title: string; hasDraft: boolean }) {
+/** Owners and operations managers: retire an SOP or recipe (with a reason), or bring a retired one back. */
+export function RetireButton({ docId, retired, title, hasDraft, what = "SOP" }: { docId: string; retired: boolean; title: string; hasDraft: boolean; what?: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [asking, setAsking] = useState(false);
@@ -52,7 +52,7 @@ export function RetireButton({ docId, retired, title, hasDraft }: { docId: strin
   });
   if (retired) return (
     <>
-      <button type="button" className="btn ghost small" disabled={pending} onClick={() => run(() => reinstateSop(docId))}>Bring it back</button>
+      <button type="button" className="btn ghost small" disabled={pending} onClick={() => run(() => reinstateDoc(docId))}>Bring it back</button>
       {err && <div className="err" role="alert">{err}</div>}
     </>
   );
@@ -61,8 +61,8 @@ export function RetireButton({ docId, retired, title, hasDraft }: { docId: strin
       <button type="button" className="btn ghost small" onClick={() => { setErr(""); setAsking(true); }}>Retire</button>
       {asking && (
         <div className="modal-back">
-          <form className="modal" role="dialog" aria-label={`Retire ${title}`} onSubmit={(e) => { e.preventDefault(); run(() => retireSop(docId, note)); }}>
-            <h2 className="h-sec">Retire this SOP?</h2>
+          <form className="modal" role="dialog" aria-label={`Retire ${title}`} onSubmit={(e) => { e.preventDefault(); run(() => retireDoc(docId, note)); }}>
+            <h2 className="h-sec">Retire this {what}?</h2>
             <p style={{ margin: 0 }}>Staff won&apos;t see it any more. It&apos;s kept with its history, and you can bring it back.
               {hasDraft ? " The new version being written is thrown away." : ""}</p>
             <label className="stack" style={{ gap: 6 }}><span className="muted">Why (required)</span>
@@ -80,7 +80,7 @@ export function RetireButton({ docId, retired, title, hasDraft }: { docId: strin
  * The owner: erase a step's photo for good, with a reason (privacy: it shows someone, say). It shows as removed in
  * every version that uses it.
  */
-export function ErasePhoto({ docId, mediaId, step }: { docId: string; mediaId: string; step: number }) {
+export function ErasePhoto({ docId, mediaId, label }: { docId: string; mediaId: string; /** "step 3", "the finished photo" */ label: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [asking, setAsking] = useState(false);
@@ -91,16 +91,16 @@ export function ErasePhoto({ docId, mediaId, step }: { docId: string; mediaId: s
       <button type="button" className="btn ghost small" onClick={() => { setErr(""); setAsking(true); }}>Erase photo</button>
       {asking && (
         <div className="modal-back">
-          <form className="modal" role="dialog" aria-label={`Erase the photo in step ${step}`} onSubmit={(e) => {
+          <form className="modal" role="dialog" aria-label={`Erase the photo: ${label}`} onSubmit={(e) => {
             e.preventDefault();
             start(async () => {
               setErr("");
-              const r = await eraseSopPhoto(docId, mediaId, why);
+              const r = await erasePhoto(docId, mediaId, why);
               if (!r.ok) setErr(r.error); else { setAsking(false); router.refresh(); }
             });
           }}>
             <h2 className="h-sec">Erase this photo for good?</h2>
-            <p style={{ margin: 0 }}>Use this for privacy, say if it shows someone. It shows as &ldquo;Photo removed&rdquo; in every version of this SOP that has it. This can&apos;t be undone.</p>
+            <p style={{ margin: 0 }}>Use this for privacy, say if it shows someone. It shows as &ldquo;Photo removed&rdquo; in every version that has it. This can&apos;t be undone.</p>
             <label className="stack" style={{ gap: 6 }}><span className="muted">Why (required)</span>
               <input id="erase-why" className="txt" style={{ width: "100%", maxWidth: "none" }} autoFocus required maxLength={200} value={why}
                 onChange={(e) => setWhy(e.target.value)} placeholder="e.g. Shows a member of staff's face" /></label>

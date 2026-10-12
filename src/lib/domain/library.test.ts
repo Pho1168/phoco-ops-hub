@@ -127,7 +127,7 @@ describe("library: content", () => {
     expect(cleanSop({ ...input, title: "x".repeat(101) })).toMatchObject({ ok: false });
     expect(cleanSop({ ...input, sections: ["BAR"] })).toMatchObject({ ok: false, error: "Unknown section" });
     expect(cleanSop({ ...input, steps: [{ text: "x".repeat(801) }] })).toMatchObject({ ok: false, error: "Step 1 is too long: keep it under 800 characters, or split it" });
-    expect(cleanSop({ ...input, steps: Array.from({ length: 41 }, (_, i) => ({ text: `Step ${i}` })) })).toMatchObject({ ok: false, error: "At most 40 steps: split it into two SOPs" });
+    expect(cleanSop({ ...input, steps: Array.from({ length: 41 }, (_, i) => ({ text: `Step ${i}` })) })).toMatchObject({ ok: false, error: "At most 40 steps: split it into two" });
     expect(cleanSop({ ...input, steps: [{ text: "a", photo: { id: "not-a-uuid", w: 1, h: 1 } }] })).toMatchObject({ ok: false });
   });
   it("is ready for approval with a purpose and words in every step", () => {

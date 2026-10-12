@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { demoStore, resetDemo } from "@/lib/data/demo-store";
 import type { SopBody } from "@/lib/domain/library";
+import { ALLERGEN_KEYS, type DishBody } from "@/lib/domain/recipes";
 
 // Runs against the in-memory demo store only (passed in), never a real database.
 const body = (purpose: string): SopBody => ({ sections: ["BOH"], purpose, steps: [{ text: "Put the probe in iced water" }, { text: "It should read 0°C, give or take 1°C" }] });
@@ -86,6 +87,47 @@ describe("library store: an SOP from draft to its second version", () => {
     const [light] = await demoStore.libraryDocs("sop", { light: true });
     expect(full.published!.body.steps.length).toBeGreaterThan(0);
     expect([light.published!.title, light.published!.body.sections, light.published!.body.steps]).toEqual([full.published!.title, full.published!.body.sections, []]);
+    resetDemo();
+  });
+});
+
+describe("library store: recipes", () => {
+  const free = Object.fromEntries(ALLERGEN_KEYS.map((k) => [k, "free" as const]));
+  const dish = (allergens: DishBody["allergens"]): DishBody => ({ sections: ["BOH"], category: "Pho", components: [{ qty: 330, unit: "g", name: "Noodles" }],
+    steps: [{ text: "Build it" }], allergens, modifications: "", dietary: [] });
+  it("a dish's allergen change is dated when it's published, and kept until the next change", async () => {
+    resetDemo();
+    const db = demoStore;
+    const { docId, versionId, code } = await db.createLibraryDoc({ kind: "dish", prefix: "DISH-BOH-", title: "Pho brisket", body: dish(free), authorId: "DEMO-MGR" });
+    expect(code).toBe("DISH-BOH-002"); // after the demo dish
+    await db.moveLibraryVersion(versionId, "submit", "DEMO-MGR", 1);
+    await db.publishLibraryVersion(versionId, 2, { approverId: "DEMO-OPS", ...REVIEW, ownerApproving: false });
+    expect((await db.libraryDoc(docId))!.published!.allergensChangedAt).toBeUndefined(); // a first version isn't a change
+    const publish = async (allergens: DishBody["allergens"], mode: "changed" | "same") => {
+      const v = (await db.startLibraryDraft(docId, "DEMO-MGR"))!;
+      await db.saveLibraryDraft(v, 1, { title: "Pho brisket", body: dish(allergens) }, "DEMO-MGR");
+      await db.moveLibraryVersion(v, "submit", "DEMO-MGR", 2);
+      await db.publishLibraryVersion(v, 3, { approverId: "DEMO-OPS", change: "minor", reviewBy: "2027-10-12", ownerApproving: false, allergens: mode });
+      return (await db.libraryDoc(docId))!.published!;
+    };
+    const v2 = await publish({ ...free, sesame: "contains" }, "changed");
+    expect(v2.allergensChangedAt).toBe(v2.publishedAt);
+    const v3 = await publish({ ...free, sesame: "contains" }, "same");
+    expect(v3.allergensChangedAt).toBe(v2.allergensChangedAt);
+    // Confirmations carry the document, so one on v2 still counts after v3.
+    expect(await db.ackLibraryVersion(v2.id, "DEMO-FOH")).toBe(false); // v2 is superseded now
+    expect(await db.ackLibraryVersion(v3.id, "DEMO-FOH")).toBe(true);
+    expect((await db.libraryAcks({ docId, personId: "DEMO-FOH" })).map((a) => [a.docId, a.versionId])).toEqual([[docId, v3.id]]);
+    // Light lists: who it's for and its category, nothing else.
+    const light = (await db.libraryDocs("dish", { light: true })).find((d) => d.id === docId)!;
+    expect([light.published!.body.category, light.published!.body.sections, light.published!.body.components, light.published!.allergensChangedAt]).toEqual(["Pho", ["BOH"], [], v2.allergensChangedAt]);
+    resetDemo();
+  });
+  it("demo mode has a prep recipe and a dish linked to it", async () => {
+    resetDemo();
+    const [prep] = await demoStore.libraryDocs("prep");
+    const [dishDoc] = await demoStore.libraryDocs("dish");
+    expect([prep.code, prep.published!.body.makes, dishDoc.code, dishDoc.published!.body.components.find((c) => c.prep)?.prep]).toEqual(["PREP-PROD-001", { qty: 60, unit: "L" }, "DISH-BOH-001", prep.id]);
     resetDemo();
   });
 });

@@ -16,8 +16,9 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
   const db = store();
   const today = londonDate(Date.now());
   const managed = managedSites(actor);
-  const [notices, pending, people, certs, sites, sops] = await Promise.all([
-    db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(), db.libraryDocs("sop", { light: true }),
+  const [notices, pending, people, certs, sites, sops, preps, dishes] = await Promise.all([
+    db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(),
+    db.libraryDocs("sop", { light: true }), db.libraryDocs("prep", { light: true }), db.libraryDocs("dish", { light: true }),
   ]);
   const openManaged = sites.filter((s) => s.status === "open" && managed.includes(s.id)).map((s) => s.id);
   let equipmentIssues = 0;
@@ -44,5 +45,6 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
     equipmentIssues,
     coverToDo,
     libraryToDo: libraryToDo(actor, sops, sites),
+    recipesToDo: libraryToDo(actor, [...preps, ...dishes], sites),
   };
 }

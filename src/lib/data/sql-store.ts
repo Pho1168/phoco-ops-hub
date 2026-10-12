@@ -9,7 +9,7 @@ import type { Equipment, EquipmentEvent, EquipmentKind, EventKind, Severity } fr
 import type { Priority, Task, TaskCategory, TaskStatus } from "@/lib/domain/tasks";
 import type { LateMinutes, ReplyKind, ShiftReply } from "@/lib/domain/reminders";
 import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
-import { nextCode, type ChangeKind, type LibraryDoc, type LibraryKind, type LibraryVersion, type SopBody, type VersionStatus } from "@/lib/domain/library";
+import { nextCode, type BodyOf, type ChangeKind, type LibraryBody, type LibraryDoc, type LibraryKind, type LibraryVersion, type VersionStatus } from "@/lib/domain/library";
 import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
@@ -62,23 +62,25 @@ const ms = (d: Date | null | undefined) => (d ? d.getTime() : undefined);
 const num = (v: string | null) => (v === null ? undefined : Number(v));
 const opt = <T,>(v: T | null) => (v === null ? undefined : v);
 
-interface LibVersionRow { id: string; doc_id: string; status: VersionStatus; version: number | null; title: string; body: SopBody; author_id: string; author_name: string;
+interface LibVersionRow { id: string; doc_id: string; status: VersionStatus; version: number | null; title: string; body: LibraryBody; author_id: string; author_name: string;
   contributors: string[]; rev: number; created_at: Date; updated_at: Date; submitted_by: string | null; submitted_at: Date | null; review_note: string | null; reviewed_by: string | null; reviewed_by_name: string | null;
-  reviewed_at: Date | null; approved_by: string | null; approved_by_name: string | null; published_at: Date | null; change: ChangeKind | null; review_by: string | null; superseded_at: Date | null }
-/** `light`: the body carries only its sections (for counts and "to read" lists). */
+  reviewed_at: Date | null; approved_by: string | null; approved_by_name: string | null; published_at: Date | null; change: ChangeKind | null; review_by: string | null; superseded_at: Date | null;
+  allergens_changed_at: Date | null }
+/** `light`: the body carries only its sections and category (the rest empty), for counts and lists. */
 const libVersionSelect = (q: postgres.Sql | postgres.ReservedSql, light = false) => q`
   select v.id, v.doc_id, v.status, v.version, v.title,
-    ${light ? q`jsonb_build_object('sections', coalesce(v.body->'sections', '[]'::jsonb), 'purpose', '', 'steps', '[]'::jsonb)` : q`v.body`} as body,
+    ${light ? q`jsonb_build_object('sections', coalesce(v.body->'sections', '[]'::jsonb), 'category', coalesce(v.body->'category', '""'::jsonb), 'purpose', '',
+      'steps', '[]'::jsonb, 'ingredients', '[]'::jsonb, 'components', '[]'::jsonb, 'allergens', '{}'::jsonb, 'dietary', '[]'::jsonb)` : q`v.body`} as body,
     v.author_id, a.display_name as author_name, v.contributors::text[] as contributors, v.rev, v.created_at, v.updated_at, v.submitted_by, v.submitted_at,
     v.review_note, v.reviewed_by, r.display_name as reviewed_by_name, v.reviewed_at, v.approved_by, ap.display_name as approved_by_name, v.published_at, v.change,
-    to_char(v.review_by, 'YYYY-MM-DD') as review_by, v.superseded_at
+    to_char(v.review_by, 'YYYY-MM-DD') as review_by, v.superseded_at, v.allergens_changed_at
   from library_versions v join people a on a.id = v.author_id left join people r on r.id = v.reviewed_by left join people ap on ap.id = v.approved_by`;
 const libVersionFrom = (r: LibVersionRow): LibraryVersion => ({
   id: r.id, docId: r.doc_id, status: r.status, version: opt(r.version), title: r.title, body: r.body, authorId: r.author_id, authorName: r.author_name,
   contributors: r.contributors ?? [], rev: r.rev, createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), submittedBy: opt(r.submitted_by), submittedAt: ms(r.submitted_at),
   reviewNote: opt(r.review_note), reviewedBy: opt(r.reviewed_by), reviewedByName: opt(r.reviewed_by_name), reviewedAt: ms(r.reviewed_at),
   approvedBy: opt(r.approved_by), approvedByName: opt(r.approved_by_name), publishedAt: ms(r.published_at), change: opt(r.change), reviewBy: opt(r.review_by),
-  supersededAt: ms(r.superseded_at),
+  supersededAt: ms(r.superseded_at), allergensChangedAt: ms(r.allergens_changed_at),
 });
 interface LibDocRow { id: string; kind: LibraryKind; code: string; created_at: Date; retired_at: Date | null; retired_by: string | null; retired_note: string | null }
 async function libDocsWith(q: postgres.Sql, docs: LibDocRow[], light = false): Promise<LibraryDoc[]> {
@@ -994,10 +996,10 @@ export const sqlStore: Store = {
   },
 
   // ---------- library ----------
-  async libraryDocs(kind, opts) {
+  async libraryDocs<K extends LibraryKind>(kind: K, opts?: { light?: boolean }) {
     const q = sql();
     const docs = await q<LibDocRow[]>`select id, kind, code, created_at, retired_at, retired_by, retired_note from library_docs where kind = ${kind} order by code`;
-    return libDocsWith(q, docs, !!opts?.light);
+    return (await libDocsWith(q, docs, !!opts?.light)) as LibraryDoc<BodyOf<K>>[];
   },
   async libraryDoc(id) {
     if (!isUuid(id)) return undefined;
@@ -1087,10 +1089,15 @@ export const sqlStore: Store = {
         where id = ${versionId} and status = 'in_review' and rev = ${rev} for update`;
       if (!v) return undefined;
       if (!p.ownerApproving && (v.author_id === p.approverId || v.submitted_by === p.approverId || v.contributors.includes(p.approverId))) return undefined;
+      // A dish whose allergens are unchanged keeps the last change still to be confirmed (copied in the database, to the microsecond).
+      const [prev] = await tx<{ id: string }[]>`select id from library_versions where doc_id = ${v.doc_id} and status = 'published'`;
       await tx`update library_versions set status = 'superseded', superseded_at = now() where doc_id = ${v.doc_id} and status = 'published'`;
       const [{ n }] = await tx<{ n: number }[]>`select coalesce(max(version), 0) + 1 as n from library_versions where doc_id = ${v.doc_id}`;
       await tx`update library_versions set status = 'published', version = ${n}, approved_by = ${p.approverId}, approved_at = now(), published_at = now(),
-        change = ${p.change}, review_by = ${p.reviewBy}, updated_at = now(), rev = rev + 1 where id = ${versionId}`;
+        change = ${p.change}, review_by = ${p.reviewBy}, updated_at = now(), rev = rev + 1,
+        allergens_changed_at = case when ${p.allergens === "changed"} then now()
+          when ${p.allergens === "same" && !!prev} then (select allergens_changed_at from library_versions where id = ${prev?.id ?? versionId}) else null end
+        where id = ${versionId}`;
       await tx`insert into library_acks (version_id, person_id) values (${versionId}, ${p.approverId}) on conflict do nothing`;
       return Number(n);
     });
@@ -1113,12 +1120,12 @@ export const sqlStore: Store = {
   },
   async libraryAcks(f) {
     const ids = f.versionIds?.filter(isUuid);
-    if ((ids && !ids.length) || (f.personId && !isUuid(f.personId))) return [];
+    if ((ids && !ids.length) || (f.personId && !isUuid(f.personId)) || (f.docId && !isUuid(f.docId))) return [];
     const q = sql();
-    const rows = await q<{ version_id: string; person_id: string; acked_at: Date }[]>`
-      select version_id, person_id, acked_at from library_acks where true
-        ${ids ? q`and version_id = any(${ids}::uuid[])` : q``} ${f.personId ? q`and person_id = ${f.personId}` : q``}`;
-    return rows.map((r) => ({ versionId: r.version_id, personId: r.person_id, at: r.acked_at.getTime() }));
+    const rows = await q<{ version_id: string; doc_id: string; person_id: string; acked_at: Date }[]>`
+      select a.version_id, v.doc_id, a.person_id, a.acked_at from library_acks a join library_versions v on v.id = a.version_id where true
+        ${ids ? q`and a.version_id = any(${ids}::uuid[])` : q``} ${f.personId ? q`and a.person_id = ${f.personId}` : q``} ${f.docId ? q`and v.doc_id = ${f.docId}` : q``}`;
+    return rows.map((r) => ({ versionId: r.version_id, docId: r.doc_id, personId: r.person_id, at: r.acked_at.getTime() }));
   },
   async ackLibraryVersion(versionId, personId) {
     if (!isUuid(versionId) || !isUuid(personId)) return false;

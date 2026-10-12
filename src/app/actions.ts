@@ -26,8 +26,9 @@ import { gasFor } from "@/lib/daily-service";
 import { askMessages, canAskCover, canCancelCover, canDecideCover, canOffer, canWithdraw, cancelMessages, coverSendAfter, decisionMessages, NOTE_MAX, offerMessages,
   offerWithdrawnMessages, withdrawMessages, type CoverMessage } from "@/lib/domain/cover";
 import { canCoverNow, coverCandidates } from "@/lib/cover-service";
-import { canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw as canTakeBack, changeFor, CHANGE_TEXT, cleanSop, docReach, dropPhotos,
-  photoIds, readsAny, readyForReview, sopPrefix, validReviewBy, type SopBody } from "@/lib/domain/library";
+import { canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw as canTakeBack, changeFor, CHANGE_TEXT, cleanSop, codePrefix, docReach,
+  dropPhotos, isKind, photoIds, readsAny, readyForReview, validReviewBy, type LibraryBody, type LibraryKind, type SopBody } from "@/lib/domain/library";
+import { alertedAt, allergenAlert, cleanRecipe, recipeReady, type DishBody, type PrepBody } from "@/lib/domain/recipes";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
@@ -1309,14 +1310,32 @@ export async function cancelTask(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-// ---------- library: SOPs ----------
+// ---------- library: SOPs, prep recipes and dishes ----------
 const PhotoZ = z.object({ id: z.string().uuid(), w: z.number().int().min(1).max(10_000), h: z.number().int().min(1).max(10_000) });
+const StepZ = z.object({ text: z.string().max(3000), warning: z.string().max(1500).optional(), photo: PhotoZ.optional() });
 const SopZ = z.object({
   title: z.string().max(300),
   sections: z.array(z.string().max(10)).max(3),
   purpose: z.string().max(3000),
-  steps: z.array(z.object({ text: z.string().max(3000), warning: z.string().max(1500).optional(), photo: PhotoZ.optional() })).max(60),
+  steps: z.array(StepZ).max(60),
 });
+const RecipeZ = z.object({
+  title: z.string().max(300),
+  sections: z.array(z.string().max(10)).max(3),
+  category: z.string().max(200),
+  items: z.array(z.object({ qty: z.number().finite().nullable(), unit: z.string().max(40), name: z.string().max(300), note: z.string().max(400),
+    prep: z.string().max(64).nullable().optional() })).max(120),
+  steps: z.array(StepZ).max(60),
+  photo: PhotoZ.nullable().optional(),
+  allergens: z.record(z.string().max(20), z.string().max(20)).refine((r) => Object.keys(r).length <= 20),
+  makes: z.object({ qty: z.number().finite().nullable(), unit: z.string().max(40) }).nullable().optional(),
+  storage: z.string().max(1000).optional(),
+  shelfLife: z.object({ qty: z.number().finite().nullable(), unit: z.string().max(10) }).nullable().optional(),
+  notes: z.string().max(3000).optional(),
+  modifications: z.string().max(3000).optional(),
+  dietary: z.array(z.string().max(20)).max(5).optional(),
+});
+const KindZ = z.enum(["sop", "prep", "dish"]);
 const LibIdZ = z.string().max(64);
 /** The revision of a version the person was shown: every change names it, so nobody acts on one they haven't seen. */
 const RevZ = z.number().int().min(1).max(1_000_000_000);
@@ -1325,7 +1344,7 @@ const STALE = "Someone has changed it since you opened it. Open it again to see 
 const stale = () => ({ ok: false as const, error: STALE, stale: true as const });
 type LibResult = ActionResult & { stale?: boolean };
 
-/** Writing SOPs: managers, operations managers and owners, on the full app. */
+/** Writing in the library: managers, operations managers and owners, on the full app. */
 async function requireDrafter() {
   const ctx = await requireCtx();
   if (!canDraft(ctx.person)) redirect("/library");
@@ -1339,86 +1358,106 @@ async function requireDrafter() {
 async function drafterForSave(): Promise<{ ok: true; ctx: Ctx } | { ok: false; error: string }> {
   const ctx = await current();
   if (!ctx || ctx.person.pinMustChange || ctx.scope !== "full") return { ok: false, error: "You've been signed out, so this wasn't saved. Copy what you wrote, then sign in again" };
-  if (!canDraft(ctx.person)) return { ok: false, error: "Only managers can write SOPs" };
+  if (!canDraft(ctx.person)) return { ok: false, error: "Only managers can write in the library" };
   return { ok: true, ctx };
 }
 
+/** Ready to send for approval or publish, by kind. */
+const readyFor = (kind: LibraryKind, body: LibraryBody) => (kind === "sop" ? readyForReview(body as SopBody) : recipeReady(kind, body as PrepBody | DishBody));
+const kindWord = (kind: LibraryKind) => (kind === "sop" ? "SOP" : kind === "prep" ? "prep recipe" : "dish");
+
 /**
- * Cleans an SOP from the editor and checks its photos were uploaded. A photo the owner has erased since (say, in a
- * draft copied from an older version) is left out; its step keeps its words.
+ * Cleans what an editor sends, by kind, and checks its photos were uploaded and a dish's links are prep recipes. A
+ * photo the owner has erased since (say, in a draft copied from an older version) is left out; its step keeps its words.
  */
-async function sopFrom(input: unknown): Promise<{ ok: true; value: { title: string; body: SopBody } } | { ok: false; error: string }> {
-  const parsed = SopZ.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Some details are missing" };
-  const c = cleanSop(parsed.data);
+async function contentFrom(kind: LibraryKind, input: unknown): Promise<{ ok: true; value: { title: string; body: LibraryBody } } | { ok: false; error: string }> {
+  let c: { ok: true; value: { title: string; body: LibraryBody } } | { ok: false; error: string };
+  if (kind === "sop") {
+    const parsed = SopZ.safeParse(input);
+    if (!parsed.success) return { ok: false, error: "Some details are missing" };
+    c = cleanSop(parsed.data);
+  } else {
+    const parsed = RecipeZ.safeParse(input);
+    if (!parsed.success) return { ok: false, error: "Some details are missing" };
+    c = cleanRecipe(kind, parsed.data);
+  }
   if (!c.ok) return c;
-  const ids = photoIds(c.value.body);
+  const db = store();
+  if (kind === "dish") {
+    for (const id of new Set((c.value.body as DishBody).components.flatMap((x) => (x.prep ? [x.prep] : [])))) {
+      const linked = await db.libraryDoc(id);
+      if (!linked || linked.kind !== "prep") return { ok: false, error: "A linked prep recipe isn't there any more. Link it again" };
+    }
+  }
+  const ids = photoIds(c.value.body as SopBody | PrepBody);
   if (!ids.length) return c;
-  const found = await store().mediaStatus(ids);
+  const found = await db.mediaStatus(ids);
   if (ids.some((id) => !found.has(id))) return { ok: false, error: "A photo didn't upload properly. Add it again" };
   const erased = new Set(ids.filter((id) => found.get(id)?.erased));
-  return erased.size ? { ok: true, value: { title: c.value.title, body: dropPhotos(c.value.body, erased) } } : c;
+  return erased.size ? { ok: true, value: { title: c.value.title, body: dropPhotos(c.value.body as SopBody | PrepBody, erased) } } : c;
 }
 
-/** A new SOP: its first draft. The code (SOP-BOH-012) comes from who it's for and never changes. */
-export async function createSop(input: unknown): Promise<ActionResult & { id?: string; versionId?: string }> {
+/** A new SOP, prep recipe or dish: its first draft. The code (SOP-BOH-012, PREP-PROD-003) comes from who it's for and never changes. */
+export async function createDraft(kind: string, input: unknown): Promise<ActionResult & { id?: string; versionId?: string }> {
   const who = await drafterForSave();
   if (!who.ok) return who;
   const { ctx } = who;
-  const c = await sopFrom(input);
+  const k = KindZ.safeParse(kind);
+  if (!k.success) return { ok: false, error: "Unknown kind" };
+  const c = await contentFrom(k.data, input);
   if (!c.ok) return c;
   const db = store();
-  const { docId, versionId, code } = await db.createLibraryDoc({ kind: "sop", prefix: sopPrefix(c.value.body.sections), title: c.value.title, body: c.value.body, authorId: ctx.person.id });
+  const { docId, versionId, code } = await db.createLibraryDoc({ kind: k.data, prefix: codePrefix(k.data, c.value.body.sections), title: c.value.title, body: c.value.body, authorId: ctx.person.id });
   await db.audit({ actorId: ctx.person.id, action: "library.create", detail: `Started ${code}: ${c.value.title}` });
-  revalidatePath("/library");
+  revalidatePath("/library"); revalidatePath("/library/recipes");
   return { ok: true, id: docId, versionId };
 }
 
 /**
- * Saves a draft and returns its new revision and what was saved (cleaned: empty steps dropped), for the editor to
- * carry on from. Whoever started it saving isn't audited (drafts change often); someone else changing it is, and they
- * can't then approve it. Nothing else on screen changes, so the page isn't refreshed.
+ * Saves a draft and returns its new revision and what was saved (cleaned: empty lines and steps dropped), for the
+ * editor to carry on from. Whoever started it saving isn't audited (drafts change often); someone else changing it
+ * is, and they can't then approve it. Nothing else on screen changes, so the page isn't refreshed.
  */
-export async function saveSopDraft(versionId: string, rev: number, input: unknown): Promise<LibResult & { rev?: number; saved?: { title: string; body: SopBody } }> {
+export async function saveDraft(versionId: string, rev: number, input: unknown): Promise<LibResult & { rev?: number; saved?: { title: string; body: LibraryBody } }> {
   const who = await drafterForSave();
   if (!who.ok) return who;
   const { ctx } = who;
   const db = store();
   const v = await db.libraryVersion(LibIdZ.parse(versionId));
-  if (!v) return { ok: false, error: "That draft isn't there any more" };
+  const doc = v && (await db.libraryDoc(v.docId));
+  if (!v || !doc) return { ok: false, error: "That draft isn't there any more" };
   const can = canEditDraft(ctx.person, v);
   if (!can.ok) return can;
   const seen = RevZ.safeParse(rev);
   if (!seen.success) return stale();
-  const c = await sopFrom(input);
+  const c = await contentFrom(doc.kind, input);
   if (!c.ok) return c;
   const next = await db.saveLibraryDraft(v.id, seen.data, c.value, ctx.person.id);
   if (!next) return stale();
   if (ctx.person.id !== v.authorId) {
-    const doc = await db.libraryDoc(v.docId);
-    await db.audit({ actorId: ctx.person.id, action: "library.edit", detail: `Changed ${v.authorName}'s draft of ${doc?.code ?? "an SOP"}: ${c.value.title}` });
+    await db.audit({ actorId: ctx.person.id, action: "library.edit", detail: `Changed ${v.authorName}'s draft of ${doc.code}: ${c.value.title}` });
   }
   return { ok: true, rev: next, saved: c.value };
 }
 
-/** A new version of a published SOP starts as a copy of it. If a draft is already open, that's the one to carry on with. */
-export async function startSopDraft(docId: string): Promise<ActionResult> {
+/** A new version of a published SOP or recipe starts as a copy of it. If a draft is already open, that's the one to carry on with. */
+export async function startDraft(docId: string): Promise<ActionResult> {
   const ctx = await requireDrafter();
   const db = store();
   const doc = await db.libraryDoc(LibIdZ.parse(docId));
-  if (!doc) return { ok: false, error: "That SOP isn't there any more" };
+  if (!doc) return { ok: false, error: "That isn't there any more" };
   if (doc.open) return { ok: true };
   if (doc.retiredAt) return { ok: false, error: "It's retired. Bring it back first" };
   if (!(await db.startLibraryDraft(doc.id, ctx.person.id))) return { ok: false, error: STALE };
   await db.audit({ actorId: ctx.person.id, action: "library.draft", detail: `Started a new version of ${doc.code}: ${doc.published?.title ?? ""}` });
-  revalidatePath(`/library/${doc.id}`); revalidatePath("/library");
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/library/recipes");
   return { ok: true };
 }
 
 const MOVE_AUDIT = { submit: "Sent for approval", withdraw: "Took back from approval", send_back: "Sent back", discard: "Discarded a draft of" } as const;
 
 /** Send for approval, take back, send back (approvers, with a note), or discard a draft. `rev`: the revision shown. */
-export async function moveSop(versionId: string, move: string, rev: number, note?: string): Promise<LibResult> {
+export async function moveDraft(versionId: string, move: string, rev: number, note?: string): Promise<LibResult> {
   const ctx = await requireCtx();
   const m = z.enum(["submit", "withdraw", "send_back", "discard"]).parse(move);
   const db = store();
@@ -1436,21 +1475,22 @@ export async function moveSop(versionId: string, move: string, rev: number, note
     : canDiscard(ctx.person, v, reach);
   if (!can.ok) return can;
   if (m === "submit") {
-    const ready = readyForReview(v.body);
+    const ready = readyFor(doc.kind, v.body);
     if (!ready.ok) return ready;
   }
   if (m === "send_back" && !why.data) return { ok: false, error: "Say what needs changing" };
   if (!(await db.moveLibraryVersion(v.id, m, ctx.person.id, seen.data, m === "send_back" ? why.data : undefined))) return stale();
   await db.audit({ actorId: ctx.person.id, action: `library.${m}`, detail: `${MOVE_AUDIT[m]} ${doc.code}: ${v.title}${m === "send_back" ? ` (${why.data})` : ""}` });
-  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/owner"); revalidatePath("/manage");
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/library/recipes"); revalidatePath("/owner"); revalidatePath("/manage");
   return { ok: true };
 }
 
 /**
- * An owner, or an operations manager who runs every site the SOP covers (before and after) and didn't write or change
- * this version, approves and publishes the revision they were shown. Everyone it's for reads it (again, for a change).
+ * An owner, or an operations manager who runs every site it covers (before and after) and didn't write or change this
+ * version, approves and publishes the revision they were shown. Everyone an SOP is for reads it (again, for a change);
+ * when a dish's allergens change, everyone at its sites confirms they've seen it.
  */
-export async function publishSop(versionId: string, input: unknown): Promise<LibResult & { version?: number }> {
+export async function publishVersion(versionId: string, input: unknown): Promise<LibResult & { version?: number }> {
   const ctx = await requireCtx();
   const p = z.object({ rev: RevZ, change: z.string().max(10).optional(), reviewBy: z.string().max(10) }).safeParse(input);
   if (!p.success) return { ok: false, error: "Choose a review date" };
@@ -1461,45 +1501,51 @@ export async function publishSop(versionId: string, input: unknown): Promise<Lib
   const can = canReview(ctx.person, v, docReach(doc, await db.sites()));
   if (!can.ok) return can;
   if (doc.retiredAt) return { ok: false, error: "It's retired. Bring it back first" };
-  const ready = readyForReview(v.body);
+  const ready = readyFor(doc.kind, v.body);
   if (!ready.ok) return ready;
   const change = changeFor(!!doc.published, p.data.change);
   if (!change.ok) return change;
   const review = validReviewBy(p.data.reviewBy, londonDate(Date.now()));
   if (!review.ok) return review;
-  const n = await db.publishLibraryVersion(v.id, p.data.rev, { approverId: ctx.person.id, change: change.value, reviewBy: p.data.reviewBy, ownerApproving: ctx.isOwner });
+  const alert = isKind(doc, "dish") ? allergenAlert(doc.published?.body, v.body as DishBody) : "none";
+  const n = await db.publishLibraryVersion(v.id, p.data.rev, { approverId: ctx.person.id, change: change.value, reviewBy: p.data.reviewBy, ownerApproving: ctx.isOwner,
+    ...(alert !== "none" ? { allergens: alert } : {}) });
   if (!n) return stale();
-  await db.audit({ actorId: ctx.person.id, action: "library.publish", detail: `Published ${doc.code} version ${n} (${CHANGE_TEXT[change.value]}): ${v.title}` });
-  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/owner"); revalidatePath("/manage");
+  await db.audit({ actorId: ctx.person.id, action: "library.publish",
+    detail: `Published ${doc.code} version ${n} (${CHANGE_TEXT[change.value]}${alert === "changed" ? ", allergens changed" : ""}): ${v.title}` });
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/library/recipes"); revalidatePath("/library/allergens");
+  revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/owner"); revalidatePath("/manage");
   return { ok: true, version: n };
 }
 
-/** Takes a published SOP out of use (kept, with its history; a draft in progress is discarded). It can be brought back. */
-export async function retireSop(docId: string, note: string): Promise<ActionResult> {
+/** Takes a published SOP or recipe out of use (kept, with its history; a draft in progress is discarded). It can be brought back. */
+export async function retireDoc(docId: string, note: string): Promise<ActionResult> {
   const ctx = await requireCtx();
   const db = store();
   const doc = await db.libraryDoc(LibIdZ.parse(docId));
-  if (!doc) return { ok: false, error: "That SOP isn't there any more" };
+  if (!doc) return { ok: false, error: "That isn't there any more" };
   const can = canRetire(ctx.person, doc, docReach(doc, await db.sites()));
   if (!can.ok) return can;
   const why = z.string().trim().min(1, "Say why it's being retired").max(300, "Keep the reason under 300 characters").safeParse(note ?? "");
   if (!why.success) return { ok: false, error: why.error.issues[0]?.message ?? "Say why" };
   if (!(await db.retireLibraryDoc(doc.id, ctx.person.id, why.data))) return { ok: false, error: STALE };
   await db.audit({ actorId: ctx.person.id, action: "library.retire", detail: `Retired ${doc.code}: ${doc.published?.title ?? ""} (${why.data})${doc.open ? ". Its draft was discarded" : ""}` });
-  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/owner"); revalidatePath("/manage");
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/library/recipes"); revalidatePath("/library/allergens");
+  revalidatePath("/today"); revalidatePath("/me"); revalidatePath("/owner"); revalidatePath("/manage");
   return { ok: true };
 }
 
-export async function reinstateSop(docId: string): Promise<ActionResult> {
+export async function reinstateDoc(docId: string): Promise<ActionResult> {
   const ctx = await requireCtx();
   const db = store();
   const doc = await db.libraryDoc(LibIdZ.parse(docId));
-  if (!doc) return { ok: false, error: "That SOP isn't there any more" };
+  if (!doc) return { ok: false, error: "That isn't there any more" };
   const can = canReinstate(ctx.person, doc, docReach(doc, await db.sites()));
   if (!can.ok) return can;
   if (!(await db.reinstateLibraryDoc(doc.id))) return { ok: false, error: STALE };
   await db.audit({ actorId: ctx.person.id, action: "library.reinstate", detail: `Brought back ${doc.code}: ${doc.published?.title ?? ""}` });
-  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me");
+  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/library/recipes"); revalidatePath("/library/allergens");
+  revalidatePath("/today"); revalidatePath("/me");
   return { ok: true };
 }
 
@@ -1507,7 +1553,7 @@ export async function reinstateSop(docId: string): Promise<ActionResult> {
  * The owner erases a photo for good (privacy: it shows someone, say). Every version using it shows "Photo removed"
  * instead; the versions themselves don't change. Can't be undone.
  */
-export async function eraseSopPhoto(docId: string, mediaId: string, reason: string): Promise<ActionResult> {
+export async function erasePhoto(docId: string, mediaId: string, reason: string): Promise<ActionResult> {
   const ctx = await requireCtx();
   if (!ctx.isOwner) return { ok: false, error: "Only the owner can erase a photo" };
   const why = z.string().trim().min(1, "Say why it's being erased").max(200, "Keep the reason under 200 characters").safeParse(reason ?? "");
@@ -1517,24 +1563,35 @@ export async function eraseSopPhoto(docId: string, mediaId: string, reason: stri
   const doc = await db.libraryDoc(LibIdZ.parse(docId));
   if (!doc || !id.success) return { ok: false, error: "That photo isn't there any more" };
   const versions = await db.libraryVersions(doc.id);
-  if (!versions.some((v) => photoIds(v.body).includes(id.data))) return { ok: false, error: "That photo isn't in this SOP" };
+  if (!versions.some((v) => photoIds(v.body as SopBody | PrepBody).includes(id.data))) return { ok: false, error: `That photo isn't in this ${kindWord(doc.kind)}` };
   if (!(await db.eraseMedia(id.data, ctx.person.id))) return { ok: false, error: "It has already been erased" };
   await db.audit({ actorId: ctx.person.id, action: "library.photo_erase", detail: `Erased a photo in ${doc.code} (${why.data})` });
   revalidatePath(`/library/${doc.id}`); revalidatePath(`/library/${doc.id}/draft`);
   return { ok: true };
 }
 
-/** "I've read and understood it": on the shop tablet or their own phone, for a published SOP that's for them. */
-export async function ackSop(versionId: string): Promise<ActionResult> {
+/**
+ * On the shop tablet or their own phone: "I've read and understood it" for a published SOP that's for them, or "I've
+ * seen the change" for a dish whose allergens changed, from anyone at its sites.
+ */
+export async function ackVersion(versionId: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
   if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const db = store();
   const v = await db.libraryVersion(LibIdZ.parse(versionId));
   const doc = v && (await db.libraryDoc(v.docId));
-  if (!v || !doc || v.status !== "published" || doc.retiredAt) return { ok: false, error: "This version has been replaced. Open the SOP again" };
-  if (!readsAny(v.body.sections, ctx.person, await db.sites())) return { ok: false, error: "This SOP isn't one you need to confirm" };
-  await db.ackLibraryVersion(v.id, ctx.person.id);
-  revalidatePath(`/library/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me");
+  if (!v || !doc || v.status !== "published" || doc.retiredAt) return { ok: false, error: "This version has been replaced. Open it again" };
+  const sites = await db.sites();
+  if (doc.kind === "sop" && !readsAny(v.body.sections, ctx.person, sites)) return { ok: false, error: "This SOP isn't one you need to confirm" };
+  if (doc.kind === "dish" && (!v.allergensChangedAt || !alertedAt(ctx.person, v.body.sections, sites).length)) return { ok: false, error: "There's no allergen change here for you to confirm" };
+  if (doc.kind === "prep") return { ok: false, error: "Recipes don't need confirming" };
+  if (!(await db.ackLibraryVersion(v.id, ctx.person.id))) {
+    // Already confirmed (another tab), or replaced a moment ago.
+    if (!(await db.libraryAcks({ versionIds: [v.id], personId: ctx.person.id })).length) return { ok: false, error: "This version has been replaced. Open it again" };
+    return { ok: true };
+  }
+  if (doc.kind === "dish") await db.audit({ actorId: ctx.person.id, action: "library.allergens_seen", detail: `Confirmed the allergen change in ${doc.code}: ${v.title}` });
+  revalidatePath(`/library/${doc.id}`); revalidatePath(`/library/allergens/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me");
   return { ok: true };
 }

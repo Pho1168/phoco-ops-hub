@@ -328,3 +328,75 @@ table.matrix thead th:first-child { position: sticky; left: 0; z-index: 2; backg
 .photo-tools { margin-top: 6px; }
 .lib-item .chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .lib-code { font-variant-numeric: tabular-nums; letter-spacing: .3px; }
+
+/* Library tabs, recipes and allergens */
+.lib-tabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; background: var(--surface-2); padding: 5px; border-radius: 14px; }
+.lib-tabs a { display: flex; align-items: center; justify-content: center; min-height: 42px; border-radius: 10px; font-weight: 600; color: var(--ink-2); text-decoration: none; }
+.lib-tabs a[aria-current="page"] { background: var(--surface); color: var(--brand); }
+.editor-item { border: 1px solid var(--line); border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+.item-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.txt.qty { width: 84px; min-width: 0; }
+.txt.unit { width: 92px; min-width: 0; }
+.item-row .txt.name { flex: 1 1 160px; min-width: 0; max-width: none; }
+.item-row .txt.note { flex: 2 1 200px; min-width: 0; max-width: none; }
+.item-row .txt.link { flex: 1 1 180px; min-width: 0; max-width: none; }
+.seg.small { display: inline-grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); padding: 3px; border-radius: 12px; }
+.seg.small button { min-height: 38px; padding: 0 8px; font-size: 13px; white-space: nowrap; }
+.allergen-grid { display: flex; flex-direction: column; gap: 6px; }
+.allergen-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.allergen-row .name { font-weight: 600; flex: 1 1 160px; }
+.allergen-row .seg.small { flex: 0 1 auto; }
+.seg button.mark-contains[aria-pressed="true"] { background: var(--bad); color: var(--bad-ink-on); }
+.seg button.mark-removable[aria-pressed="true"] { background: var(--warn-soft); color: var(--warn-ink); }
+.seg button.mark-free[aria-pressed="true"] { background: var(--sage); color: var(--sage-ink); }
+.allergen-line { display: flex; gap: 10px; align-items: baseline; }
+.allergen-line .mark { width: 18px; text-align: center; font-weight: 700; flex-shrink: 0; }
+.allergen-line.contains { color: var(--bad-ink); }
+.allergen-line.removable { color: var(--warn-ink); }
+.allergen-notes { border-top: 1px solid var(--line); padding-top: 8px; }
+.allergen-changes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; }
+.recipe-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.recipe-facts > div { display: flex; flex-direction: column; gap: 2px; }
+.scaler .items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.scaler .items li { display: grid; grid-template-columns: minmax(86px, auto) 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 16px; }
+.scaler .items li:last-child { border-bottom: 0; }
+.scaler .items li.picked { background: var(--sage); color: var(--sage-ink); border-radius: 8px; padding-left: 6px; padding-right: 6px; }
+.scaler .items .amount { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.scaler .have select { max-width: 220px; }
+.sop-photo.hero { max-height: 360px; margin-top: 0; }
+.avoid-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.avoid-chips button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 8px 12px; min-height: 40px; font-weight: 600; cursor: pointer; }
+.avoid-chips button[aria-pressed="true"] { background: var(--bad); border-color: var(--bad); color: var(--bad-ink-on); }
+.fit { display: inline-block; font-size: 12px; font-weight: 700; border-radius: 999px; padding: 2px 8px; margin-left: 6px; white-space: nowrap; }
+.fit.safe { background: var(--sage); color: var(--sage-ink); }
+.fit.ask { background: var(--warn-soft); color: var(--warn-ink); }
+.fit.no { background: var(--bad-soft); color: var(--bad-ink); }
+.allergen-matrix-wrap { overflow-x: auto; border-radius: 14px; background: var(--surface); -webkit-overflow-scrolling: touch; }
+.allergen-matrix { border-collapse: collapse; width: 100%; font-size: 13px; }
+.allergen-matrix th, .allergen-matrix td { border-bottom: 1px solid var(--line); padding: 6px 5px; text-align: center; }
+.allergen-matrix thead th { position: sticky; top: 0; background: var(--surface); font-size: 11px; font-weight: 700; color: var(--ink-2); vertical-align: bottom; }
+.allergen-matrix thead th span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; display: inline-block; }
+.allergen-matrix thead th.avoided { color: var(--bad-ink); }
+.allergen-matrix .dish { text-align: left; position: sticky; left: 0; background: var(--surface); min-width: 150px; max-width: 220px; font-weight: 600; z-index: 1; }
+.allergen-matrix tbody th.dish a { color: inherit; }
+.allergen-matrix tr.cat th { text-align: left; background: var(--surface-2); font-family: var(--display, inherit); text-transform: uppercase; letter-spacing: .5px; font-size: 12px; position: static; }
+.allergen-matrix td.m-contains { color: var(--bad-ink); font-weight: 700; }
+.allergen-matrix td.m-removable { color: var(--warn-ink); font-weight: 700; }
+.allergen-matrix td.m-free { color: var(--ink-2); }
+.allergen-matrix td.m-none { color: var(--bad); font-weight: 700; }
+.allergen-matrix td.avoided { outline: 2px solid var(--bad); outline-offset: -2px; }
+.allergen-matrix tr.fit-no td, .allergen-matrix tr.fit-no th.dish { opacity: .45; }
+.allergen-matrix .tags { font-size: 12px; min-width: 80px; }
+.allergen-matrix .notes { text-align: left; font-size: 12px; min-width: 220px; max-width: 420px; white-space: normal; color: var(--ink-2); }
+.print-only { display: none; }
+.field-hint { color: var(--bad-ink); font-size: 13px; }
+@media print {
+  .print-only { display: block; }
+  .lib-tabs { display: none; }
+  .allergen-matrix-wrap { overflow: visible; }
+  .allergen-matrix { font-size: 9px; }
+  .allergen-matrix thead th { position: static; }
+  .allergen-matrix .dish { position: static; }
+  .allergen-matrix tr { break-inside: avoid; }
+  .allergen-matrix tr.fit-no td, .allergen-matrix tr.fit-no th.dish { opacity: 1; }
+}

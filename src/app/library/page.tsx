@@ -8,6 +8,8 @@ import { current } from "@/lib/session";
 import { BottomNav, PhoneTopBar, TopBar } from "@/components/Chrome";
 import { MustRead } from "@/components/MustRead";
 import { LibraryList, type LibItem } from "./LibraryList";
+import { LibraryTabs } from "./LibraryTabs";
+import { seesRecipes } from "@/lib/domain/recipes";
 import { dayMonth as when, whoFor } from "./format";
 
 export const dynamic = "force-dynamic";
@@ -74,6 +76,7 @@ export default async function Library() {
           <div className="grow"><div className="eyebrow">How we do things · SOPs</div><h1 className="h-display">Library</h1></div>
           {writer && <Link className="btn accent small" href="/library/new">New SOP</Link>}
         </div>
+        <LibraryTabs current="sops" recipes={full && seesRecipes(ctx.person, sites)} />
 
         <MustRead docs={toRead} />
 
