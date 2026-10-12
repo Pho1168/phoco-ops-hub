@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { canDraft, canReinstate, canRetire, CHANGE_TEXT, docReach, KIND_TEXT, reviewState, STATUS_TEXT, versionLabel, type LibraryDoc, type LibraryVersion } from "@/lib/domain/library";
-import { alertStats, seesRecipes, type DishBody, type PrepBody, type RecipeKind } from "@/lib/domain/recipes";
+import { alertStats, dishWarnings, seesRecipes, type DishBody, type PrepBody, type RecipeKind } from "@/lib/domain/recipes";
 import { dayMonthYear, londonDate } from "@/lib/domain/time";
 import type { Ctx } from "@/lib/session";
 import { erasedPhotos, recipeLinks } from "@/lib/library-service";
@@ -50,6 +50,10 @@ export async function RecipeDoc({ ctx, doc, wanted }: { ctx: Ctx; doc: LibraryDo
       .filter((s) => ctx.isOwner || ctx.person.access.some((a) => a.siteId === s.siteId))
     : [];
   const review = writer && isCurrent ? reviewState(v.reviewBy, londonDate(Date.now())) : undefined;
+  // Writers: a dish that now disagrees with its prep recipes (say the broth changed since) needs a new version.
+  const warnings = writer && isCurrent && kind === "dish"
+    ? dishWarnings(v.body as DishBody, new Map((await db.libraryDocs("prep")).flatMap((p) => (p.published ? [[p.id, { title: p.published.title, allergens: p.published.body.allergens, retired: !!p.retiredAt }]] : []))))
+    : [];
   const retiring = (doc.retiredAt ? canReinstate : canRetire)(ctx.person, doc, docReach(doc, sites)).ok;
   const eraseIn = ctx.isOwner ? doc.id : undefined;
 
@@ -80,6 +84,10 @@ export async function RecipeDoc({ ctx, doc, wanted }: { ctx: Ctx; doc: LibraryDo
           </Link>
         )}
 
+        {warnings.length > 0 && (
+          <div className="alert bad" role="status"><div className="grow stack" style={{ gap: 4 }}><div className="strong">Needs a new version</div>
+            {warnings.map((w) => <div key={w} style={{ fontSize: 14 }}>{w}</div>)}</div></div>
+        )}
         <RecipeBodyView kind={kind} title={v.title} body={v.body} links={links} gone={gone} eraseIn={eraseIn} stepMode={isCurrent} />
 
         {stats.length > 0 && (

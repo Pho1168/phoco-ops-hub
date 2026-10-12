@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { factorFor, formatQty, inUnit, scaleQty, type Item, type Qty, type RecipeKind } from "@/lib/domain/recipes";
+import { factorFor, formatQty, inUnit, parseAmount, scaleQty, type Item, type Qty, type RecipeKind } from "@/lib/domain/recipes";
 
 const PRESETS: Record<RecipeKind, { label: string; f: number }[]> = {
   prep: [{ label: "½ batch", f: 0.5 }, { label: "1 batch", f: 1 }, { label: "2 batches", f: 2 }, { label: "3 batches", f: 3 }],
   dish: [{ label: "1 portion", f: 1 }, { label: "2", f: 2 }, { label: "4", f: 4 }, { label: "10", f: 10 }],
 };
 const ALT: Record<string, string> = { g: "kg", kg: "g", ml: "L", l: "ml" };
-const num = (t: string) => { const n = Number(t.trim().replace(",", ".")); return Number.isFinite(n) ? n : NaN; };
+const num = (t: string) => { const a = parseAmount(t); return typeof a === "number" ? a : NaN; };
 
 /**
  * The ingredients (or a portion's components) at any size: whole batches or portions, any factor, or "scale to what I
@@ -87,9 +87,9 @@ export function Scaler({ kind, items, makes, links }: {
           const link = it.prep ? links[it.prep] : undefined;
           return (
             <li key={i} className={haveLine === i ? "picked" : ""}>
-              <span className="amount">{q ? formatQty(q.qty, q.unit) : <span className="muted">as needed</span>}</span>
+              <span className="amount">{q ? formatQty(q.qty, q.unit) : <span className="muted">{it.unit || "as needed"}</span>}</span>
               <span className="what">
-                {link ? <Link href={`/library/${it.prep}`}>{it.name}</Link> : it.name}
+                {link?.live ? <Link href={`/library/${it.prep}`}>{it.name}</Link> : it.name}
                 {link && !link.live && <span className="muted"> (no longer in use)</span>}
                 {it.note && <span className="muted"> · {it.note}</span>}
               </span>

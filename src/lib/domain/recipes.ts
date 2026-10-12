@@ -107,8 +107,32 @@ export interface RecipeInput {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const oneLine = (s: string | undefined) => (s ?? "").replace(/\s+/g, " ").trim();
-const amount = (n: number | null | undefined): number | undefined | false =>
-  n === null || n === undefined ? undefined : Number.isFinite(n) && n > 0 && n <= RECIPE_LIMITS.qty ? Math.round(n * 1000) / 1000 : false;
+/** An amount as stored: above 0 once rounded to 3 decimals, within the limit. Undefined for none; false if it isn't one. */
+const amount = (n: number | null | undefined): number | undefined | false => {
+  if (n === null || n === undefined) return undefined;
+  const r = Number.isFinite(n) ? Math.round(n * 1000) / 1000 : NaN;
+  return r > 0 && r <= RECIPE_LIMITS.qty ? r : false;
+};
+
+/**
+ * An amount as typed: "" is none; "1.5" and "1,5" (a decimal comma) are 1.5; "1500" is 1500. A comma before exactly
+ * three digits ("1,500") could be either, so it's refused ("ambiguous"); anything else that isn't a plain number is "invalid".
+ */
+export function parseAmount(typed: string): number | null | "ambiguous" | "invalid" {
+  const t = typed.trim();
+  if (!t) return null;
+  if (/^\d+,\d{3}$/.test(t)) return "ambiguous";
+  if (!/^\d*[.,]?\d+$/.test(t)) return "invalid";
+  const n = Number(t.replace(",", "."));
+  return Number.isFinite(n) ? n : "invalid";
+}
+/** What to tell someone about an amount they typed, or nothing. */
+export function amountHint(typed: string): string | undefined {
+  const a = parseAmount(typed);
+  if (a === "ambiguous") return `Write ${typed.trim().replace(",", "")} or ${typed.trim().replace(",", ".")}: a comma could mean either`;
+  if (a === "invalid") return "Just a number, like 250 or 1.5";
+  return undefined;
+}
 
 /**
  * Cleans a recipe from the editor. A draft may be unfinished (`recipeReady` says when it isn't); empty lines and steps
@@ -158,6 +182,7 @@ export function cleanRecipe(kind: RecipeKind, input: RecipeInput): Cleaned<{ tit
     if (makesQty === false) return { ok: false, error: "What a batch makes must be a number above 0" };
     if (makesUnit.length > RECIPE_LIMITS.unit) return { ok: false, error: "Keep the batch unit short (L, kg, portions…)" };
     if (makesQty !== undefined && !makesUnit) return { ok: false, error: "Say what a batch makes in: L, kg, portions…" };
+    if (makesQty === undefined && makesUnit) return { ok: false, error: "Say how much one batch makes (a number)" };
     const storage = oneLine(input.storage), notes = cleanText(input.notes);
     if (storage.length > RECIPE_LIMITS.storage) return { ok: false, error: `Keep storage under ${RECIPE_LIMITS.storage} characters` };
     if (notes.length > RECIPE_LIMITS.notes) return { ok: false, error: `Keep the notes under ${RECIPE_LIMITS.notes} characters` };
@@ -329,8 +354,11 @@ export function fitFor(marks: Allergens, avoid: AllergenKey[]): Fit {
   return "safe";
 }
 
-/** Things to check before approving a dish (they don't stop it): tags that don't fit its allergens, and linked prep recipes that disagree. */
-export function dishWarnings(dish: DishBody, preps: Map<string, { title: string; allergens: Allergens }>): string[] {
+/**
+ * Things to check before approving a dish (they don't stop it): tags that don't fit its allergens, linked prep recipes
+ * that disagree with it, and links to prep recipes no longer in use.
+ */
+export function dishWarnings(dish: DishBody, preps: Map<string, { title: string; allergens: Allergens; retired?: boolean }>): string[] {
   const out: string[] = [];
   const contains = (k: AllergenKey) => dish.allergens[k] === "contains";
   const named = (keys: AllergenKey[]) => keys.map((k) => ALLERGEN_NAME[k].toLowerCase()).join(" and ");
@@ -342,8 +370,20 @@ export function dishWarnings(dish: DishBody, preps: Map<string, { title: string;
   for (const c of dish.components) {
     const p = c.prep ? preps.get(c.prep) : undefined;
     if (!p) continue;
+    if (p.retired) out.push(`${p.title} is retired: link what replaced it`);
     const missed = ALLERGEN_KEYS.filter((k) => p.allergens[k] === "contains" && dish.allergens[k] === "free");
     if (missed.length) out.push(`${p.title} contains ${named(missed)}, but the dish is marked free from ${missed.length === 1 ? "it" : "them"}`);
   }
   return out;
+}
+
+/**
+ * Publishing a prep recipe: the published dishes that use it but say they're free from something it contains (they
+ * need a new version; nothing changes them automatically).
+ */
+export function dishesAtOdds(prepId: string, allergens: Allergens, dishes: LibraryDoc<DishBody>[]): { id: string; code: string; title: string; missed: AllergenKey[] }[] {
+  return dishes.filter((d) => d.published && !d.retiredAt && d.published.body.components.some((c) => c.prep === prepId)).flatMap((d) => {
+    const missed = ALLERGEN_KEYS.filter((k) => allergens[k] === "contains" && d.published!.body.allergens[k] === "free");
+    return missed.length ? [{ id: d.id, code: d.code, title: d.published!.title, missed }] : [];
+  });
 }

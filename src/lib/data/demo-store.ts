@@ -103,12 +103,12 @@ function demoLibrary(): Pick<State, "libDocs" | "libVersions" | "libAcks" | "med
     approvedBy: "DEMO-OWN", publishedAt: at, change: "new" as const, reviewBy: addDaysIso(londonDate(at), 365), status: "published" as const, version: 1 };
   return {
     libDocs: [
-      { id: "demo-sop-1", kind: "sop", code: "SOP-GEN-001", createdAt: at, createdBy: "DEMO-MGR" },
-      { id: "demo-prep-1", kind: "prep", code: "PREP-PROD-001", createdAt: at, createdBy: "DEMO-MGR" },
-      { id: "demo-dish-1", kind: "dish", code: "DISH-BOH-001", createdAt: at, createdBy: "DEMO-MGR" },
+      { id: "00000000-0000-4000-8000-0000000000a1", kind: "sop", code: "SOP-GEN-001", createdAt: at, createdBy: "DEMO-MGR" },
+      { id: "00000000-0000-4000-8000-0000000000a2", kind: "prep", code: "PREP-PROD-001", createdAt: at, createdBy: "DEMO-MGR" },
+      { id: "00000000-0000-4000-8000-0000000000a3", kind: "dish", code: "DISH-BOH-001", createdAt: at, createdBy: "DEMO-MGR" },
     ],
     libVersions: [{
-      ...published, id: "demo-prep-1-v1", docId: "demo-prep-1", title: "Pho broth (demo)",
+      ...published, id: "00000000-0000-4000-8000-0000000000b2", docId: "00000000-0000-4000-8000-0000000000a2", title: "Pho broth (demo)",
       body: { sections: ["PROD"], category: "Broth", makes: { qty: 60, unit: "L" }, ingredients: [
         { qty: 25, unit: "kg", name: "Beef marrow bones" }, { qty: 30, unit: "kg", name: "Beef bones" }, { qty: 3, unit: "kg", name: "Rock sugar" },
         { qty: 900, unit: "g", name: "Coriander seed", note: "toasted" }, { qty: 100, unit: "g", name: "Star anise", note: "toasted" },
@@ -121,17 +121,17 @@ function demoLibrary(): Pick<State, "libDocs" | "libVersions" | "libAcks" | "med
       ], storage: "Chilled at 0–5°C in lidded tubs, labelled with the date", shelfLife: { qty: 3, unit: "days" },
       allergens: { ...DEMO_FREE, fish: "contains" }, notes: "" },
     }, {
-      ...published, id: "demo-dish-1-v1", docId: "demo-dish-1", title: "Pho beef brisket (demo)",
+      ...published, id: "00000000-0000-4000-8000-0000000000b3", docId: "00000000-0000-4000-8000-0000000000a3", title: "Pho beef brisket (demo)",
       body: { sections: ["BOH"], category: "Pho", components: [
         { qty: 330, unit: "g", name: "Rice noodles", note: "blanched" }, { qty: 80, unit: "g", name: "Beef brisket", note: "sliced thin" },
-        { qty: 500, unit: "ml", name: "Pho broth", prep: "demo-prep-1" }, { qty: 1, unit: "portion", name: "Herb plate", note: "basil, lime, chilli, bean sprouts" },
+        { qty: 500, unit: "ml", name: "Pho broth", prep: "00000000-0000-4000-8000-0000000000a2" }, { qty: 1, unit: "portion", name: "Herb plate", note: "basil, lime, chilli, bean sprouts" },
       ], steps: [
         { text: "Noodles in a warm bowl, brisket on top." },
         { text: "Ladle the broth over at a rolling boil, so it's piping hot.", warning: "The broth must be at least 75°C." },
         { text: "Serve with the herb plate on the side." },
       ], allergens: { ...DEMO_FREE, fish: "contains" }, modifications: "Fish sauce is in the broth: it can't be left out.", dietary: [] },
     }, {
-      id: "demo-sop-1-v1", docId: "demo-sop-1", status: "published", version: 1, title: "Hand washing (demo)",
+      id: "00000000-0000-4000-8000-0000000000b1", docId: "00000000-0000-4000-8000-0000000000a1", status: "published", version: 1, title: "Hand washing (demo)",
       body: { sections: [], purpose: "Clean hands stop bacteria and allergens spreading to food. Wash before starting work, after breaks, raw food, bins and cleaning, and after touching your face or phone.", steps: [
         { text: "Wet your hands with warm running water." },
         { text: "Use soap from the dispenser and rub palms, backs, between the fingers, thumbs and fingertips for at least 20 seconds." },
@@ -141,7 +141,7 @@ function demoLibrary(): Pick<State, "libDocs" | "libVersions" | "libAcks" | "med
       authorId: "DEMO-MGR", contributors: ["DEMO-MGR"], rev: 3, createdAt: at, updatedAt: at, submittedBy: "DEMO-MGR", submittedAt: at,
       approvedBy: "DEMO-OWN", publishedAt: at, change: "new", reviewBy: addDaysIso(londonDate(at), 365),
     }],
-    libAcks: [{ versionId: "demo-sop-1-v1", personId: "DEMO-OWN", at }],
+    libAcks: [{ versionId: "00000000-0000-4000-8000-0000000000b1", personId: "DEMO-OWN", at }],
     media: new Map(),
   };
 }

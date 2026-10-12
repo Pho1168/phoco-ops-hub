@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  ALLERGEN_KEYS, allergenAlert, allergenAlerts, allergenChanges, allergenMatrix, alertStats, cleanRecipe, dishWarnings, factorFor, fitFor, formatQty,
-  inUnit, recipeReady, scaleQty, seesRecipes, unanswered, type Allergens, type DishBody, type PrepBody, type RecipeInput,
+  ALLERGEN_KEYS, allergenAlert, allergenAlerts, allergenChanges, allergenMatrix, alertStats, amountHint, cleanRecipe, dishesAtOdds, dishWarnings, factorFor, fitFor, formatQty,
+  inUnit, parseAmount, recipeReady, scaleQty, seesRecipes, unanswered, type Allergens, type DishBody, type PrepBody, type RecipeInput,
 } from "./recipes";
 import { codePrefix, dropPhotos, photoIds, type LibraryDoc } from "./library";
 import type { Person, Site, SiteAccess } from "./types";
@@ -61,6 +61,9 @@ describe("recipes: content", () => {
     expect(cleanRecipe("dish", dishInput({ allergens: { pollen: "contains" } }))).toMatchObject({ ok: false, error: "Unknown allergen" });
     expect(cleanRecipe("prep", prepInput({ shelfLife: { qty: 100, unit: "hours" } }))).toMatchObject({ ok: false, error: "Shelf life: a whole number of hours, up to 72" });
     expect(cleanRecipe("prep", prepInput({ makes: { qty: 60, unit: "" } }))).toMatchObject({ ok: false });
+    expect(cleanRecipe("prep", prepInput({ makes: { qty: null, unit: "L" } }))).toMatchObject({ ok: false, error: "Say how much one batch makes (a number)" });
+    expect(cleanRecipe("prep", prepInput({ makes: { qty: 0.0004, unit: "L" } }))).toMatchObject({ ok: false }); // rounds to nothing
+    expect(cleanRecipe("prep", prepInput({ items: [{ qty: 0.0004, unit: "g", name: "Salt", note: "" }] }))).toMatchObject({ ok: false });
     expect(cleanRecipe("dish", dishInput({ dietary: ["Halal"] }))).toMatchObject({ ok: false, error: "Unknown dietary tag" });
   });
   it("is ready for approval when everything a cook needs is there, and every allergen is marked", () => {
@@ -127,6 +130,20 @@ describe("recipes: allergens", () => {
     expect(dishWarnings({ ...dish, dietary: ["Vegan"], allergens: { ...dish.allergens, eggs: "contains" } }, new Map())).toEqual(["It's tagged vegan but contains eggs and fish"]);
     expect(dishWarnings({ ...dish, dietary: ["Vegetarian"] }, new Map())).toEqual(["It's tagged vegetarian but contains fish"]);
     expect(dishWarnings({ ...dish, dietary: ["Vegan"], allergens: { ...all("free"), eggs: "removable" } }, new Map())).toEqual([]); // vegan without the egg
+    const retired = new Map([["1f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b", { title: "Pho broth", allergens: { ...all("free"), fish: "contains" as const }, retired: true }]]);
+    expect(dishWarnings(dish, retired)).toEqual(["Pho broth is retired: link what replaced it"]);
+  });
+  it("publishing a prep recipe: the dishes using it that now disagree", () => {
+    const broth = "1f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b";
+    const dishDoc = (id: string, allergens: Allergens, linked: boolean, over: Partial<LibraryDoc<DishBody>> = {}): LibraryDoc<DishBody> => ({
+      id, kind: "dish", code: id, createdAt: 1,
+      published: { id: `${id}-v`, docId: id, status: "published", title: `Dish ${id}`, authorId: "x", authorName: "x", createdAt: 1, updatedAt: 1, contributors: [], rev: 1,
+        body: { sections: ["BOH"], category: "Pho", components: linked ? [{ unit: "ml", name: "Broth", prep: broth }] : [], steps: [], allergens, modifications: "", dietary: [] } }, ...over,
+    });
+    const dishes = [dishDoc("a", { ...all("free"), fish: "contains" }, true), dishDoc("b", all("free"), true), dishDoc("c", all("free"), false), dishDoc("d", all("free"), true, { retiredAt: 3 })];
+    expect(dishesAtOdds(broth, { ...all("free"), fish: "contains", celery: "contains" }, dishes)).toEqual([
+      { id: "a", code: "a", title: "Dish a", missed: ["celery"] }, { id: "b", code: "b", title: "Dish b", missed: ["celery", "fish"] },
+    ]);
   });
 });
 
@@ -135,6 +152,14 @@ describe("recipes: who sees them", () => {
     expect([mgr, cook, server, prod, owner].map((p) => seesRecipes(p, SITES))).toEqual([true, true, false, true, true]);
     expect(seesRecipes({ ...cook, status: "frozen" }, SITES)).toBe(false);
     expect(seesRecipes(person("syd", [at("SYD", "staff", ["BOH"])]), SITES)).toBe(false); // a closed site
+  });
+});
+
+describe("recipes: typed amounts", () => {
+  it("reads numbers as typed, a decimal comma too, and refuses a comma that could mean thousands", () => {
+    expect(["", "250", "1.5", "1,5", ".5", "1,500", "2,5005", "1.2.3", "-1", "1e3", "abc"].map(parseAmount))
+      .toEqual([null, 250, 1.5, 1.5, 0.5, "ambiguous", 2.5005, "invalid", "invalid", "invalid", "invalid"]);
+    expect([amountHint("1,500"), amountHint("abc"), amountHint("1,5"), amountHint("")]).toEqual(["Write 1500 or 1.500: a comma could mean either", "Just a number, like 250 or 1.5", undefined, undefined]);
   });
 });
 

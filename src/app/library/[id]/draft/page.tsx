@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { canApprove, canDiscard, canDraft, canReview, canWithdraw, defaultReviewBy, docReach, isKind, KIND_TEXT, reachedSites, readsAt, type LibraryDoc, type SopBody } from "@/lib/domain/library";
-import { alertedAt, allergenChanges, dishWarnings, type DishBody, type PrepBody, type RecipeKind } from "@/lib/domain/recipes";
+import { ALLERGEN_NAME, alertedAt, allergenChanges, dishesAtOdds, dishWarnings, type DishBody, type PrepBody, type RecipeKind } from "@/lib/domain/recipes";
 import { addDays, londonDate } from "@/lib/domain/time";
 import { requireCtx } from "@/lib/session";
 import { erasedPhotos, recipeLinks } from "@/lib/library-service";
@@ -110,12 +110,14 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
   // A recipe: for a dish, what its allergens change and who will be asked to confirm; things to check first.
   const kind = doc.kind as RecipeKind;
   const body = v.body as PrepBody | DishBody;
-  const [links, preps] = await Promise.all([recipeLinks(body, db), kind === "dish" ? db.libraryDocs("prep") : Promise.resolve([] as LibraryDoc<PrepBody>[])]);
+  const [links, preps, dishes] = await Promise.all([recipeLinks(body, db), kind === "dish" ? db.libraryDocs("prep") : Promise.resolve([] as LibraryDoc<PrepBody>[]),
+    kind === "prep" ? db.libraryDocs("dish") : Promise.resolve([] as LibraryDoc<DishBody>[])]);
   const changes = kind === "dish" && doc.published ? allergenChanges((doc.published.body as DishBody).allergens, (body as DishBody).allergens) : [];
   const alerted = changes.length ? sites.filter((s) => after.includes(s.id)).map((s) => ({ site: s.name, n: people.filter((p) => alertedAt(p, body.sections, [s]).length).length })) : [];
+  // Things to check, not stop: a dish that disagrees with its tags or prep recipes; dishes this prep recipe would now disagree with.
   const warnings = kind === "dish"
-    ? dishWarnings(body as DishBody, new Map(preps.flatMap((p) => (p.published ? [[p.id, { title: p.published.title, allergens: p.published.body.allergens }]] : []))))
-    : [];
+    ? dishWarnings(body as DishBody, new Map(preps.flatMap((p) => (p.published ? [[p.id, { title: p.published.title, allergens: p.published.body.allergens, retired: !!p.retiredAt }]] : []))))
+    : dishesAtOdds(doc.id, body.allergens, dishes).map((d) => `${d.title} (${d.code}) uses it but is marked free from ${d.missed.map((k) => ALLERGEN_NAME[k].toLowerCase()).join(" and ")}: give it a new version once this is published`);
   const asks = kind === "dish" && changes.length ? "Its allergens change, so everyone at its sites will be asked to confirm they've seen it." : "";
   return (
     <>

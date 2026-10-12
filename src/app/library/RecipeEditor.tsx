@@ -2,7 +2,7 @@
 
 import { SOP_LIMITS, type LibraryBody, type Photo } from "@/lib/domain/library";
 import {
-  ALLERGENS, DIETS, dishWarnings, MARK_TEXT, RECIPE_LIMITS, UNITS, unanswered,
+  ALLERGENS, amountHint, DIETS, dishWarnings, MARK_TEXT, parseAmount, RECIPE_LIMITS, UNITS, unanswered,
   type Allergens, type DishBody, type Item, type Mark, type PrepBody, type RecipeKind,
 } from "@/lib/domain/recipes";
 import { DraftForm } from "./DraftForm";
@@ -11,12 +11,13 @@ import { editSteps, moved, newKey, PhotoField, stepsInput, stepsPrint, StepsFiel
 interface EditItem { key: string; qty: string; unit: string; name: string; note: string; prep: string }
 interface RecipeState {
   title: string; sections: string[]; category: string; items: EditItem[]; steps: EditStep[];
-  photo?: Photo; photoUploading?: boolean; allergens: Record<string, string>;
+  /** The finished photo; `uploading` (like a step's) isn't kept on the device. */
+  finished: { photo?: Photo; uploading?: boolean }; allergens: Record<string, string>;
   makesQty: string; makesUnit: string; storage: string; shelfQty: string; shelfUnit: "hours" | "days"; notes: string;
   modifications: string; dietary: string[];
 }
-/** A prep recipe the dish can link to. */
-export interface PrepOption { id: string; code: string; title: string; allergens: Allergens }
+/** A prep recipe the dish can link to (retired ones only show if a component already links to them). */
+export interface PrepOption { id: string; code: string; title: string; allergens: Allergens; retired: boolean }
 
 const blankItem = (): EditItem => ({ key: newKey(), qty: "", unit: "", name: "", note: "", prep: "" });
 const qtyText = (n: number | undefined) => (n === undefined ? "" : String(n));
@@ -28,27 +29,27 @@ function fromBody(kind: RecipeKind, title: string, body: PrepBody | DishBody): R
   const prep = kind === "prep" ? (body as PrepBody) : undefined, dish = kind === "dish" ? (body as DishBody) : undefined;
   return {
     title, sections: body.sections, category: body.category, items: editItems(prep ? prep.ingredients : dish!.components), steps: editSteps(body.steps),
-    photo: body.photo, allergens: { ...body.allergens },
+    finished: { photo: body.photo }, allergens: { ...body.allergens },
     makesQty: qtyText(prep?.makes?.qty), makesUnit: prep?.makes?.unit ?? "", storage: prep?.storage ?? "",
     shelfQty: qtyText(prep?.shelfLife?.qty), shelfUnit: prep?.shelfLife?.unit ?? "days", notes: prep?.notes ?? "",
     modifications: dish?.modifications ?? "", dietary: dish?.dietary ?? [],
   };
 }
-/** Typed numbers: "" is none; "1,5" is 1.5; anything else that isn't a number is sent as -1, so the server says what's wrong. */
-const num = (t: string) => { const v = t.trim().replace(",", "."); if (!v) return null; const n = Number(v); return Number.isFinite(n) ? n : -1; };
+/** Typed numbers: "" is none; "1,5" is 1.5; anything that isn't clearly a number ("1,500", "abc") is sent as -1, so the server refuses it. */
+const num = (t: string) => { const a = parseAmount(t); return typeof a === "string" ? -1 : a; };
 const toInput = (kind: RecipeKind) => (s: RecipeState) => ({
   title: s.title, sections: s.sections, category: s.category,
   items: s.items.map((i) => ({ qty: num(i.qty), unit: i.unit, name: i.name, note: i.note, prep: kind === "dish" && i.prep ? i.prep : null })),
-  steps: stepsInput(s.steps), photo: s.photo ?? null, allergens: s.allergens,
+  steps: stepsInput(s.steps), photo: s.finished.photo ?? null, allergens: s.allergens,
   ...(kind === "prep"
     ? { makes: { qty: num(s.makesQty), unit: s.makesUnit }, storage: s.storage, shelfLife: { qty: num(s.shelfQty), unit: s.shelfUnit }, notes: s.notes }
     : { modifications: s.modifications, dietary: s.dietary }),
 });
 const fingerprint = (s: RecipeState) => JSON.stringify([s.title.trim(), [...s.sections].sort(), s.category.trim(),
-  s.items.map((i) => [i.qty.trim(), i.unit.trim(), i.name.trim(), i.note.trim(), i.prep]).filter((i) => i.some(Boolean)), stepsPrint(s.steps), s.photo?.id ?? "",
+  s.items.map((i) => [i.qty.trim(), i.unit.trim(), i.name.trim(), i.note.trim(), i.prep]).filter((i) => i.some(Boolean)), stepsPrint(s.steps), s.finished.photo?.id ?? "",
   Object.entries(s.allergens).filter(([, v]) => v).sort(), s.makesQty.trim(), s.makesUnit.trim(), s.storage.trim(), s.shelfQty.trim(), s.shelfUnit, s.notes.trim(),
   s.modifications.trim(), [...s.dietary].sort()]);
-const busy = (s: RecipeState) => !!s.photoUploading || s.steps.some((x) => x.uploading);
+const busy = (s: RecipeState) => !!s.finished.uploading || s.steps.some((x) => x.uploading);
 
 /** Ingredients (prep) or a portion's components (dish): amount, unit, name, note, and for a dish the prep recipe it is. */
 function ItemsField({ kind, items, set, preps }: { kind: RecipeKind; items: EditItem[]; set: (fn: (i: EditItem[]) => EditItem[]) => void; preps: PrepOption[] }) {
@@ -72,14 +73,15 @@ function ItemsField({ kind, items, set, preps }: { kind: RecipeKind; items: Edit
                 onClick={() => set((cur) => (cur.length > 1 ? cur.filter((x) => x.key !== it.key) : [blankItem()]))}>✕</button>
             </span>
           </div>
+          {amountHint(it.qty) && <div className="field-hint" role="alert">{amountHint(it.qty)}</div>}
           <div className="item-row">
             <input aria-label={`Note for ${word.toLowerCase()} ${i + 1}`} className="txt note" maxLength={RECIPE_LIMITS.note} placeholder="Note (optional): chopped, added last…" value={it.note}
               onChange={(e) => patch(it.key, { note: e.target.value })} />
-            {kind === "dish" && preps.length > 0 && (
+            {kind === "dish" && (preps.some((p) => !p.retired) || !!it.prep) && (
               <select aria-label={`Prep recipe for component ${i + 1}`} className="txt link" value={it.prep}
                 onChange={(e) => { const id = e.target.value; const p = preps.find((x) => x.id === id); patch(it.key, { prep: id, ...(p && !it.name ? { name: p.title } : {}) }); }}>
                 <option value="">Not a prep recipe</option>
-                {preps.map((p) => <option key={p.id} value={p.id}>{p.title} ({p.code})</option>)}
+                {preps.filter((p) => !p.retired || p.id === it.prep).map((p) => <option key={p.id} value={p.id}>{p.title} ({p.code}){p.retired ? " (retired)" : ""}</option>)}
               </select>
             )}
           </div>
@@ -171,11 +173,12 @@ export function RecipeEditor({ kind, mode, docId, versionId, rev, published, ini
                       <input aria-label="Batch unit" className="txt unit" list="units-batch" maxLength={RECIPE_LIMITS.unit} placeholder="L" value={s.makesUnit} onChange={(e) => { const makesUnit = e.target.value; set((x) => ({ ...x, makesUnit })); }} />
                       <datalist id="units-batch">{["L", "kg", "portions", "pieces", "tubs"].map((u) => <option key={u} value={u} />)}</datalist>
                     </span></label>
+                  {amountHint(s.makesQty) && <div className="field-hint" role="alert">{amountHint(s.makesQty)}</div>}
                 </div>
               )}
               <div className="stack" style={{ gap: 6 }}><span className="strong">Photo of the finished {kind === "prep" ? "product" : "dish"}</span>
-                <PhotoField photo={s.photo} uploading={s.photoUploading} erased={erased} setErr={setErr} label={`Photo of the finished ${kind === "prep" ? "product" : "dish"}`}
-                  set={(p) => set((x) => ({ ...x, photo: p.photo, photoUploading: p.uploading }))} /></div>
+                <PhotoField photo={s.finished.photo} uploading={s.finished.uploading} erased={erased} setErr={setErr} label={`Photo of the finished ${kind === "prep" ? "product" : "dish"}`}
+                  set={(p) => set((x) => ({ ...x, finished: { photo: p.photo, uploading: p.uploading } }))} /></div>
             </section>
 
             <ItemsField kind={kind} items={s.items} preps={preps} set={(fn) => set((x) => ({ ...x, items: fn(x.items) }))} />

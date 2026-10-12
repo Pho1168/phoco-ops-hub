@@ -1586,7 +1586,11 @@ export async function ackVersion(versionId: string): Promise<ActionResult> {
   if (doc.kind === "sop" && !readsAny(v.body.sections, ctx.person, sites)) return { ok: false, error: "This SOP isn't one you need to confirm" };
   if (doc.kind === "dish" && (!v.allergensChangedAt || !alertedAt(ctx.person, v.body.sections, sites).length)) return { ok: false, error: "There's no allergen change here for you to confirm" };
   if (doc.kind === "prep") return { ok: false, error: "Recipes don't need confirming" };
-  await db.ackLibraryVersion(v.id, ctx.person.id);
+  if (!(await db.ackLibraryVersion(v.id, ctx.person.id))) {
+    // Already confirmed (another tab), or replaced a moment ago.
+    if (!(await db.libraryAcks({ versionIds: [v.id], personId: ctx.person.id })).length) return { ok: false, error: "This version has been replaced. Open it again" };
+    return { ok: true };
+  }
   if (doc.kind === "dish") await db.audit({ actorId: ctx.person.id, action: "library.allergens_seen", detail: `Confirmed the allergen change in ${doc.code}: ${v.title}` });
   revalidatePath(`/library/${doc.id}`); revalidatePath(`/library/allergens/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me");
   return { ok: true };

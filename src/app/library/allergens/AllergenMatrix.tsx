@@ -49,8 +49,8 @@ export function AllergenMatrix({ groups }: { groups: { category: string; rows: M
       </div>
       <div className="print-only legend">✔ Contains (can&apos;t be removed) · ☑ Can be left out on request · — Free from</div>
       {all.length === 0 ? <div className="card muted">{groups.length ? "No dishes match." : "No dishes published yet."}</div> : (
-        <div className="matrix-wrap" role="region" aria-label="Allergen matrix" tabIndex={0}>
-          <table className="matrix">
+        <div className="allergen-matrix-wrap" role="region" aria-label="Allergen matrix" tabIndex={0}>
+          <table className="allergen-matrix">
             <thead>
               <tr>
                 <th scope="col" className="dish">Dish</th>

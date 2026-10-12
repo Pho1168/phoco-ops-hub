@@ -44,6 +44,7 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
     certIssues: issueCount(peopleInCare(actor, people), certs, today, canSeeRightToWork(actor), openManaged),
     equipmentIssues,
     coverToDo,
-    libraryToDo: libraryToDo(actor, [...sops, ...preps, ...dishes], sites),
+    libraryToDo: libraryToDo(actor, sops, sites),
+    recipesToDo: libraryToDo(actor, [...preps, ...dishes], sites),
   };
 }
