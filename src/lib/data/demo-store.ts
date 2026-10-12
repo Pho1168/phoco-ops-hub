@@ -527,7 +527,7 @@ export const demoStore: Store = {
   },
   async queueNotice(n) {
     if (n.dedupeKey && S().notices.some((x) => x.dedupeKey === n.dedupeKey)) return false;
-    S().notices.push({ id: randomUUID(), personId: n.personId, kind: n.kind, title: n.title, body: n.body, dedupeKey: n.dedupeKey, sendAfter: n.sendAfter, createdAt: Date.now() });
+    S().notices.push({ id: randomUUID(), personId: n.personId, kind: n.kind, title: n.title, body: n.body, dedupeKey: n.dedupeKey, sendAfter: n.sendAfter, createdAt: Date.now(), url: n.url });
     return true;
   },
   async dueNotices(now, limit) { return S().notices.filter((n) => !n.sentAt && n.sendAfter <= now).slice(0, limit); },

@@ -136,6 +136,7 @@ export default async function MyShifts() {
             <div key={n.id} className="card stack" style={{ gap: 4 }}>
               <div className="row"><span className="strong grow">{n.title}</span><span className="muted">{when(n.createdAt)}</span></div>
               <div style={{ whiteSpace: "pre-line", fontSize: 14 }}>{n.body}</div>
+              {n.url && n.url !== "/me" && (ctx.scope === "full" || n.url.startsWith("/equipment/")) && <div><Link className="btn ghost small" href={n.url}>Open</Link></div>}
             </div>
           ))}
         </section>

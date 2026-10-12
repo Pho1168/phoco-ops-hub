@@ -128,8 +128,8 @@ async function loadChecklists(filter: postgres.PendingQuery<postgres.Row[]>): Pr
   }));
 }
 
-interface NoticeDbRow { id: string; person_id: string; kind: NoticeRow["kind"]; title: string; body: string; send_after: Date; sent_at: Date | null; created_at: Date }
-const toNotice = (r: NoticeDbRow): NoticeRow => ({ id: r.id, personId: r.person_id, kind: r.kind, title: r.title, body: r.body, sendAfter: r.send_after.getTime(), sentAt: ms(r.sent_at), createdAt: r.created_at.getTime() });
+interface NoticeDbRow { id: string; person_id: string; kind: NoticeRow["kind"]; title: string; body: string; send_after: Date; sent_at: Date | null; created_at: Date; url: string | null }
+const toNotice = (r: NoticeDbRow): NoticeRow => ({ id: r.id, personId: r.person_id, kind: r.kind, title: r.title, body: r.body, sendAfter: r.send_after.getTime(), sentAt: ms(r.sent_at), createdAt: r.created_at.getTime(), url: opt(r.url) });
 
 interface DeviceRow { id: string; site_id: SiteId; label: string; status: Device["status"]; last_seen: Date | null; created_at: Date }
 const toDevice = (r: DeviceRow): Device => ({ id: r.id, siteId: r.site_id, label: r.label, status: r.status, lastSeen: ms(r.last_seen), createdAt: r.created_at.getTime() });
@@ -884,15 +884,15 @@ export const sqlStore: Store = {
   // ---------- messages and push ----------
   async queueNotice(n) {
     const q = sql();
-    const r = await q`insert into notifications (person_id, kind, title, body, dedupe_key, send_after)
-                      values (${n.personId}, ${n.kind}, ${n.title}, ${n.body}, ${n.dedupeKey ?? null}, ${new Date(n.sendAfter)})
+    const r = await q`insert into notifications (person_id, kind, title, body, dedupe_key, send_after, url)
+                      values (${n.personId}, ${n.kind}, ${n.title}, ${n.body}, ${n.dedupeKey ?? null}, ${new Date(n.sendAfter)}, ${n.url ?? null})
                       on conflict (dedupe_key) do nothing`;
     return r.count > 0;
   },
   async dueNotices(now, limit) {
     const q = sql();
     const rows = await q<NoticeDbRow[]>`
-      select id, person_id, kind, title, body, send_after, sent_at, created_at from notifications
+      select id, person_id, kind, title, body, send_after, sent_at, created_at, url from notifications
       where sent_at is null and send_after <= ${new Date(now)} order by send_after limit ${limit}`;
     return rows.map(toNotice);
   },
@@ -905,7 +905,7 @@ export const sqlStore: Store = {
     if (!isUuid(personId)) return [];
     const q = sql();
     const rows = await q<NoticeDbRow[]>`
-      select id, person_id, kind, title, body, send_after, sent_at, created_at from notifications
+      select id, person_id, kind, title, body, send_after, sent_at, created_at, url from notifications
       where person_id = ${personId} order by created_at desc limit ${limit}`;
     return rows.map(toNotice);
   },

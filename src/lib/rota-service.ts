@@ -88,7 +88,7 @@ export async function queueCertReminders(now = Date.now(), db: Store = store()):
   const [people, certs] = await Promise.all([db.people(), db.certificates()]);
   let queued = 0;
   for (const m of certReminderMessages(people, certs, londonDate(now))) {
-    if (await db.queueNotice({ personId: m.personId, kind: "cert", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now) })) queued++;
+    if (await db.queueNotice({ personId: m.personId, kind: "cert", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) queued++;
   }
   return queued;
 }
@@ -98,7 +98,7 @@ export async function deliverDue(now = Date.now()): Promise<number> {
   const db = store();
   let sent = 0;
   for (const n of await db.dueNotices(now, 200)) {
-    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: "/me" });
+    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: n.url ?? "/me" });
     await db.markNoticeSent(n.id);
   }
   return sent;
@@ -112,7 +112,7 @@ export async function queueServiceReminders(now = Date.now(), db: Store = store(
   for (const site of sites) {
     const [kit, events] = await Promise.all([db.equipment(site.id), db.equipmentEvents({ siteId: site.id })]);
     for (const m of serviceReminderMessages(kit, events, people, { [site.id]: site.name }, londonDate(now))) {
-      if (await db.queueNotice({ personId: m.personId, kind: "service", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now) })) queued++;
+      if (await db.queueNotice({ personId: m.personId, kind: "service", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) queued++;
     }
   }
   return queued;
@@ -131,7 +131,7 @@ export async function queueWeeklyReport(now = Date.now(), db: Store = store()): 
     if (!mine.length) continue;
     for (const s of mine) if (!reports.has(s.id)) reports.set(s.id, (await loadSiteReport(s, week, now, db)).week);
     const d = weeklyDigest(week, mine.map((s) => ({ name: s.name, r: reports.get(s.id)! })));
-    if (await db.queueNotice({ personId: p.id, kind: "report", title: d.title, body: d.body, dedupeKey: `report|${week}|${p.id}`, sendAfter: afterQuietHours(now) })) queued++;
+    if (await db.queueNotice({ personId: p.id, kind: "report", title: d.title, body: d.body, dedupeKey: `report|${week}|${p.id}`, sendAfter: afterQuietHours(now), url: `/manage/report?week=${week}` })) queued++;
   }
   return queued;
 }

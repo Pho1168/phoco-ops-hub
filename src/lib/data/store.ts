@@ -15,7 +15,7 @@ export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
 /** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
 export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task";
-export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number }
+export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number; url?: string }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
 export interface RotaSource { siteId: SiteId; createdAt: number; lastImportAt?: number; lastResult?: RotaResult }
@@ -183,7 +183,8 @@ export interface Store {
   shiftsOnDate(date: string): Promise<(ShiftView & { personId: string; staffCode: string })[]>;
 
   // Messages and push
-  queueNotice(n: { personId: string; kind: MessageKind; title: string; body: string; dedupeKey?: string; sendAfter: number }): Promise<boolean>;
+  /** `url`: the app page the phone notification opens (default My shifts). */
+  queueNotice(n: { personId: string; kind: MessageKind; title: string; body: string; dedupeKey?: string; sendAfter: number; url?: string }): Promise<boolean>;
   dueNotices(now: number, limit: number): Promise<NoticeRow[]>;
   markNoticeSent(id: string): Promise<void>;
   /** A person's messages, newest first. They show in the app at once; quiet hours only hold back the phone alert. */

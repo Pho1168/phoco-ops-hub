@@ -661,7 +661,7 @@ async function tellManagers(siteId: SiteId, exceptId: string, title: string, bod
   const now = Date.now();
   let n = 0;
   for (const p of (await db.people()).filter((p) => p.status === "active" && p.id !== exceptId && canManage(p, siteId))) {
-    if (await db.queueNotice({ personId: p.id, kind: "leave", title, body, dedupeKey: `${dedupeKey}|${p.id}`, sendAfter: afterQuietHours(now) })) n++;
+    if (await db.queueNotice({ personId: p.id, kind: "leave", title, body, dedupeKey: `${dedupeKey}|${p.id}`, sendAfter: afterQuietHours(now), url: "/manage/time-off" })) n++;
   }
   if (n) await deliverDue(now);
 }
@@ -856,7 +856,7 @@ export async function reportFault(equipmentId: string, input: unknown): Promise<
   const now = Date.now();
   let told = 0;
   for (const m of faultReportedMessages(eq, { id: id!, severity: f.data.severity, body: f.data.body }, ctx.person.id, ctx.person.name, await db.people())) {
-    if (await db.queueNotice({ personId: m.personId, kind: "fault", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now) })) told++;
+    if (await db.queueNotice({ personId: m.personId, kind: "fault", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) told++;
   }
   if (told) await deliverDue(now);
   await db.audit({ actorId: ctx.person.id, siteId: eq.siteId, action: "equipment.fault", detail: `${SEVERITY_LABEL[f.data.severity]}: ${eq.name}: ${f.data.body}` });
@@ -883,8 +883,7 @@ export async function updateFault(equipmentId: string, faultId: string, input: u
   if (u.data.fixed && f.fault.severity === "down") {
     const now = Date.now();
     for (const p of siteManagers(await db.people(), eq.siteId, ctx.person.id)) {
-      await db.queueNotice({ personId: p.id, kind: "fault", title: `Working again: ${eq.name}`, body: `${u.data.body}
-Marked fixed by ${ctx.person.name}`, dedupeKey: `fixed|${f.fault.id}|${p.id}`, sendAfter: afterQuietHours(now) });
+      await db.queueNotice({ personId: p.id, kind: "fault", title: `Working again: ${eq.name}`, body: `${u.data.body}\nMarked fixed by ${ctx.person.name}`, dedupeKey: `fixed|${f.fault.id}|${p.id}`, sendAfter: afterQuietHours(now), url: `/equipment/${eq.id}` });
     }
     await deliverDue(now);
   }

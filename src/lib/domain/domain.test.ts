@@ -694,6 +694,8 @@ describe("staff certificates", () => {
     expect(msgs.map((m) => m.personId).sort()).toEqual(["ana", "mgr", "own"]); // not the Wembley manager, not someone who has left
     expect(msgs.find((m) => m.personId === "ana")?.title).toBe("Your Food hygiene Level 2 runs out in 8 days");
     expect(msgs.find((m) => m.personId === "mgr")?.title).toBe("Ana: Food hygiene Level 2 runs out in 8 days");
+    expect(msgs.find((m) => m.personId === "mgr")?.url).toBe("/manage/certificates/ana"); // tapping opens their record
+    expect(msgs.find((m) => m.personId === "ana")?.url).toBe("/me");
     expect(new Set(msgs.map((m) => m.dedupeKey)).size).toBe(3);
     expect(msgs[0].dedupeKey).toMatch(/^cert\|h1\|30\|/); // 8 days out: the 30-day reminder
     // renewed: the old record no longer counts
@@ -790,6 +792,7 @@ describe("equipment and maintenance", () => {
     const m = faultReportedMessages(fridge, { id: "f1", severity: "down", body: "Not cooling" }, "cook", "Cook", people);
     expect(m.map((x) => x.personId)).toEqual(["mgr", "own"]);
     expect(m[0].title).toBe("Not working: Walk-in fridge");
+    expect(m[0].url).toBe("/equipment/fr");
     expect(faultReportedMessages(fridge, { id: "f1", severity: "attention", body: "x" }, "mgr", "Mo", people).map((x) => x.personId)).toEqual(["own"]);
     expect(canUseEquipment(people[0], "EAS")).toBe(true);
     expect(canUseEquipment(people[0], "WEM")).toBe(false);

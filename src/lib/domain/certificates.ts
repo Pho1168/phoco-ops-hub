@@ -141,7 +141,7 @@ export function reminderDue(c: Pick<Certificate, "expiresOn">, today: string): R
   return undefined;
 }
 
-export interface CertMessage { personId: string; title: string; body: string; dedupeKey: string }
+export interface CertMessage { personId: string; title: string; body: string; dedupeKey: string; url: string }
 
 /**
  * The reminder messages due today. For each active person and kind, only the record that counts (their latest)
@@ -167,16 +167,16 @@ export function certReminderMessages(people: Pick<Person, "id" | "name" | "statu
         : holder.access.some((a) => canManage(p, a.siteId))));
       if (kind === "right_to_work") {
         for (const p of others) out.push(stage === "expired"
-          ? { personId: p.id, title: `${holder.name}: right to work follow-up overdue`, body: `It was due by ${dayMonthYear(exp)}. Check their right to work now, then record it in Manage → Certificates.`, dedupeKey: key(p.id) }
-          : { personId: p.id, title: `${holder.name}: right to work follow-up due ${when}`, body: `Their permission to work is time-limited. Do the follow-up check by ${dayMonthYear(exp)}, then record it in Manage → Certificates.`, dedupeKey: key(p.id) });
+          ? { personId: p.id, title: `${holder.name}: right to work follow-up overdue`, body: `It was due by ${dayMonthYear(exp)}. Check their right to work now, then record it in Manage → Certificates.`, dedupeKey: key(p.id), url: `/manage/certificates/${holder.id}` }
+          : { personId: p.id, title: `${holder.name}: right to work follow-up due ${when}`, body: `Their permission to work is time-limited. Do the follow-up check by ${dayMonthYear(exp)}, then record it in Manage → Certificates.`, dedupeKey: key(p.id), url: `/manage/certificates/${holder.id}` });
         continue;
       }
       out.push(stage === "expired"
-        ? { personId: holder.id, title: `Your ${t.label} has run out`, body: `It ran out on ${dayMonthYear(exp)}. Speak to your manager about renewing it.`, dedupeKey: key(holder.id) }
-        : { personId: holder.id, title: `Your ${t.label} runs out ${when}`, body: `Last valid day: ${dayMonthYear(exp)}. Speak to your manager about the refresher.`, dedupeKey: key(holder.id) });
+        ? { personId: holder.id, title: `Your ${t.label} has run out`, body: `It ran out on ${dayMonthYear(exp)}. Speak to your manager about renewing it.`, dedupeKey: key(holder.id), url: "/me" }
+        : { personId: holder.id, title: `Your ${t.label} runs out ${when}`, body: `Last valid day: ${dayMonthYear(exp)}. Speak to your manager about the refresher.`, dedupeKey: key(holder.id), url: "/me" });
       for (const p of others) out.push(stage === "expired"
-        ? { personId: p.id, title: `${holder.name}: ${t.label} has run out`, body: `It ran out on ${dayMonthYear(exp)}. Book the refresher, then add the new certificate in Manage → Certificates.`, dedupeKey: key(p.id) }
-        : { personId: p.id, title: `${holder.name}: ${t.label} runs out ${when}`, body: `Last valid day: ${dayMonthYear(exp)}. Book the refresher, then add the new certificate in Manage → Certificates.`, dedupeKey: key(p.id) });
+        ? { personId: p.id, title: `${holder.name}: ${t.label} has run out`, body: `It ran out on ${dayMonthYear(exp)}. Book the refresher, then add the new certificate in Manage → Certificates.`, dedupeKey: key(p.id), url: `/manage/certificates/${holder.id}` }
+        : { personId: p.id, title: `${holder.name}: ${t.label} runs out ${when}`, body: `Last valid day: ${dayMonthYear(exp)}. Book the refresher, then add the new certificate in Manage → Certificates.`, dedupeKey: key(p.id), url: `/manage/certificates/${holder.id}` });
     }
   }
   return out;

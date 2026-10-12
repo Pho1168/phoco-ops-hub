@@ -165,7 +165,7 @@ export function validateService(doneOn: string, today: string): Checked {
   return { ok: true };
 }
 
-export interface EquipmentMessage { personId: string; title: string; body: string; dedupeKey: string }
+export interface EquipmentMessage { personId: string; title: string; body: string; dedupeKey: string; url: string }
 
 /** Owners and managers of the site, except one person (the one who did it). */
 export function siteManagers<P extends Pick<Person, "id" | "status" | "access">>(people: P[], siteId: SiteId, exceptId?: string): P[] {
@@ -173,11 +173,11 @@ export function siteManagers<P extends Pick<Person, "id" | "status" | "access">>
 }
 
 /** Who to tell about a new fault, and what to say. */
-export function faultReportedMessages(eq: Pick<Equipment, "name" | "siteId" | "location">, fault: Pick<EquipmentEvent, "id" | "severity" | "body">, reporterId: string, reporterName: string,
+export function faultReportedMessages(eq: Pick<Equipment, "id" | "name" | "siteId" | "location">, fault: Pick<EquipmentEvent, "id" | "severity" | "body">, reporterId: string, reporterName: string,
   people: Pick<Person, "id" | "status" | "access">[]): EquipmentMessage[] {
   const title = `${fault.severity === "down" ? "Not working" : "Needs attention"}: ${eq.name}`;
   const body = `${fault.body}\nReported by ${reporterName}${eq.location ? ` · ${eq.location}` : ""}`;
-  return siteManagers(people, eq.siteId, reporterId).map((p) => ({ personId: p.id, title, body, dedupeKey: `fault|${fault.id}|${p.id}` }));
+  return siteManagers(people, eq.siteId, reporterId).map((p) => ({ personId: p.id, title, body, dedupeKey: `fault|${fault.id}|${p.id}`, url: `/equipment/${eq.id}` }));
 }
 
 /** Service reminders for managers: two weeks before the due date and once it has passed. Sent once per due date. */
@@ -191,8 +191,8 @@ export function serviceReminderMessages(equipment: Equipment[], events: Equipmen
     const where = siteNames[eq.siteId] ?? eq.siteId;
     for (const p of siteManagers(people, eq.siteId)) {
       out.push(stage === "overdue"
-        ? { personId: p.id, title: `Service overdue: ${eq.name} (${where})`, body: `It was due on ${dayMonthYear(s.due)}.${eq.serviceContact ? ` Contact: ${eq.serviceContact}.` : ""} Log the service in Manage → Equipment once it's done.`, dedupeKey: `service|${eq.id}|${s.due}|overdue|${p.id}` }
-        : { personId: p.id, title: `Service due ${days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`}: ${eq.name} (${where})`, body: `Due on ${dayMonthYear(s.due)}.${eq.serviceContact ? ` Contact: ${eq.serviceContact}.` : ""} Log it in Manage → Equipment once it's done.`, dedupeKey: `service|${eq.id}|${s.due}|soon|${p.id}` });
+        ? { personId: p.id, title: `Service overdue: ${eq.name} (${where})`, body: `It was due on ${dayMonthYear(s.due)}.${eq.serviceContact ? ` Contact: ${eq.serviceContact}.` : ""} Log the service in Manage → Equipment once it's done.`, dedupeKey: `service|${eq.id}|${s.due}|overdue|${p.id}`, url: `/equipment/${eq.id}` }
+        : { personId: p.id, title: `Service due ${days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`}: ${eq.name} (${where})`, body: `Due on ${dayMonthYear(s.due)}.${eq.serviceContact ? ` Contact: ${eq.serviceContact}.` : ""} Log it in Manage → Equipment once it's done.`, dedupeKey: `service|${eq.id}|${s.due}|soon|${p.id}`, url: `/equipment/${eq.id}` });
     }
   }
   return out;
