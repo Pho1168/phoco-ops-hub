@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { signOut } from "@/app/actions";
 import { store } from "@/lib/data";
 import { buildTeamWeek, weekStartOf } from "@/lib/domain/rota";
-import { addDays, londonDate, shortDay } from "@/lib/domain/time";
+import { addDays, isIsoDate, londonDate, shortDay } from "@/lib/domain/time";
 import type { SiteId } from "@/lib/domain/types";
 import { current } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
@@ -31,7 +31,7 @@ export default async function TeamRota({ searchParams }: { searchParams: { week?
 
   const today = londonDate(Date.now());
   const thisWeek = weekStartOf(today);
-  const week = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.week ?? "") ? weekStartOf(searchParams.week!) : thisWeek;
+  const week = isIsoDate(searchParams.week) ? weekStartOf(searchParams.week) : thisWeek;
   const status = (await db.weekStatuses(site.id as SiteId)).get(week);
   const published = status === "published";
   const visible = published || isManager;

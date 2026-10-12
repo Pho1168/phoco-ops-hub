@@ -1,5 +1,5 @@
 import { canManage, managedSites } from "./access";
-import { addDays, dayMonthYear, daysBetween } from "./time";
+import { addDays, dayMonthYear, daysBetween, isIsoDate } from "./time";
 import type { Person, SiteId } from "./types";
 
 /**
@@ -120,7 +120,7 @@ export function siteCover(siteId: SiteId, people: Pick<Person, "id" | "name" | "
 /** Expiry date suggested from the issue date, for the form. */
 export function suggestExpiry(kind: CertKind, issuedOn: string): string | undefined {
   const years = certType(kind).renewYears;
-  if (!years || !/^\d{4}-\d{2}-\d{2}$/.test(issuedOn)) return undefined;
+  if (!years || !isIsoDate(issuedOn)) return undefined;
   const d = new Date(issuedOn + "T12:00:00Z");
   d.setUTCFullYear(d.getUTCFullYear() + years);
   return d.toISOString().slice(0, 10);
@@ -201,12 +201,11 @@ export type CertInput = { kind: CertKind; issuedOn: string; expiresOn?: string; 
 
 /** Checks a new record's dates: issued in the past (or today), expiry after it and not absurdly far away. */
 export function validateCert(input: CertInput, today: string): { ok: true } | { ok: false; error: string } {
-  const iso = /^\d{4}-\d{2}-\d{2}$/;
-  if (!iso.test(input.issuedOn)) return { ok: false, error: `Choose the ${certType(input.kind).dates ? "date of the check" : "date it was issued"}` };
+  if (!isIsoDate(input.issuedOn)) return { ok: false, error: `Choose the ${certType(input.kind).dates ? "date of the check" : "date it was issued"}` };
   if (input.issuedOn > today) return { ok: false, error: "That date is in the future" };
   if (input.issuedOn < "1970-01-01") return { ok: false, error: "Check the date" };
   if (input.expiresOn) {
-    if (!iso.test(input.expiresOn)) return { ok: false, error: "Check the expiry date" };
+    if (!isIsoDate(input.expiresOn)) return { ok: false, error: "Check the expiry date" };
     if (input.expiresOn < input.issuedOn) return { ok: false, error: "It can't run out before it was issued" };
     if (input.expiresOn > addDays(today, 365 * 15)) return { ok: false, error: "That expiry is more than 15 years away. Check the date" };
   }

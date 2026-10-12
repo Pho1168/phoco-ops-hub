@@ -14,7 +14,7 @@ import { randomInt } from "node:crypto";
 import { canFreeze, canManage, canSignIn, isPinLocked, managedSites, planSiteClosure, registerPinFailure } from "@/lib/domain/access";
 import { canCancel, canDecide, clashes, kindLabel, rangeLabel, validateRequest } from "@/lib/domain/timeoff";
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
-import { afterQuietHours, dayMonthYear, londonDate } from "@/lib/domain/time";
+import { afterQuietHours, dayMonthYear, isIsoDate, londonDate } from "@/lib/domain/time";
 import { canEditCerts, certType, validateCert, CERT_KINDS, type CertKind } from "@/lib/domain/certificates";
 import { canComplete, categoryLabel, isForPerson, priorityCode, validateTask, TASK_CATEGORIES, type Priority, type TaskCategory } from "@/lib/domain/tasks";
 import { canManageEquipment, canUseEquipment, faultReportedMessages, faultsOf, siteManagers, validateEquipment, validateService,
@@ -29,6 +29,8 @@ import type { SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, SESSION_COOKIE, SESSION_TTL_MS } from "@/lib/session";
 
 const SiteIdZ = z.enum(["EAS", "WEM", "SYD"]);
+/** Someone still on the temporary PIN an owner gave them chooses their own before doing anything. */
+const MUST_CHANGE_PIN = "Choose your own PIN first: tap Change my PIN";
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function signIn(siteId: string, personId: string, pin: string): Promise<ActionResult> {
@@ -376,7 +378,8 @@ export async function resolveAlert(id: string, note: string): Promise<ActionResu
   if (!note.trim()) return { ok: false, error: "Say what was done" };
   const alertId = z.string().max(64).parse(id);
   const db = store();
-  const mine = (await Promise.all(managedSites(ctx.person).map((s) => db.alerts(s)))).flat();
+  const siteIds = ctx.isOwner ? (await db.sites()).map((s) => s.id) : managedSites(ctx.person);
+  const mine = (await Promise.all(siteIds.map((s) => db.alerts(s)))).flat();
   const alert = mine.find((a) => a.id === alertId);
   if (!alert) return { ok: false, error: "Only managers of that site can resolve its alerts" };
   if (alert.resolvedAt) return { ok: false, error: "That alert has already been resolved" };
@@ -563,6 +566,7 @@ const PushSubZ = z.object({ endpoint: z.string().url().max(1000), keys: z.object
 export async function enableReminders(sub: unknown): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const db = store();
   const session = await db.session(ctx.sessionId);
   if (session?.deviceId) return { ok: false, error: "Turn reminders on from your own phone, not the shared tablet" };
@@ -577,6 +581,7 @@ export async function enableReminders(sub: unknown): Promise<ActionResult> {
 export async function disableReminders(endpoint: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const db = store();
   const mine = await db.pushSubs(ctx.person.id);
   if (mine.some((s) => s.endpoint === endpoint)) await db.dropPushSub(endpoint);
@@ -590,7 +595,7 @@ const NoticeZ = z.object({
   title: z.string().trim().min(1, "Give the notice a title").max(NOTICE_TITLE_MAX, `Keep the title under ${NOTICE_TITLE_MAX} characters`),
   body: z.string().trim().min(1, "Write the notice").max(NOTICE_BODY_MAX, `Keep the notice under ${NOTICE_BODY_MAX} characters`),
   important: z.boolean(),
-  showUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  showUntil: z.string().refine(isIsoDate, "Choose a real date").nullable(),
 });
 
 /** An owner or manager posts a notice. Important ones also go to the phones of people it's for. */
@@ -611,11 +616,12 @@ export async function postNotice(input: unknown): Promise<ActionResult & { sentT
   let sentTo = 0;
   if (n.data.important) {
     const sendAfter = afterQuietHours(now);
+    const told: string[] = [];
     for (const p of (await db.people()).filter((p) => p.id !== ctx.person.id && p.status === "active" && inAudience({ siteId, sections: n.data.sections }, p))) {
       if (!(await db.pushSubs(p.id)).length) continue;
-      if (await db.queueNotice({ personId: p.id, kind: "notice", title: `Notice: ${n.data.title}`, body: n.data.body.slice(0, 180), dedupeKey: `notice|${id}|${p.id}`, sendAfter })) sentTo++;
+      if (await db.queueNotice({ personId: p.id, kind: "notice", title: `Notice: ${n.data.title}`, body: n.data.body.slice(0, 180), dedupeKey: `notice|${id}|${p.id}`, sendAfter })) { sentTo++; told.push(p.id); }
     }
-    if (sentTo) await deliverDue(now);
+    if (told.length) await deliverDue(now, told);
   }
   await db.audit({ actorId: ctx.person.id, siteId, action: "notice.post", detail: `${n.data.important ? "Important notice" : "Notice"}: ${n.data.title}` });
   revalidatePath("/manage/notices"); revalidatePath("/today"); revalidatePath("/me");
@@ -639,6 +645,7 @@ export async function endNotice(id: string): Promise<ActionResult> {
 export async function readNotice(id: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const db = store();
   const n = (await db.teamNotices()).find((x) => x.id === id);
   if (!n || !inAudience(n, ctx.person)) return { ok: false, error: "That notice isn't for you" };
@@ -648,7 +655,7 @@ export async function readNotice(id: string): Promise<ActionResult> {
 }
 
 // ---------- time off ----------
-const IsoDateZ = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date");
+const IsoDateZ = z.string().refine(isIsoDate, "Choose a real date");
 const TimeOffZ = z.object({
   startsOn: IsoDateZ, endsOn: IsoDateZ,
   kind: z.enum(["holiday", "unpaid", "other"]),
@@ -659,17 +666,18 @@ const TimeOffZ = z.object({
 async function tellManagers(siteId: SiteId, exceptId: string, title: string, body: string, dedupeKey: string) {
   const db = store();
   const now = Date.now();
-  let n = 0;
+  const told: string[] = [];
   for (const p of (await db.people()).filter((p) => p.status === "active" && p.id !== exceptId && canManage(p, siteId))) {
-    if (await db.queueNotice({ personId: p.id, kind: "leave", title, body, dedupeKey: `${dedupeKey}|${p.id}`, sendAfter: afterQuietHours(now), url: "/manage/time-off" })) n++;
+    if (await db.queueNotice({ personId: p.id, kind: "leave", title, body, dedupeKey: `${dedupeKey}|${p.id}`, sendAfter: afterQuietHours(now), url: "/manage/time-off" })) told.push(p.id);
   }
-  if (n) await deliverDue(now);
+  if (told.length) await deliverDue(now, told);
 }
 
 /** Staff ask for time off, from their own phone or the shop tablet. */
 export async function requestTimeOff(input: unknown): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const t = TimeOffZ.safeParse(input);
   if (!t.success) return { ok: false, error: t.error.issues[0]?.message ?? "That request couldn't be sent" };
   const db = store();
@@ -699,7 +707,7 @@ export async function decideTimeOff(id: string, decision: "approved" | "declined
   const now = Date.now();
   await db.queueNotice({ personId: t.personId, kind: "leave", title: `Time off ${d === "approved" ? "approved" : "declined"}`,
     body: `${rangeLabel(t)} · ${kindLabel(t.kind)}${why ? `\n${ctx.person.name}: "${why}"` : `\nDecided by ${ctx.person.name}`}`, dedupeKey: `timeoff-decided|${t.id}`, sendAfter: afterQuietHours(now) });
-  await deliverDue(now);
+  await deliverDue(now, [t.personId]);
   await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: `timeoff.${d === "approved" ? "approve" : "decline"}`, detail: `${d === "approved" ? "Approved" : "Declined"} ${t.personName}: ${rangeLabel(t)}${why ? ` (${why})` : ""}` });
   revalidatePath("/manage/time-off"); revalidatePath("/rota"); revalidatePath("/me");
   return { ok: true };
@@ -709,11 +717,13 @@ export async function decideTimeOff(id: string, decision: "approved" | "declined
 export async function cancelTimeOff(id: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const db = store();
   const t = (await db.timeOff({ personId: ctx.person.id })).find((x) => x.id === id);
   if (!t) return { ok: false, error: "That request isn't there any more" };
   if (!canCancel(t, londonDate(Date.now()))) return { ok: false, error: "This can't be withdrawn now. Speak to your manager" };
-  if (!(await db.cancelTimeOff(t.id))) return { ok: false, error: "It has already changed" };
+  if (t.status !== "pending" && t.status !== "approved") return { ok: false, error: "It has already changed" };
+  if (!(await db.cancelTimeOff(t.id, t.status))) return { ok: false, error: "It has just changed. Check it again" };
   if (t.status === "approved") await tellManagers(t.siteId, ctx.person.id, `Time off withdrawn: ${ctx.person.name}`, `${rangeLabel(t)} is no longer needed`, `timeoff-withdrawn|${t.id}`);
   await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "timeoff.cancel", detail: `Withdrew ${rangeLabel(t)}` });
   revalidatePath("/me"); revalidatePath("/manage/time-off"); revalidatePath("/rota");
@@ -846,6 +856,7 @@ const FaultZ = z.object({ severity: z.enum(["down", "attention"]), body: TextZ("
 export async function reportFault(equipmentId: string, input: unknown): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const db = store();
   const eq = await db.equipmentItem(String(equipmentId ?? "").slice(0, 64));
   if (!eq || eq.retiredAt) return { ok: false, error: "That equipment isn't on the register any more" };
@@ -854,11 +865,11 @@ export async function reportFault(equipmentId: string, input: unknown): Promise<
   if (!f.success) return { ok: false, error: f.error.issues[0]?.message ?? "That couldn't be sent" };
   const id = await db.addEquipmentEvent({ equipmentId: eq.id, siteId: eq.siteId, kind: "fault", severity: f.data.severity, body: f.data.body, createdBy: ctx.person.id });
   const now = Date.now();
-  let told = 0;
+  const told: string[] = [];
   for (const m of faultReportedMessages(eq, { id: id!, severity: f.data.severity, body: f.data.body }, ctx.person.id, ctx.person.name, await db.people())) {
-    if (await db.queueNotice({ personId: m.personId, kind: "fault", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) told++;
+    if (await db.queueNotice({ personId: m.personId, kind: "fault", title: m.title, body: m.body, dedupeKey: m.dedupeKey, sendAfter: afterQuietHours(now), url: m.url })) told.push(m.personId);
   }
-  if (told) await deliverDue(now);
+  if (told.length) await deliverDue(now, told);
   await db.audit({ actorId: ctx.person.id, siteId: eq.siteId, action: "equipment.fault", detail: `${SEVERITY_LABEL[f.data.severity]}: ${eq.name}: ${f.data.body}` });
   equipmentPaths(eq.id);
   return { ok: true };
@@ -882,10 +893,11 @@ export async function updateFault(equipmentId: string, faultId: string, input: u
   if (!id) return { ok: false, error: "Someone has just marked it fixed" };
   if (u.data.fixed && f.fault.severity === "down") {
     const now = Date.now();
-    for (const p of siteManagers(await db.people(), eq.siteId, ctx.person.id)) {
+    const managers = siteManagers(await db.people(), eq.siteId, ctx.person.id);
+    for (const p of managers) {
       await db.queueNotice({ personId: p.id, kind: "fault", title: `Working again: ${eq.name}`, body: `${u.data.body}\nMarked fixed by ${ctx.person.name}`, dedupeKey: `fixed|${f.fault.id}|${p.id}`, sendAfter: afterQuietHours(now), url: `/equipment/${eq.id}` });
     }
-    await deliverDue(now);
+    await deliverDue(now, managers.map((p) => p.id));
   }
   await db.audit({ actorId: ctx.person.id, siteId: eq.siteId, action: u.data.fixed ? "equipment.fixed" : "equipment.update", detail: `${eq.name}: ${u.data.fixed ? "fixed" : "update"}: ${u.data.body}` });
   equipmentPaths(eq.id);
@@ -948,7 +960,7 @@ export async function addTask(siteId: string, input: unknown): Promise<ActionRes
     await db.queueNotice({ personId: p.id, kind: "task", title: `New task (${priorityCode(data.priority)}): ${data.title}`,
       body: `${categoryLabel(data.category)}${due}${data.detail ? `\n${data.detail.slice(0, 160)}` : ""}\nFrom ${ctx.person.name}`, dedupeKey: `task|${id}|${p.id}`, sendAfter: afterQuietHours(now) });
   }
-  if (audience.length) await deliverDue(now);
+  if (audience.length) await deliverDue(now, audience.map((p) => p.id));
   await db.audit({ actorId: ctx.person.id, siteId: site.data, action: "task.add", detail: `${priorityCode(data.priority)} task: ${data.title}${assignee ? ` (for ${assignee.name})` : data.section ? ` (for ${data.section})` : ""}` });
   revalidatePath("/manage/tasks"); revalidatePath("/today"); revalidatePath("/me");
   return { ok: true };
@@ -958,6 +970,7 @@ export async function addTask(siteId: string, input: unknown): Promise<ActionRes
 export async function completeTask(id: string, note: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const db = store();
   const t = await db.task(String(id ?? "").slice(0, 64));
   if (!t || t.status !== "open") return { ok: false, error: "That task has already been done or taken off" };
@@ -974,6 +987,7 @@ export async function completeTask(id: string, note: string): Promise<ActionResu
 export async function reopenTask(id: string): Promise<ActionResult> {
   const ctx = await current();
   if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
   const db = store();
   const t = await db.task(String(id ?? "").slice(0, 64));
   if (!t || t.status !== "done" || t.doneBy !== ctx.person.id || !t.doneAt || Date.now() - t.doneAt > 10 * 60_000) return { ok: false, error: "That can't be undone now" };

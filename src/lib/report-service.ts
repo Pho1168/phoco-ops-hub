@@ -22,8 +22,12 @@ export async function loadSiteReport(site: Site, week: string, now = Date.now(),
     db.equipment(site.id, true),
     db.equipmentEvents({ siteId: site.id }),
   ]);
-  const kitName = new Map(kit.map((e) => [e.id, e.name]));
-  const faults = faultsOf(kitEvents).map((f) => ({ equipment: kitName.get(f.fault.equipmentId) ?? "Equipment", severity: f.fault.severity!, createdAt: f.fault.createdAt, fixedAt: f.fixed?.createdAt }));
+  const kitById = new Map(kit.map((e) => [e.id, e]));
+  // Kit taken off the register ends any problem still open on it.
+  const faults = faultsOf(kitEvents).map((f) => {
+    const eq = kitById.get(f.fault.equipmentId);
+    return { equipment: eq?.name ?? "Equipment", severity: f.fault.severity!, createdAt: f.fault.createdAt, fixedAt: f.fixed?.createdAt ?? eq?.retiredAt };
+  });
   const prep = prepOn ? await db.prepHandovers(site.id, 60) : [];
   const readings = readingLog(data.answers);
 

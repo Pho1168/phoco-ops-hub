@@ -3,7 +3,7 @@ import { classifyReading, parseReading } from "./temperature";
 import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
 import { buildEveningNotices, buildImportNotices, buildTeamWeek, parseExport, parseStaffTab, parseWeekTable, planSync, weekStartOf, type StoredShift, type TeamShift } from "./rota";
-import { afterQuietHours, dayMonthYear, daysBetween, londonToUtc } from "./time";
+import { afterQuietHours, dayMonthYear, daysBetween, isIsoDate, londonToUtc } from "./time";
 import { hashPin, isValidPin, verifyPin } from "./pin";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
@@ -924,5 +924,19 @@ describe("tasks and the task centre", () => {
     const sqlText = readFileSync("supabase/migrations/0013_tasks.sql", "utf8");
     for (const c of TASK_CATEGORIES) expect(sqlText).toContain(`'${c.id}'`);
     for (const kind of ["published", "changed", "evening", "notice", "leave", "cert", "report", "fault", "service", "task"]) expect(sqlText).toContain(`'${kind}'`);
+  });
+});
+
+describe("dates typed into forms and links", () => {
+  it("only accepts real calendar dates", () => {
+    expect(isIsoDate("2026-10-12")).toBe(true);
+    expect(isIsoDate("2028-02-29")).toBe(true);
+    expect(isIsoDate("2026-02-29")).toBe(false);
+    expect(isIsoDate("2026-09-31")).toBe(false);
+    expect(isIsoDate("2026-13-01")).toBe(false);
+    expect(isIsoDate("0000-01-01")).toBe(false);
+    expect(isIsoDate("2026-1-1")).toBe(false);
+    expect(isIsoDate(undefined)).toBe(false);
+    expect(clampRange("2026-09-31", "2026-10-05", "2026-10-12", 7)).toEqual({ from: "2026-09-29", to: "2026-10-05" }); // bad "from" falls back to 7 days
   });
 });

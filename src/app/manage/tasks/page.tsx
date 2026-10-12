@@ -26,7 +26,8 @@ export default async function TaskCentre({ searchParams }: { searchParams: { sit
   const now = Date.now();
   const today = londonDate(now);
   const all = (await db.sites()).filter((s) => s.status === "open" && ctx.managed.includes(s.id));
-  const sites = all.filter((s) => !searchParams.site || s.id === searchParams.site);
+  const picked = all.filter((s) => s.id === searchParams.site);
+  const sites = picked.length ? picked : all; // an unknown or someone else's site shows all of theirs
   const [lists, people, recent] = await Promise.all([
     Promise.all(sites.map((s) => centreFor(s, ctx.person, now))),
     db.people(),
@@ -70,7 +71,7 @@ export default async function TaskCentre({ searchParams }: { searchParams: { sit
         <div><div className="eyebrow">Manager tools · {multi ? "all your sites" : sites[0]?.name}</div><h1 className="h-display">Task centre</h1></div>
         {all.length > 1 && (
           <nav className="row wrap" style={{ gap: 6 }} aria-label="Site">
-            <Link className={`chip ${!searchParams.site ? "done" : ""}`} href="/manage/tasks">All sites</Link>
+            <Link className={`chip ${!picked.length ? "done" : ""}`} href="/manage/tasks">All sites</Link>
             {all.map((s) => <Link key={s.id} className={`chip ${s.id === searchParams.site ? "done" : ""}`} href={`/manage/tasks?site=${s.id}`}>{s.name}</Link>)}
           </nav>
         )}
@@ -81,7 +82,9 @@ export default async function TaskCentre({ searchParams }: { searchParams: { sit
           })}
         </div>
 
-        <TaskForm sites={choices.filter((c) => sites.some((s) => s.id === c.id))} today={today} />
+        {sites.length === 0
+          ? <div className="card muted">None of the sites you manage is open, so there&apos;s nothing to show.</div>
+          : <TaskForm key={sites.map((s) => s.id).join(",")} sites={choices.filter((c) => sites.some((s) => s.id === c.id))} today={today} />}
 
         {items.length === 0 && <div className="alert good" role="status"><div className="strong">Nothing open. Everything is up to date.</div></div>}
         {PRIORITIES.map((p) => {

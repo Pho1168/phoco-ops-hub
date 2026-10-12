@@ -562,13 +562,15 @@ export const sqlStore: Store = {
   // ---------- team notices ----------
   async teamNotices(recentEnded = 10) {
     const q = sql();
+    const today = londonDate(Date.now());
     const rows = await q<{ id: string; site_id: SiteId | null; sections: Area[]; title: string; body: string; important: boolean; created_by: string; created_by_name: string;
       created_at: Date; show_until: string | null; ended_at: Date | null; reads: { person_id: string; read_at: string }[] | null }[]>`
       select a.id, a.site_id, a.sections, a.title, a.body, a.important, a.created_by, p.display_name as created_by_name, a.created_at,
         to_char(a.show_until, 'YYYY-MM-DD') as show_until, a.ended_at,
         (select json_agg(json_build_object('person_id', r.person_id, 'read_at', r.read_at)) from announcement_reads r where r.announcement_id = a.id) as reads
       from announcements a join people p on p.id = a.created_by
-      where a.ended_at is null or a.id in (select id from announcements where ended_at is not null order by created_at desc limit ${recentEnded})
+      where (a.ended_at is null and (a.show_until is null or a.show_until >= ${today}))
+         or a.id in (select id from announcements where ended_at is not null or show_until < ${today} order by created_at desc limit ${recentEnded})
       order by a.created_at desc`;
     return rows.map((r): TeamNotice => ({
       id: r.id, siteId: opt(r.site_id), sections: r.sections, title: r.title, body: r.body, important: r.important,
@@ -631,10 +633,10 @@ export const sqlStore: Store = {
     return (await q`update time_off set status = ${decision}, decided_by = ${personId}, decided_at = now(), decision_note = ${note ?? null}
                     where id = ${id} and status = 'pending' returning id`).length > 0;
   },
-  async cancelTimeOff(id) {
+  async cancelTimeOff(id, from) {
     if (!isUuid(id)) return false;
     const q = sql();
-    return (await q`update time_off set status = 'cancelled', cancelled_at = now() where id = ${id} and status in ('pending', 'approved') returning id`).length > 0;
+    return (await q`update time_off set status = 'cancelled', cancelled_at = now() where id = ${id} and status = ${from} returning id`).length > 0;
   },
 
   // ---------- staff certificates ----------
@@ -889,17 +891,17 @@ export const sqlStore: Store = {
                       on conflict (dedupe_key) do nothing`;
     return r.count > 0;
   },
-  async dueNotices(now, limit) {
+  async dueNotices(now, limit, personIds) {
+    if (personIds && (!personIds.length || !personIds.every(isUuid))) return [];
     const q = sql();
+    // Claim and mark in one statement; rows another sender has locked are skipped, not sent twice.
     const rows = await q<NoticeDbRow[]>`
-      select id, person_id, kind, title, body, send_after, sent_at, created_at, url from notifications
-      where sent_at is null and send_after <= ${new Date(now)} order by send_after limit ${limit}`;
+      update notifications set sent_at = now()
+      where id in (select id from notifications where sent_at is null and send_after <= ${new Date(now)}
+                   ${personIds ? q`and person_id = any(${personIds}::uuid[])` : q``}
+                   order by send_after limit ${limit} for update skip locked)
+      returning id, person_id, kind, title, body, send_after, sent_at, created_at, url`;
     return rows.map(toNotice);
-  },
-  async markNoticeSent(id) {
-    if (!isUuid(id)) return;
-    const q = sql();
-    await q`update notifications set sent_at = now() where id = ${id}`;
   },
   async notices(personId, limit) {
     if (!isUuid(personId)) return [];

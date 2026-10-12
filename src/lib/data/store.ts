@@ -118,7 +118,7 @@ export interface Store {
   prepSetDone(entryId: string, siteId: SiteId, personId: string, done: boolean): Promise<boolean>;
 
   // Team notices
-  /** Live notices plus the most recent ended ones (newest first), with who has read them. */
+  /** Live notices plus the most recent finished ones (taken down or past their last day), newest first, with who has read them. */
   teamNotices(recentEnded?: number): Promise<TeamNotice[]>;
   addTeamNotice(n: Omit<TeamNotice, "id" | "createdAt" | "createdByName" | "reads" | "endedAt">): Promise<string>;
   endTeamNotice(id: string, personId: string): Promise<boolean>;
@@ -131,8 +131,8 @@ export interface Store {
   requestTimeOff(t: { personId: string; siteId: SiteId; startsOn: string; endsOn: string; kind: TimeOffKind; note?: string }): Promise<string>;
   /** Approve or decline a pending request. False if it isn't pending any more. */
   decideTimeOff(id: string, decision: "approved" | "declined", personId: string, note?: string): Promise<boolean>;
-  /** Withdraw a pending or approved request. False if it can't be. */
-  cancelTimeOff(id: string): Promise<boolean>;
+  /** Withdraw a request that is still in the given status (pending or approved). False if it has changed. */
+  cancelTimeOff(id: string, from: "pending" | "approved"): Promise<boolean>;
 
   // Staff certificates (removed records are kept in the database but never returned)
   /** Current records, oldest first; for some people or everyone. */
@@ -185,8 +185,11 @@ export interface Store {
   // Messages and push
   /** `url`: the app page the phone notification opens (default My shifts). */
   queueNotice(n: { personId: string; kind: MessageKind; title: string; body: string; dedupeKey?: string; sendAfter: number; url?: string }): Promise<boolean>;
-  dueNotices(now: number, limit: number): Promise<NoticeRow[]>;
-  markNoticeSent(id: string): Promise<void>;
+  /**
+   * Takes messages due to go to phones and marks them sent in the same step, so two senders (the scheduler and
+   * someone's action) never push the same one. Optionally only for some people.
+   */
+  dueNotices(now: number, limit: number, personIds?: string[]): Promise<NoticeRow[]>;
   /** A person's messages, newest first. They show in the app at once; quiet hours only hold back the phone alert. */
   notices(personId: string, limit: number): Promise<NoticeRow[]>;
   savePushSub(sub: PushSub): Promise<void>;

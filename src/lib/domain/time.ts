@@ -39,6 +39,15 @@ export function shortDay(iso: string): string {
   return new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 }
 
+/** A real calendar date as YYYY-MM-DD between 1970 and 2100 (so not 2026-09-31 or 2026-13-01). */
+export function isIsoDate(s: unknown): s is string {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const y = Number(s.slice(0, 4));
+  if (y < 1970 || y > 2100) return false;
+  const d = new Date(s + "T12:00:00Z");
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 /** "10 Nov 2026" */
 export function dayMonthYear(iso: string): string {
   return new Date(iso + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });

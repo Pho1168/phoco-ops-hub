@@ -1,5 +1,5 @@
 import { canManage } from "./access";
-import { addDays, dayMonthYear, daysBetween } from "./time";
+import { addDays, dayMonthYear, daysBetween, isIsoDate } from "./time";
 import type { Person, SiteId } from "./types";
 
 /**
@@ -159,7 +159,7 @@ export function validateEquipment(e: EquipmentInput): Checked {
 
 /** A service date can't be in the future or before the kit was added more than 10 years ago. */
 export function validateService(doneOn: string, today: string): Checked {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(doneOn)) return { ok: false, error: "Choose the date of the service" };
+  if (!isIsoDate(doneOn)) return { ok: false, error: "Choose the date of the service" };
   if (doneOn > today) return { ok: false, error: "That date is in the future" };
   if (doneOn < addDays(today, -3660)) return { ok: false, error: "Check the date" };
   return { ok: true };

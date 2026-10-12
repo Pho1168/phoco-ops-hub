@@ -21,6 +21,8 @@ export default async function Notices() {
   const mine = open.filter((s) => ctx.managed.includes(s.id));
   const names = new Map(allSites.map((s) => [s.id, s.name]));
   const visible = notices.filter((n) => !n.siteId || ctx.managed.includes(n.siteId));
+  // Read receipts name only people at the sites this person manages.
+  const inCare = ctx.isOwner ? people : people.filter((p) => p.access.some((a) => ctx.managed.includes(a.siteId)));
   const live = visible.filter((n) => isLive(n, today));
   const ended = visible.filter((n) => !isLive(n, today));
 
@@ -35,7 +37,7 @@ export default async function Notices() {
           <h2 className="h-sec">Showing now</h2>
           {live.length === 0 && <div className="card muted">No notices showing. Post one above: staff see it on the shop tablet and on their phones until they tap &quot;Got it&quot;.</div>}
           {live.map((n) => {
-            const st = readStats(n, people);
+            const st = readStats(n, inCare);
             return (
               <div key={n.id} className="card stack" style={{ gap: 8 }}>
                 <div className="row wrap" style={{ gap: 8 }}>
@@ -60,7 +62,7 @@ export default async function Notices() {
             <summary className="strong" style={{ cursor: "pointer" }}>Earlier notices ({ended.length})</summary>
             <div className="log" style={{ marginTop: 8 }}>
               {ended.map((n) => {
-                const st = readStats(n, people);
+                const st = readStats(n, inCare);
                 return <div key={n.id}><span className="grow">{n.title} <span className="muted">· {audienceLabel(n, n.siteId ? names.get(n.siteId) : undefined)} · {when(n.createdAt)}</span></span><span className="muted">read by {st.read.length}/{st.audience}</span></div>;
               })}
             </div>

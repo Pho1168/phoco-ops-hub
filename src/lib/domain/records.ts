@@ -1,5 +1,5 @@
 import type { AnswerType, Area, Outcome } from "./types";
-import { addDays, londonDate, londonHM } from "./time";
+import { addDays, londonDate, londonHM, isIsoDate } from "./time";
 
 /**
  * Food-safety records as an inspector (EHO) would ask for them: every temperature reading with its result and
@@ -112,10 +112,9 @@ export function recordsSummary(readings: ReadingEntry[], signoffs: SignoffRow[])
 
 /** A sensible range from what's typed into the form: valid dates, `from` ≤ `to`, at most `maxDays` long, not in the future. */
 export function clampRange(from: string | undefined, to: string | undefined, today: string, defaultDays: number, maxDays = 93): { from: string; to: string } {
-  const iso = /^\d{4}-\d{2}-\d{2}$/;
-  let t = to && iso.test(to) ? to : today;
+  let t = isIsoDate(to) ? to : today;
   if (t > today) t = today;
-  let f = from && iso.test(from) ? from : addDays(t, -(defaultDays - 1));
+  let f = isIsoDate(from) ? from : addDays(t, -(defaultDays - 1));
   if (f > t) f = t;
   if (f < addDays(t, -(maxDays - 1))) f = addDays(t, -(maxDays - 1));
   return { from: f, to: t };

@@ -25,7 +25,7 @@ export function TaskForm({ sites, today }: { sites: SiteChoice[]; today: string 
 
   const save = () => start(async () => {
     setErr(""); setMsg("");
-    const r = await addTask(siteId, {
+    const r = await addTask(site.id, {
       title, detail, priority, category, dueOn,
       section: who.startsWith("section:") ? who.slice(8) : undefined,
       assigneeId: who.startsWith("person:") ? who.slice(7) : undefined,

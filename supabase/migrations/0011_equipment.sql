@@ -39,7 +39,7 @@ create index if not exists equipment_events_equipment on equipment_events (equip
 create index if not exists equipment_events_site on equipment_events (site_id, created_at);
 -- A fault is fixed once.
 create unique index if not exists equipment_events_one_fix on equipment_events (fault_id) where kind = 'fixed';
-create trigger equipment_events_append_only before update or delete on equipment_events
+create or replace trigger equipment_events_append_only before update or delete on equipment_events
   for each row execute function refuse_change();
 
 alter table equipment enable row level security;

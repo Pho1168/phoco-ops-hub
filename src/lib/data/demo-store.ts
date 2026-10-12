@@ -354,8 +354,10 @@ export const demoStore: Store = {
   },
 
   async teamNotices(recentEnded = 10) {
+    const today = londonDate(Date.now());
     const all = [...S().teamNotices].sort((a, b) => b.createdAt - a.createdAt);
-    return [...all.filter((n) => !n.endedAt), ...all.filter((n) => n.endedAt).slice(0, recentEnded)]
+    const live = (n: TeamNotice) => !n.endedAt && (!n.showUntil || n.showUntil >= today);
+    return [...all.filter(live), ...all.filter((n) => !live(n)).slice(0, recentEnded)]
       .map((n) => ({ ...n, createdByName: nameOf(n.createdBy) ?? "", reads: [...n.reads] }));
   },
   async addTeamNotice(n) {
@@ -392,8 +394,8 @@ export const demoStore: Store = {
     Object.assign(t, { status: decision, decidedBy: personId, decidedAt: Date.now(), decisionNote: note });
     return true;
   },
-  async cancelTimeOff(id) {
-    const t = S().timeOff.find((x) => x.id === id && (x.status === "pending" || x.status === "approved"));
+  async cancelTimeOff(id, from) {
+    const t = S().timeOff.find((x) => x.id === id && x.status === from);
     if (!t) return false;
     t.status = "cancelled"; return true;
   },
@@ -530,8 +532,11 @@ export const demoStore: Store = {
     S().notices.push({ id: randomUUID(), personId: n.personId, kind: n.kind, title: n.title, body: n.body, dedupeKey: n.dedupeKey, sendAfter: n.sendAfter, createdAt: Date.now(), url: n.url });
     return true;
   },
-  async dueNotices(now, limit) { return S().notices.filter((n) => !n.sentAt && n.sendAfter <= now).slice(0, limit); },
-  async markNoticeSent(id) { const n = S().notices.find((x) => x.id === id); if (n) n.sentAt = Date.now(); },
+  async dueNotices(now, limit, personIds) {
+    const due = S().notices.filter((n) => !n.sentAt && n.sendAfter <= now && (!personIds || personIds.includes(n.personId))).slice(0, limit);
+    for (const n of due) n.sentAt = Date.now();
+    return due.map((n) => ({ ...n }));
+  },
   async notices(personId, limit) {
     return S().notices.filter((n) => n.personId === personId).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
   },

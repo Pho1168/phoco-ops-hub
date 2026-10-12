@@ -2,7 +2,7 @@ import Link from "next/link";
 import { store } from "@/lib/data";
 import { change, groupTotals, type SiteWeekReport } from "@/lib/domain/report";
 import { weekStartOf } from "@/lib/domain/rota";
-import { addDays, londonDate, shortDay } from "@/lib/domain/time";
+import { addDays, isIsoDate, londonDate, shortDay } from "@/lib/domain/time";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { Icon } from "@/components/Icon";
 import { requireManager } from "@/lib/session";
@@ -91,7 +91,7 @@ export default async function Report({ searchParams }: { searchParams: { week?: 
   const ctx = await requireManager();
   const today = londonDate(Date.now());
   const thisWeek = weekStartOf(today);
-  let week = /^\d{4}-\d{2}-\d{2}$/.test(searchParams.week ?? "") ? weekStartOf(searchParams.week!) : thisWeek;
+  let week = isIsoDate(searchParams.week) ? weekStartOf(searchParams.week) : thisWeek;
   if (week > thisWeek) week = thisWeek;
   const sites = (await store().sites()).filter((s) => ctx.managed.includes(s.id) && s.status === "open");
   const reports = await Promise.all(sites.map((s) => loadSiteReport(s, week)));

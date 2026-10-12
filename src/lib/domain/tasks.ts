@@ -1,5 +1,5 @@
 import { canManage } from "./access";
-import { addDays, shortDay } from "./time";
+import { addDays, isIsoDate, shortDay } from "./time";
 import type { Area, Person, SiteId } from "./types";
 
 /**
@@ -59,7 +59,7 @@ export function validateTask(t: TaskInput, today: string): Checked {
   if (!TASK_CATEGORIES.some((c) => c.id === t.category)) return { ok: false, error: "Choose a category" };
   if (t.assigneeId && t.section) return { ok: false, error: "Give it to a person or a section, not both" };
   if (t.dueOn !== undefined) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(t.dueOn)) return { ok: false, error: "Check the date" };
+    if (!isIsoDate(t.dueOn)) return { ok: false, error: "Check the date" };
     if (t.dueOn < today) return { ok: false, error: "The date is already past" };
     if (t.dueOn > addDays(today, 366)) return { ok: false, error: "That's more than a year away" };
   }

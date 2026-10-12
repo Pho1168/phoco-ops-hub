@@ -1,5 +1,5 @@
 import { canManage } from "./access";
-import { addDays, shortDay } from "./time";
+import { addDays, isIsoDate, shortDay } from "./time";
 import type { Person, SiteId } from "./types";
 
 /**
@@ -27,8 +27,6 @@ export interface TimeOff {
 export const MAX_DAYS = 31;
 export const MAX_AHEAD_DAYS = 365;
 
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
-
 /** Every date from start to end, inclusive. */
 export function daysOf(t: Pick<TimeOff, "startsOn" | "endsOn">): string[] {
   const out: string[] = [];
@@ -44,7 +42,7 @@ export const isActive = (t: Pick<TimeOff, "status">) => t.status === "pending" |
 export type Checked = { ok: true } | { ok: false; error: string };
 
 export function validateRequest(input: { startsOn: string; endsOn: string }, today: string, mine: TimeOff[]): Checked {
-  if (!ISO.test(input.startsOn) || !ISO.test(input.endsOn)) return { ok: false, error: "Choose the first and last day" };
+  if (!isIsoDate(input.startsOn) || !isIsoDate(input.endsOn)) return { ok: false, error: "Choose the first and last day" };
   if (input.endsOn < input.startsOn) return { ok: false, error: "The last day is before the first day" };
   if (input.startsOn < today) return { ok: false, error: "Time off can't start in the past" };
   if (input.startsOn > addDays(today, MAX_AHEAD_DAYS)) return { ok: false, error: "That's more than a year away. Ask nearer the time" };

@@ -93,13 +93,15 @@ export async function queueCertReminders(now = Date.now(), db: Store = store()):
   return queued;
 }
 
-/** Sends queued messages as push notifications. They stay visible under My shifts either way. */
-export async function deliverDue(now = Date.now()): Promise<number> {
+/**
+ * Sends queued messages as push notifications. They stay visible under My shifts either way. An action passes the
+ * people it just messaged, so it only sends theirs; the scheduler sends everything due.
+ */
+export async function deliverDue(now = Date.now(), personIds?: string[]): Promise<number> {
   const db = store();
   let sent = 0;
-  for (const n of await db.dueNotices(now, 200)) {
-    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: n.url ?? "/me" });
-    await db.markNoticeSent(n.id);
+  for (const n of await db.dueNotices(now, personIds ? 50 : 200, personIds)) {
+    sent += await pushToPerson(n.personId, { title: n.title, body: n.body, url: n.url ?? "/me", tag: `${n.kind}-${n.id}` });
   }
   return sent;
 }

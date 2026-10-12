@@ -43,4 +43,14 @@ describe("certificate reminders on the scheduler", () => {
     expect(mgr.body).not.toContain("Wembley");
     resetDemo();
   });
+  it("hands each due message to one sender only, and can send just the people an action messaged", async () => {
+    resetDemo();
+    const now = Date.now();
+    await demoStore.queueNotice({ personId: "DEMO-FOH", kind: "notice", title: "a", body: "a", sendAfter: now - 1000 });
+    await demoStore.queueNotice({ personId: "DEMO-BOH", kind: "notice", title: "b", body: "b", sendAfter: now - 1000 });
+    expect((await demoStore.dueNotices(now, 50, ["DEMO-FOH"])).map((n) => n.title)).toEqual(["a"]);
+    expect((await demoStore.dueNotices(now, 50)).map((n) => n.title)).toEqual(["b"]); // "a" was already taken
+    expect(await demoStore.dueNotices(now, 50)).toEqual([]);
+    resetDemo();
+  });
 });

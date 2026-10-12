@@ -10,7 +10,8 @@ export async function vapidKeys(): Promise<{ publicKey: string; privateKey: stri
   return JSON.parse(raw);
 }
 
-export interface PushPayload { title: string; body: string; url: string }
+/** `tag`: one per message, so a new notification doesn't replace the last one on the phone. */
+export interface PushPayload { title: string; body: string; url: string; tag?: string }
 
 /** Sends to every phone the person turned reminders on for. Dead subscriptions are removed. */
 export async function pushToPerson(personId: string, payload: PushPayload): Promise<number> {
