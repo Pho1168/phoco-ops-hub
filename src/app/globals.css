@@ -428,3 +428,199 @@ table.training-matrix td { text-align: center; }
 .plist li { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-top: 1px solid var(--line); min-height: 44px; }
 .plist li:first-child { border-top: 0; }
 .btn.icon { min-width: 40px; padding: 0 8px; }
+
+/* Recipe card: a recipe on one screen, laid out like PHO & CO's printed recipe cards (green bands, orange step
+   numbers, picture tiles). Tablets get a fixed-height card (landscape: ingredients beside the method; portrait:
+   stacked); phones scroll. Nothing is ever cut off: a tile that can't fit its words scrolls inside itself. */
+main.recipe-page { max-width: 1440px; padding: 10px 12px 96px; gap: 12px; }
+main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: center; }
+main.recipe-page > .rc-back { max-width: none; }
+.rcard { --rc-h: calc(100dvh - 176px); width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 18px; padding: 12px;
+  display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); }
+.rc-head { grid-area: head; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; min-width: 0; }
+.rc-title { min-width: 0; }
+.rc-title h1 { font-family: var(--display); font-weight: 800; text-transform: uppercase; color: var(--brand); font-size: clamp(30px, 4.4vw, 58px); line-height: .92; margin: 0; letter-spacing: .3px; }
+.rc-code { display: block; font-size: 12px; color: var(--ink-2); font-weight: 600; margin-bottom: 2px; }
+.rc-stamp { display: inline-block; margin-top: 6px; background: var(--bad); color: var(--bad-ink-on); border-radius: 8px; padding: 3px 10px; font-weight: 700; font-size: 14px; }
+.rc-tools { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rc-tools .btn { min-height: 40px; }
+.rc-makes { background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 6px 14px; font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: .3px; text-transform: uppercase; white-space: nowrap; }
+.rc-size { display: flex; gap: 6px; align-items: center; position: relative; }
+.rc-size .seg.small { grid-template-columns: none; grid-auto-columns: auto; }
+.rc-size .seg.small button { padding: 0 12px; min-width: 40px; }
+.rc-more > summary { list-style: none; cursor: pointer; font-weight: 600; font-size: 14px; padding: 8px 10px; border-radius: 10px; background: var(--surface); }
+.rc-more > summary::-webkit-details-marker { display: none; }
+.rc-more[open] > div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 4; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; width: max-content; max-width: 300px; box-shadow: 0 8px 24px rgba(0, 0, 0, .16); }
+.rc-band { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: 21px; letter-spacing: .6px; line-height: 1.1; background: var(--brand); color: var(--brand-ink);
+  margin: 0; padding: 6px 12px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.rc-sec { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--surface); border-radius: 12px; overflow: auto; }
+.rcard.prep { grid-template-areas: "head" "ings" "method" "foot"; }
+.rc-ing-sec { grid-area: ings; } .rc-method-sec { grid-area: method; } .rc-foot { grid-area: foot; }
+.rc-pic { display: block; max-width: 100%; border-radius: 8px; background: var(--surface-2); }
+.rc-pic.removed { display: grid; place-items: center; font-size: 12px; color: var(--ink-2); min-height: 40px; }
+.rc-pic.none { width: 100%; height: 100%; min-height: 0; background: var(--surface-2); opacity: .6; }
+.rc-note { color: var(--ink-2); font-weight: 500; text-transform: none; }
+
+/* Ingredients: picture tiles (up to 10), or a list with small pictures */
+.rc-ings { list-style: none; margin: 0; padding: 8px; display: grid; gap: 6px; min-height: 0; flex: 1; overflow: auto; }
+.rc-ings.tiles { grid-template-columns: repeat(var(--n), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
+.rc-ings.tiles li { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; background: var(--bg); border-radius: 10px; padding: 6px 4px; min-height: 0; overflow: auto; }
+.rc-amt { font-family: var(--display); font-weight: 700; font-size: clamp(16px, 1.7vw, 22px); line-height: 1.05; color: var(--ink); font-variant-numeric: tabular-nums; }
+.rc-ing-pic { flex: 1 1 0; min-height: 30px; width: 100%; display: flex; justify-content: center; }
+.rc-ing-pic .rc-pic { width: 100%; height: 100%; object-fit: contain; background: transparent; }
+.rc-ing-name { font-weight: 700; font-size: 12px; text-transform: uppercase; line-height: 1.15; letter-spacing: .2px; }
+.rc-ings.list { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); align-content: start; }
+.rc-ings.list li { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; grid-template-areas: "pic name amt"; align-items: center; gap: 8px; padding: 3px 6px 3px 3px; background: var(--bg); border-radius: 8px; }
+.rc-ings.list .rc-amt { grid-area: amt; font-size: 18px; text-align: right; }
+.rc-ings.list .rc-ing-pic { grid-area: pic; width: 38px; height: 38px; flex: none; }
+.rc-ings.list .rc-ing-name { grid-area: name; font-size: 13px; }
+
+/* Method: numbered tiles in a grid */
+.rc-method-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rc-steps { list-style: none; margin: 0; padding: 8px; display: grid; gap: 8px; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); flex: 1; min-height: 0; }
+.rc-steps li { position: relative; display: flex; flex-direction: column; gap: 6px; background: var(--bg); border-radius: 10px; padding: 8px; min-height: 0; overflow: auto; }
+.rc-steps li.off-panel { display: none; }
+.rc-steps li:not(.has-pic) { padding-left: 52px; justify-content: center; }
+.rc-num { position: absolute; top: 6px; left: 6px; width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: #fff; font-family: var(--display); font-weight: 800; font-size: 23px;
+  display: grid; place-items: center; z-index: 1; box-shadow: 0 0 0 3px var(--bg); }
+.rc-steps li .rc-pic { flex: 1 1 0; min-height: 48px; width: 100%; object-fit: cover; }
+.rc-step-text { font-size: clamp(14px, 1.3vw, 17px); line-height: 1.3; }
+.rc-warn { color: var(--bad); font-weight: 600; font-size: 13px; display: flex; gap: 6px; align-items: flex-start; }
+.rc-warn svg { flex-shrink: 0; width: 16px; height: 16px; }
+.rc-panel { align-self: flex-end; margin: 0 8px 8px; }
+.rc-steps.compact { grid-template-columns: 1fr; grid-auto-rows: auto; flex: none; }
+.rc-steps.compact li { padding: 6px 8px 6px 44px; min-height: 40px; }
+.rc-steps.compact .rc-num { width: 28px; height: 28px; font-size: 18px; top: 6px; left: 8px; }
+
+/* The bottom row: final result, important notes, storage, allergens */
+.rc-foot { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px; min-height: 0; }
+.rc-result { display: flex; flex-direction: column; background: var(--brand); border-radius: 12px; overflow: hidden; min-height: 0; }
+.rc-result .rc-pic { flex: 1 1 0; width: 100%; min-height: 0; object-fit: cover; border-radius: 0; }
+.rc-result > .muted { color: var(--brand-ink); opacity: .8; padding: 12px; }
+.rc-notes, .rc-store, .rc-allergens { background: var(--surface); border-radius: 12px; padding: 10px 12px; overflow: auto; min-height: 0; }
+.rc-mini { font-family: var(--display); font-weight: 700; text-transform: uppercase; color: var(--brand); font-size: 18px; letter-spacing: .4px; margin: 0 0 4px; }
+.rc-notes ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.rc-notes li { display: flex; gap: 8px; font-size: 14px; line-height: 1.3; }
+.rc-notes li::before { content: "✓"; flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); font-size: 12px; font-weight: 800; display: grid; place-items: center; margin-top: 1px; }
+.rc-store p { margin: 0 0 4px; font-size: 14px; line-height: 1.3; }
+.rc-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 13px; margin-bottom: 4px; }
+.rc-chip { border-radius: 999px; padding: 2px 9px; font-weight: 700; font-size: 13px; }
+.rc-chip.contains { background: var(--bad-soft); color: var(--bad-ink); }
+.rc-chip.removable { background: var(--warn-soft); color: var(--warn-ink); }
+.rc-chip.diet { background: var(--sage); color: var(--sage-ink); }
+.rc-mods { font-size: 13px; line-height: 1.35; white-space: pre-wrap; color: var(--ink-2); }
+
+/* A dish: the photo with its labels, the serving standard and allergens under it, the portion and the build beside */
+.rcard.dish { grid-template-areas: "head" "hero" "under" "portion" "build"; }
+.rc-hero { grid-area: hero; min-height: 0; min-width: 0; display: grid; place-items: center; background: var(--surface); border-radius: 12px; padding: 8px; }
+.rc-hero-box { position: relative; width: min(100%, calc(52vh * var(--arn))); aspect-ratio: var(--ar); }
+.rc-hero-box > .rc-pic { width: 100%; height: 100%; object-fit: contain; border-radius: 10px; }
+.rc-hero-empty { padding: 40px; }
+.rc-callout { position: absolute; left: var(--x); top: var(--y); width: 0; height: 0; z-index: 2; }
+.rc-dot { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 3px solid #2F4A3A; transform: translate(-50%, -50%); z-index: 3; }
+.rc-line { position: absolute; top: -1px; height: 2px; width: 30px; background: #fff; box-shadow: 0 0 2px rgba(0, 0, 0, .5); }
+.rc-callout.left .rc-line { right: 0; } .rc-callout.right .rc-line { left: 0; }
+.rc-label { position: absolute; top: 0; transform: translateY(-50%); background: #fff; color: #1F2A22; border: 2px solid #2F4A3A; border-radius: 10px; padding: 4px 10px;
+  font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: clamp(13px, 1.4vw, 19px); line-height: 1.05; width: max-content; max-width: 200px; box-shadow: 0 2px 8px rgba(0, 0, 0, .3); }
+.rc-callout.left .rc-label { right: 30px; } .rc-callout.right .rc-label { left: 30px; }
+.rc-under { grid-area: under; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 10px; min-width: 0; }
+.rc-under > .rc-allergens:only-child { grid-column: 1 / -1; }
+.rc-standards { list-style: none; margin: 0; padding: 10px 12px; background: var(--surface); border-radius: 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; align-content: center; }
+.rc-standards li { display: flex; gap: 10px; align-items: center; font-weight: 600; font-size: clamp(14px, 1.25vw, 17px); line-height: 1.25; }
+.rc-tick { width: 30px; height: 30px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid; place-items: center; flex-shrink: 0; font-weight: 800; font-size: 16px; }
+.rc-portion { grid-area: portion; } .rc-build { grid-area: build; }
+.rc-after { width: 100%; max-width: 760px; align-self: center; display: flex; flex-direction: column; gap: 14px; }
+.rc-erase { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; }
+
+/* Phones: everything stacks and scrolls */
+@media (max-width: 699px) {
+  .rc-ings.tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: auto; }
+  .rc-ings.tiles .rc-ing-pic { flex: none; height: 70px; }
+  .rc-steps { grid-template-columns: 1fr; grid-auto-rows: auto; }
+  .rc-steps li .rc-pic { flex: none; aspect-ratio: 4 / 3; height: auto; }
+  .rc-foot { grid-template-columns: 1fr; }
+  .rc-result .rc-pic { flex: none; aspect-ratio: 4 / 3; height: auto; }
+  .rc-under { grid-template-columns: 1fr; }
+}
+
+/* Tablets, either way round: the card fills the screen and nothing scrolls */
+@media (min-width: 700px) and (min-height: 600px) {
+  .rcard { height: var(--rc-h); min-height: 560px; }
+  .rcard.prep { grid-template-areas: "head" "ings" "method" "foot"; grid-template-rows: auto minmax(0, .85fr) minmax(0, 2fr) minmax(0, 1fr); }
+  .rcard.prep:has(.rc-ings.list) { grid-template-rows: auto minmax(0, 1.1fr) minmax(0, 2fr) minmax(0, .9fr); }
+  .rcard.dish { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); grid-template-areas: "head head" "hero hero" "under under" "portion build"; grid-template-rows: auto auto auto minmax(0, 1fr); }
+}
+@media (min-width: 900px) and (min-height: 500px) and (orientation: landscape) {
+  .rcard { height: var(--rc-h); min-height: 480px; }
+  .rcard.prep { grid-template-columns: minmax(250px, 27%) minmax(0, 1fr); grid-template-areas: "head head" "ings method" "foot foot"; grid-template-rows: auto minmax(0, 1fr) minmax(0, .58fr); }
+  .rcard.prep:has(.rc-ings.list) { grid-template-rows: auto minmax(0, 1fr) minmax(0, .58fr); }
+  .rc-step-text { font-size: clamp(13px, 1.15vw, 16px); }
+  .rcard.prep .rc-ings { grid-template-columns: 1fr; grid-auto-rows: minmax(auto, 1fr); gap: 4px; padding: 6px; }
+  .rcard.prep .rc-ings li { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; grid-template-areas: "pic name amt"; align-items: center; gap: 8px; padding: 1px 8px 1px 2px;
+    text-align: left; flex-direction: row; overflow: visible; }
+  .rcard.prep .rc-ings .rc-amt { grid-area: amt; font-size: 17px; text-align: right; }
+  .rcard.prep .rc-ings .rc-ing-pic { grid-area: pic; width: 34px; height: 32px; flex: none; }
+  .rcard.prep .rc-ings .rc-ing-name { grid-area: name; font-size: 12px; }
+  .rcard.dish { grid-template-columns: minmax(0, 1.5fr) minmax(0, .62fr) minmax(0, .72fr); grid-template-areas: "head head head" "hero portion build" "under portion build"; grid-template-rows: auto minmax(0, 1fr) auto; }
+  .rcard.dish .rc-hero { container-type: size; }
+  .rcard.dish .rc-hero-box { width: min(100cqw, calc(100cqh * var(--arn))); }
+  .rcard.dish .rc-under { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
+  .rcard.dish .rc-standards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Print: one A4 card, portrait, whatever the screen */
+@page recipe { size: A4 portrait; margin: 8mm; }
+@media print {
+  main.recipe-page { padding: 0; max-width: none; }
+  main.recipe-page > :not(.rcard) { display: none !important; }
+  /* One A4 page. A recipe too long for one (RecipeCard's "long") prints in plain flow over two instead (below). */
+  .rcard { page: recipe; width: 194mm; height: 279mm; min-height: 0; border: 0; padding: 0; gap: 3mm;
+    --bg: #F6F1E7; --surface: #FFFFFF; --surface-2: #EFEBE2; --ink: #1F2A22; --ink-2: #4F5E53; --line: #E3DCCD; --brand: #2F4A3A; --brand-ink: #F6F1E7;
+    --sage: #DCE3D6; --sage-ink: #2F4A3A; --accent: #C2611A; --accent-ink: #FFFFFF; --bad-soft: #FBE3E0; --bad-ink: #8C1D18; --warn-soft: #F3E6C8; --warn-ink: #6B4E0E; --bad: #B3261E;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .rc-tools > :not(.rc-makes) { display: none !important; }
+  .rcard.prep { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "ings" "method" "foot"; grid-template-rows: auto minmax(0, .8fr) minmax(0, 2.1fr) minmax(0, .85fr); }
+  .rcard.dish { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); grid-template-areas: "head head" "hero hero" "under under" "portion build"; grid-template-rows: auto auto auto minmax(0, 1fr); }
+  .rc-ings.tiles, .rc-steps:not(.compact) { grid-auto-rows: minmax(0, 1fr); }
+  .rc-steps li { overflow: hidden; }
+  .rc-stamp { border: 1px solid #B3261E; }
+  .rcard.long { height: auto; display: block; }
+  .rcard.long .rc-sec, .rcard.long .rc-ings, .rcard.long .rc-ings li, .rcard.long .rc-steps li, .rcard.long .rc-notes, .rcard.long .rc-store,
+  .rcard.long .rc-allergens, .rcard.long .rc-result { overflow: visible; }
+  .rcard.long > * { margin-bottom: 3mm; }
+  .rcard.long .rc-sec, .rcard.long .rc-method-wrap { display: block; }
+  .rcard.long .rc-ings, .rcard.long .rc-steps { flex: none; }
+  .rcard.long .rc-foot, .rcard.long .rc-under, .rcard.long .rc-hero, .rcard.long .rc-head { break-inside: avoid; }
+  .rcard.long .rc-foot { min-height: 40mm; }
+  .rcard.long .rc-ings.tiles, .rcard.long .rc-steps:not(.compact) { grid-auto-rows: auto; }
+  .rcard.long .rc-steps li { break-inside: avoid; }
+  .rcard.long .rc-steps li .rc-pic { flex: none; height: 24mm; }
+  .rcard.long .rc-result .rc-pic { flex: none; height: 30mm; }
+  .rc-hero-box { width: min(100%, calc(105mm * var(--arn))); }
+  .rc-ings.tiles { grid-template-columns: repeat(var(--n), minmax(0, 1fr)); }
+  .rc-ings.tiles .rc-ing-pic { flex: 1 1 0; height: auto; }
+  .rc-steps:not(.compact) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .rc-steps li.off-panel { display: flex; }
+  .rc-steps li .rc-pic { flex: 1 1 0; aspect-ratio: auto; }
+  .rc-panel { display: none; }
+  .rc-foot { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); }
+  .rc-result .rc-pic { flex: 1 1 0; aspect-ratio: auto; }
+  .rc-under { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+  .rc-title h1 { font-size: 34pt; }
+  .rc-step-text { font-size: 10pt; } .rc-ing-name { font-size: 8pt; } .rc-amt { font-size: 13pt; } .rc-notes li, .rc-store p { font-size: 9pt; }
+}
+
+/* Recipe editor: ingredient pictures and a dish's labels */
+.item-pic { align-items: center; }
+.thumb.small { width: 56px; height: 56px; object-fit: contain; }
+.thumb.tiny { width: 26px; height: 26px; border-radius: 6px; margin-right: 4px; }
+.photo-removed.small { width: 56px; height: 56px; font-size: 11px; }
+.pic-empty { width: 56px; height: 56px; border-radius: 10px; border: 2px dashed var(--line); }
+.pic-pick { max-width: 210px; }
+.callout-place { position: relative; max-width: 640px; }
+.callout-place img { display: block; width: 100%; height: auto; border-radius: 12px; }
+.callout-place.placing { cursor: crosshair; outline: 3px solid var(--accent); border-radius: 12px; }
+.pin { position: absolute; transform: translate(-50%, -50%); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 14px;
+  display: grid; place-items: center; box-shadow: 0 0 0 3px #fff; }
+.pin.static { position: static; transform: none; flex-shrink: 0; }
+.tick { width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid; place-items: center; font-weight: 800; flex-shrink: 0; }

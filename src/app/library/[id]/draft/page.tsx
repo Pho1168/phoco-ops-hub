@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
-import { canApprove, canDiscard, canDraft, canReview, canWithdraw, defaultReviewBy, docReach, isKind, KIND_TEXT, reachedSites, readsAt, type LibraryDoc, type SopBody } from "@/lib/domain/library";
+import { approvesKind, canDiscard, canDraft, canReview, canWithdraw, defaultReviewBy, docReach, isKind, KIND_TEXT, ownerApproves, reachedSites, readsAt, type LibraryDoc, type SopBody } from "@/lib/domain/library";
 import { ALLERGEN_NAME, alertedAt, allergenChanges, dishesAtOdds, dishWarnings, type DishBody, type PrepBody, type RecipeKind } from "@/lib/domain/recipes";
 import { addDays, londonDate } from "@/lib/domain/time";
 import { requireCtx } from "@/lib/session";
@@ -49,7 +49,7 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
   );
 
   if (v.status === "draft") {
-    const discard = canDiscard(ctx.person, v, covers).ok;
+    const discard = canDiscard(ctx.person, v, covers, doc.kind).ok;
     return (
       <>
         <TopBar ctx={ctx} />
@@ -75,13 +75,14 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
   const people = await db.people();
   const after = reachedSites(v.body.sections, sites);
   const dropped = doc.published ? sites.filter((s) => reachedSites(doc.published!.body.sections, sites).includes(s.id) && !after.includes(s.id)).map((s) => s.name) : [];
-  const review = canReview(ctx.person, v, covers);
-  const takeBack = canWithdraw(ctx.person, v, covers).ok;
+  const review = canReview(ctx.person, v, covers, doc.kind);
+  const takeBack = canWithdraw(ctx.person, v, covers, doc.kind).ok;
   const reviewBy = defaultReviewBy(today), tomorrow = addDays(today, 1);
+  const approver = ownerApproves(doc.kind) ? "The owner" : "The owner or an operations manager";
   const verdict = review.ok ? null : (
-    <div className="muted">{canApprove(ctx.person) ? review.error
-      : takeBack ? "The owner or an operations manager approves it. To change it, take it back first."
-      : `The owner or an operations manager approves it. Until then it can't be changed: ${v.authorName} can take it back.`}</div>
+    <div className="muted">{approvesKind(ctx.person, doc.kind) ? review.error
+      : takeBack ? `${approver} approves it. To change it, take it back first.`
+      : `${approver} approves it. Until then it can't be changed: ${v.authorName} can take it back.`}</div>
   );
   const droppedLine = dropped.length > 0 && <div className="strong" style={{ color: "var(--bad-ink)" }}>It will no longer be for {dropped.join(" or ")}: their staff stop seeing it.</div>;
 
@@ -122,7 +123,7 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
   return (
     <>
       <TopBar ctx={ctx} />
-      <main>
+      <main className="recipe-page">
         {head}
         <div className="card stack" style={{ gap: 4 }}>
           <div className="strong">{v.title}</div>
@@ -139,7 +140,8 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
           <div className="alert" role="status"><div className="grow stack" style={{ gap: 4 }}><div className="strong">Check before approving</div>
             {warnings.map((w) => <div key={w} style={{ fontSize: 14 }}>{w}</div>)}</div></div>
         )}
-        <RecipeBodyView kind={kind} title={v.title} body={body} links={links} gone={gone} eraseIn={ctx.isOwner ? doc.id : undefined} />
+        <RecipeBodyView kind={kind} title={v.title} code={doc.code} body={body} links={links} gone={gone} eraseIn={ctx.isOwner ? doc.id : undefined}
+          stamp="Waiting for approval: not in use yet" />
         {review.ok
           ? <ReviewPanel docId={doc.id} versionId={v.id} rev={v.rev} hasPublished={!!doc.published} reviewBy={reviewBy} tomorrow={tomorrow} asks={asks}
               changeNote="A major change is marked as one, so managers go through it with the kitchen." />

@@ -47,8 +47,17 @@ export type Allergens<M extends Mark = Mark> = Partial<Record<AllergenKey, M>>;
 export type Diet = "Vegetarian" | "Vegan";
 export const DIETS: Diet[] = ["Vegetarian", "Vegan"];
 
-/** An ingredient (prep) or a component (dish): an amount (none for "a drizzle"), a unit, a name, a note. */
-export interface Item { qty?: number; unit: string; name: string; note?: string; /** dishes: the prep recipe this component is (document id) */ prep?: string }
+/**
+ * An ingredient (prep) or a component (dish): an amount (none for "a drizzle"), a unit, a name, a note, and a picture
+ * for its tile on the recipe card (the same picture can be reused wherever that ingredient appears).
+ */
+export interface Item {
+  qty?: number; unit: string; name: string; note?: string;
+  /** dishes: the prep recipe this component is (document id) */ prep?: string;
+  photo?: Photo;
+}
+/** A label pinned to a dish's photo ("Protein (generous)"): where it points, as a percentage across and down the photo. */
+export interface Callout { x: number; y: number; text: string }
 export interface Qty { qty: number; unit: string }
 export type ShelfUnit = "hours" | "days";
 
@@ -81,9 +90,15 @@ export interface DishBody {
   /** Which part has which allergen and what can be left out ("crushed peanuts on top: leave off"). */
   modifications: string;
   dietary: Diet[];
+  /** Labels on the photo, and the serving standard as short checks ("NOT over-burnt"). */
+  callouts?: Callout[];
+  standards?: string[];
 }
 
-export const RECIPE_LIMITS = { category: 40, items: 80, name: 80, unit: 12, note: 120, storage: 200, notes: 600, modifications: 600, qty: 1_000_000 } as const;
+export const RECIPE_LIMITS = {
+  category: 40, items: 80, name: 80, unit: 12, note: 120, storage: 200, notes: 600, modifications: 600, qty: 1_000_000,
+  callouts: 8, callout: 40, standards: 8, standard: 80,
+} as const;
 export const SHELF_MAX: Record<ShelfUnit, number> = { hours: 72, days: 365 };
 /** Units offered in the editor (any short unit can be typed). */
 export const UNITS = ["g", "kg", "ml", "L", "tsp", "tbsp", "spoon", "scoop", "piece", "pack", "can", "bottle", "bunch", "slice", "portion"];
@@ -94,7 +109,7 @@ export type RecipeKind = "prep" | "dish";
 /** What the editor sends. Amounts are numbers or null (none). */
 export interface RecipeInput {
   title: string; sections: string[]; category: string;
-  items: { qty: number | null; unit: string; name: string; note: string; prep?: string | null }[];
+  items: { qty: number | null; unit: string; name: string; note: string; prep?: string | null; photo?: Photo | null }[];
   steps: SopInput["steps"];
   photo?: Photo | null;
   allergens: Record<string, string>;
@@ -103,6 +118,7 @@ export interface RecipeInput {
   storage?: string; shelfLife?: { qty: number | null; unit: string } | null; notes?: string;
   // dish
   modifications?: string; dietary?: string[];
+  callouts?: { x: number; y: number; text: string }[]; standards?: string[];
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -141,6 +157,7 @@ export function amountHint(typed: string): string | undefined {
 export function cleanRecipe(kind: RecipeKind, input: RecipeInput): Cleaned<{ title: string; body: PrepBody | DishBody }> {
   const title = cleanTitle(input.title);
   if (!title.ok) return title;
+  if (kind === "prep" && (input.callouts?.length || input.standards?.length)) return { ok: false, error: "Labels and serving standards are for dishes" };
   if (input.sections.some((s) => !KITCHEN.includes(s as Area))) return { ok: false, error: "Recipes are for back of house or production" };
   const sections = KITCHEN.filter((s) => input.sections.includes(s));
   if (!sections.length) return { ok: false, error: "Say who makes it: back of house, production, or both" };
@@ -151,7 +168,7 @@ export function cleanRecipe(kind: RecipeKind, input: RecipeInput): Cleaned<{ tit
   const word = kind === "prep" ? "Ingredient" : "Component";
   for (const [i, x] of input.items.entries()) {
     const name = oneLine(x.name), unit = oneLine(x.unit), note = oneLine(x.note), qty = amount(x.qty);
-    if (!name && !unit && !note && qty === undefined && !x.prep) continue;
+    if (!name && !unit && !note && qty === undefined && !x.prep && !x.photo) continue;
     const n = i + 1;
     if (!name) return { ok: false, error: `${word} ${n} needs a name` };
     if (qty === false) return { ok: false, error: `${word} ${n}: the amount must be a number above 0` };
@@ -159,7 +176,9 @@ export function cleanRecipe(kind: RecipeKind, input: RecipeInput): Cleaned<{ tit
     if (unit.length > RECIPE_LIMITS.unit) return { ok: false, error: `${word} ${n}: keep the unit short (g, kg, ml, tbsp…)` };
     if (qty !== undefined && !unit) return { ok: false, error: `${word} ${n} needs a unit (g, ml, piece…)` };
     if (x.prep && (kind !== "dish" || !UUID.test(x.prep))) return { ok: false, error: `${word} ${n}: that link isn't a prep recipe` };
-    items.push({ ...(qty !== undefined ? { qty } : {}), unit, name, ...(note ? { note } : {}), ...(x.prep ? { prep: x.prep.toLowerCase() } : {}) });
+    if (x.photo && !isPhoto(x.photo)) return { ok: false, error: `${word} ${n}: the picture didn't upload properly. Add it again` };
+    items.push({ ...(qty !== undefined ? { qty } : {}), unit, name, ...(note ? { note } : {}), ...(x.prep ? { prep: x.prep.toLowerCase() } : {}),
+      ...(x.photo ? { photo: { id: x.photo.id, w: x.photo.w, h: x.photo.h } } : {}) });
   }
   if (items.length > RECIPE_LIMITS.items) return { ok: false, error: `At most ${RECIPE_LIMITS.items} lines` };
 
@@ -203,9 +222,22 @@ export function cleanRecipe(kind: RecipeKind, input: RecipeInput): Cleaned<{ tit
   const modifications = cleanText(input.modifications);
   if (modifications.length > RECIPE_LIMITS.modifications) return { ok: false, error: `Keep the kitchen notes under ${RECIPE_LIMITS.modifications} characters` };
   if ((input.dietary ?? []).some((d) => !DIETS.includes(d as Diet))) return { ok: false, error: "Unknown dietary tag" };
+  const callouts: Callout[] = [];
+  for (const c of input.callouts ?? []) {
+    const text = oneLine(c.text);
+    if (!text) continue;
+    if (text.length > RECIPE_LIMITS.callout) return { ok: false, error: `Keep each label on the photo under ${RECIPE_LIMITS.callout} characters` };
+    if (![c.x, c.y].every((n) => Number.isFinite(n) && n >= 0 && n <= 100)) return { ok: false, error: "A label isn't on the photo. Place it again" };
+    callouts.push({ x: Math.round(c.x * 10) / 10, y: Math.round(c.y * 10) / 10, text });
+  }
+  if (callouts.length > RECIPE_LIMITS.callouts) return { ok: false, error: `At most ${RECIPE_LIMITS.callouts} labels on the photo` };
+  const standards = (input.standards ?? []).map(oneLine).filter(Boolean);
+  if (standards.length > RECIPE_LIMITS.standards) return { ok: false, error: `At most ${RECIPE_LIMITS.standards} serving standards` };
+  if (standards.some((t) => t.length > RECIPE_LIMITS.standard)) return { ok: false, error: `Keep each serving standard under ${RECIPE_LIMITS.standard} characters` };
   const body: DishBody = {
     sections, category, components: items, steps: steps.value, ...photo, allergens, modifications,
     dietary: DIETS.filter((d) => (input.dietary ?? []).includes(d)),
+    ...(callouts.length ? { callouts } : {}), ...(standards.length ? { standards } : {}),
   };
   return { ok: true, value: { title: title.value, body } };
 }
@@ -389,4 +421,42 @@ export function dishesAtOdds(prepId: string, allergens: Allergens, dishes: Libra
     const missed = ALLERGEN_KEYS.filter((k) => allergens[k] === "contains" && d.published!.body.allergens[k] === "free");
     return missed.length ? [{ id: d.id, code: d.code, title: d.published!.title, missed }] : [];
   });
+}
+
+/** How an ingredient's name is matched to a picture taken for it elsewhere: case, spacing and plurals don't matter. */
+export function ingredientKey(name: string): string {
+  const one = (w: string) => {
+    if (w.length <= 3 || w.endsWith("ss")) return w;
+    const t = w.endsWith("s") ? w.slice(0, -1) : w; // chillies → chillie, tomatoes → tomatoe, eggs → egg
+    return t.replace(/ie$/, "i").replace(/y$/, "i").replace(/oe$/, "o"); // chilli, berri (berry), tomato
+  };
+  return name.toLowerCase().replace(/['’]/g, "").replace(/\(.*?\)/g, " ").replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(Boolean).map(one).join(" ");
+}
+
+/**
+ * Pictures already taken for ingredients, by `ingredientKey`, so a picture of sugar is taken once and offered for every
+ * recipe that uses sugar. Later bodies win (pass them oldest first); erased photos (`gone`) are never offered.
+ */
+export function ingredientPhotos(bodies: (PrepBody | DishBody)[], gone: Set<string> = new Set()): Map<string, { name: string; photo: Photo }> {
+  const out = new Map<string, { name: string; photo: Photo }>();
+  for (const b of bodies) {
+    for (const it of "ingredients" in b ? b.ingredients : b.components) {
+      if (!it.photo || gone.has(it.photo.id)) continue;
+      const key = ingredientKey(it.name);
+      if (key) out.set(key, { name: it.name, photo: it.photo });
+    }
+  }
+  return out;
+}
+
+/** The most steps on one recipe card; the rest go on a second panel. */
+export const CARD_STEPS = 12;
+/** A recipe's steps split into what fits on the card and the rest (numbering carries on). */
+export function cardPanels<S>(steps: S[], max: number = CARD_STEPS): { first: S[]; more: S[] } {
+  return steps.length <= max ? { first: steps, more: [] } : { first: steps.slice(0, max), more: steps.slice(max) };
+}
+
+/** Notes as short checks, one per line (a bullet or "- " in front is dropped; "-18°C" keeps its minus). */
+export function noteLines(notes: string): string[] {
+  return notes.split(/\n+/).map((l) => l.replace(/^\s*(?:[•*✓✔]|-(?=\s))\s*/, "").trim()).filter(Boolean);
 }

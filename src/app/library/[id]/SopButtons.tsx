@@ -100,7 +100,7 @@ export function ErasePhoto({ docId, mediaId, label }: { docId: string; mediaId: 
             });
           }}>
             <h2 className="h-sec">Erase this photo for good?</h2>
-            <p style={{ margin: 0 }}>Use this for privacy, say if it shows someone. It shows as &ldquo;Photo removed&rdquo; in every version that has it. This can&apos;t be undone.</p>
+            <p style={{ margin: 0 }}>Use this for privacy, say if it shows someone. It shows as &ldquo;Photo removed&rdquo; everywhere it&apos;s used: every version, and any other recipe using the same picture. This can&apos;t be undone.</p>
             <label className="stack" style={{ gap: 6 }}><span className="muted">Why (required)</span>
               <input id="erase-why" className="txt" style={{ width: "100%", maxWidth: "none" }} autoFocus required maxLength={200} value={why}
                 onChange={(e) => setWhy(e.target.value)} placeholder="e.g. Shows a member of staff's face" /></label>

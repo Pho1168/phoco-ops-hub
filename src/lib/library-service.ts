@@ -1,6 +1,6 @@
 import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
-import { mustRead, photoIds, type LibraryDoc, type Photo, type SopStep } from "@/lib/domain/library";
+import { mustRead, photoIds, type LibraryDoc } from "@/lib/domain/library";
 import { allergenAlerts, type DishBody, type PrepBody } from "@/lib/domain/recipes";
 import type { Person } from "@/lib/domain/types";
 
@@ -11,7 +11,7 @@ export async function sopsToRead(person: Pick<Person, "id" | "status" | "access"
 }
 
 /** The photos in a body that the owner has erased (they show as removed). */
-export async function erasedPhotos(body: { steps: SopStep[]; photo?: Photo }, db: Store = store()): Promise<string[]> {
+export async function erasedPhotos(body: Parameters<typeof photoIds>[0], db: Store = store()): Promise<string[]> {
   const ids = photoIds(body);
   if (!ids.length) return [];
   return Array.from((await db.mediaStatus(ids)).entries()).filter(([, m]) => m.erased).map(([id]) => id);

@@ -1,55 +1,53 @@
 import Image from "next/image";
+import { photoIds, type Photo } from "@/lib/domain/library";
 import type { DishBody, PrepBody, RecipeKind } from "@/lib/domain/recipes";
-import { StepList } from "./SopView";
 import { AllergenCard } from "./RecipeParts";
+import { RecipeCard } from "./RecipeCard";
 import { ErasePhoto } from "./[id]/SopButtons";
-import { StepMode } from "./[id]/StepMode";
-import { Scaler } from "./[id]/Scaler";
+
+/** Every photo in a recipe with what it shows, for the owner's privacy tool. */
+function photosIn(body: PrepBody | DishBody): { photo: Photo; label: string }[] {
+  const items = "ingredients" in body ? body.ingredients : body.components;
+  const out: { photo: Photo; label: string }[] = [];
+  if (body.photo) out.push({ photo: body.photo, label: "the finished photo" });
+  items.forEach((it) => { if (it.photo) out.push({ photo: it.photo, label: `the picture of ${it.name}` }); });
+  body.steps.forEach((s, i) => { if (s.photo) out.push({ photo: s.photo, label: `step ${i + 1}` }); });
+  const seen = new Set<string>();
+  return out.filter((p) => (seen.has(p.photo.id) ? false : (seen.add(p.photo.id), true)));
+}
 
 /**
- * A recipe's content: the finished photo, batch facts (prep), the ingredients or a portion's components at any size,
- * the method, notes and allergens. `links`: linked prep recipes; `gone`: photos the owner erased; `eraseIn`: the owner
- * may erase photos; `stepMode`: offer step by step.
+ * A recipe's content as its card (RecipeCard: one screen, like the printed recipe cards), then its allergens in words
+ * (for reading in full). `links`: linked prep recipes; `gone`: photos the owner erased; `eraseIn`: the owner may erase
+ * photos (a privacy tool, kept off the card); `stepMode`: offer step by step.
  */
-export function RecipeBodyView({ kind, title, body, links, gone, eraseIn, stepMode }: {
-  kind: RecipeKind; title: string; body: PrepBody | DishBody; links: Record<string, { title: string; code: string; live: boolean }>;
+export function RecipeBodyView({ kind, title, code, version, body, links, gone, eraseIn, stepMode, stamp }: {
+  kind: RecipeKind; title: string; code: string; version?: number; body: PrepBody | DishBody; links: Record<string, { title: string; code: string; live: boolean }>;
   gone: string[]; eraseIn?: string; stepMode?: boolean;
+  /** Set for anything but the version in use ("Draft: not approved", "Replaced version"): shown on the card, and it can't be printed. */
+  stamp?: string;
 }) {
-  const prep = kind === "prep" ? (body as PrepBody) : undefined, dish = kind === "dish" ? (body as DishBody) : undefined;
-  const photoGone = !!body.photo && gone.includes(body.photo.id);
+  const dish = kind === "dish" ? (body as DishBody) : undefined;
+  const erasable = eraseIn ? photosIn(body).filter((p) => !gone.includes(p.photo.id)) : [];
   return (
     <>
-      {body.photo && (photoGone
-        ? <div className="photo-removed" role="img" aria-label="Finished photo: removed">Photo removed</div>
-        : <div className="stack" style={{ gap: 6 }}>
-            <Image className="sop-photo hero" src={`/api/media/${body.photo.id}`} width={body.photo.w} height={body.photo.h} alt={`${title}, finished`} unoptimized />
-            {eraseIn && <div className="photo-tools"><ErasePhoto docId={eraseIn} mediaId={body.photo.id} label="the finished photo" /></div>}
-          </div>)}
-
-      {prep && (prep.makes || prep.shelfLife || prep.storage) && (
-        <section className="card recipe-facts" aria-label="Batch, storage and shelf life">
-          {prep.makes && <div><span className="muted">One batch makes</span><span className="strong">{prep.makes.qty} {prep.makes.unit}</span></div>}
-          {prep.shelfLife && <div><span className="muted">Shelf life</span><span className="strong">{prep.shelfLife.qty} {prep.shelfLife.qty === 1 ? prep.shelfLife.unit.replace(/s$/, "") : prep.shelfLife.unit}</span></div>}
-          {prep.storage && <div><span className="muted">Storage</span><span className="strong">{prep.storage}</span></div>}
-        </section>
-      )}
-
-      {dish && !dish.components.length && !dish.steps.length
-        ? <div className="card muted" role="note">What goes in a portion and how it&apos;s built aren&apos;t written yet: only its allergens are.</div>
-        : <>
-            {(prep || dish!.components.length > 0) && <Scaler kind={kind} items={prep ? prep.ingredients : dish!.components} makes={prep?.makes} links={links} />}
-            {body.steps.length > 0 && (
-              <section className="stack" aria-label={kind === "prep" ? "Method" : "How it's built"}>
-                <div className="row wrap"><h2 className="h-sec grow">{kind === "prep" ? "Method" : "How it's built"}</h2>
-                  {stepMode && <StepMode title={title} steps={body.steps.map((s) => (s.photo && gone.includes(s.photo.id) ? { text: s.text, warning: s.warning } : s))} />}</div>
-                <StepList steps={body.steps} title={title} erased={gone} eraseIn={eraseIn} />
-              </section>
-            )}
-          </>}
-
-      {prep?.notes && <section className="card stack" aria-label="Notes"><h2 className="h-sec">Notes</h2><div style={{ whiteSpace: "pre-wrap" }}>{prep.notes}</div></section>}
-
-      <AllergenCard allergens={body.allergens} modifications={dish?.modifications} dietary={dish?.dietary} />
+      <RecipeCard kind={kind} title={title} code={code} version={version} body={body} links={links} gone={gone} stepMode={stepMode} stamp={stamp} printable={!stamp} />
+      <div className="rc-after">
+        <AllergenCard allergens={body.allergens} modifications={dish?.modifications} dietary={dish?.dietary} />
+        {eraseIn && erasable.length > 0 && photoIds(body).length > 0 && (
+          <details className="card">
+            <summary className="strong" style={{ cursor: "pointer" }}>Erase a photo (privacy)</summary>
+            <div className="rc-erase">
+              {erasable.map((p) => (
+                <div key={p.photo.id} className="stack" style={{ gap: 6 }}>
+                  <Image className="thumb" src={`/api/media/${p.photo.id}`} width={p.photo.w} height={p.photo.h} alt={p.label} unoptimized />
+                  <ErasePhoto docId={eraseIn} mediaId={p.photo.id} label={p.label} />
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
     </>
   );
 }

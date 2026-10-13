@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { store } from "@/lib/data";
-import { canApprove, canDraft, canReview, docReach, isContributor, reviewState, versionLabel, type LibraryDoc } from "@/lib/domain/library";
+import { approvesKind, canDraft, canReview, docReach, isContributor, reviewState, versionLabel, type LibraryDoc } from "@/lib/domain/library";
 import { seesRecipes, type DishBody, type PrepBody } from "@/lib/domain/recipes";
 import { londonDate } from "@/lib/domain/time";
 import { current } from "@/lib/session";
@@ -26,7 +26,7 @@ export default async function Recipes() {
   const [preps, dishes, sites] = await Promise.all([db.libraryDocs("prep", { light: true }), db.libraryDocs("dish", { light: true }), db.sites()]);
   if (ctx.scope !== "full" || !seesRecipes(ctx.person, sites)) redirect("/library");
   const writer = canDraft(ctx.person);
-  const approver = canApprove(ctx.person);
+  const approver = approvesKind(ctx.person, "prep"); // recipes and dishes: the owner only
   const today = londonDate(Date.now());
   const docs: Doc[] = [...preps, ...dishes];
   const items: RecipeItem[] = docs.filter((d) => d.published && !d.retiredAt)
@@ -40,7 +40,7 @@ export default async function Recipes() {
   const retired = writer ? docs.filter((d) => d.retiredAt && d.published) : [];
   const waitingChip = (d: Doc) => {
     const v = d.open!;
-    if (approver && canReview(ctx.person, v, docReach(d, sites)).ok) return { text: d.published ? "New version" : `New ${d.kind === "prep" ? "recipe" : "dish"}`, tone: "late" };
+    if (approver && canReview(ctx.person, v, docReach(d, sites), d.kind).ok) return { text: d.published ? "New version" : `New ${d.kind === "prep" ? "recipe" : "dish"}`, tone: "late" };
     if (approver && isContributor(ctx.person, v)) return { text: "Another approver checks it", tone: "" };
     if (approver) return { text: "The owner approves it", tone: "" };
     return { text: "Waiting", tone: "" };
@@ -69,7 +69,7 @@ export default async function Recipes() {
         {waiting.length > 0 && (
           <section className="stack" aria-label="Waiting for approval">
             <h2 className="h-sec">Waiting for approval ({waiting.length})</h2>
-            {!approver && <div className="muted">The owner or an operations manager approves them. To change one, open it and take it back.</div>}
+            {!approver && <div className="muted">The owner approves them. To change one, open it and take it back.</div>}
             {waiting.map((d) => row(d, `${d.open!.authorName}${d.open!.submittedAt ? ` · sent ${when(d.open!.submittedAt)}` : ""}`, waitingChip(d)))}
           </section>
         )}
