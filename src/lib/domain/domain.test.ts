@@ -7,7 +7,7 @@ import { afterQuietHours, dayMonthYear, daysBetween, isIsoDate, londonToUtc } fr
 import { hashPin, isValidPin, verifyPin } from "./pin";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
 import { canChangeAccess, canMarkLeft, nextStaffCode, normalizeStaffCode, validatePersonInput } from "./staff";
-import { canUndo, canUsePrep, filterPrep, masterItems, planSubmit, reportOrder, PREP_CATEGORIES, PREP_MASTER, type PrepEntry } from "./prep";
+import { BAR_ITEMS, canEditPrepList, canRetirePrepItem, canUndo, canUsePrep, cleanPrepItem, filterPrep, masterItems, moveTarget, planSubmit, prepGroups, reportOrder, PREP_MASTER, type PrepEntry } from "./prep";
 import { readFileSync } from "node:fs";
 import { canEditCerts, canSeeRightToWork, certReminderMessages, certStatus, expectedKinds, issueCount, peopleInCare, reminderDue, siteCover, statusText, suggestExpiry, validateCert, visibleTypes, CERT_KINDS, CERT_TYPES, type Certificate } from "./certificates";
 import { canCancel, canDecide, clashes, daysOf, offOn, rangeLabel, validateRequest, type TimeOff } from "./timeoff";
@@ -311,24 +311,51 @@ describe("kitchen prep", () => {
   const entry = (itemId: string, extra: Partial<PrepEntry> = {}): PrepEntry =>
     ({ id: `e-${itemId}-${extra.handoverId ?? "h"}`, handoverId: "h", siteId: "EAS", itemId, status: "outstanding", urgent: false, createdBy: "p", createdAt: 1, ...extra });
 
-  it("has all 63 items exactly once, each in one of the five categories", () => {
+  it("was seeded with 63 items in five groups, then the 22 bar and counter jobs", () => {
     expect(PREP_MASTER).toHaveLength(63);
-    expect(new Set(PREP_MASTER.map((r) => r[0])).size).toBe(63);
+    expect(new Set(items.map((r) => r.id)).size).toBe(85);
     expect(new Set(PREP_MASTER.map((r) => r[1].toLowerCase())).size).toBe(63);
-    const counts = PREP_CATEGORIES.map((c) => items.filter((i) => i.category === c.id).length);
-    expect(counts).toEqual([17, 17, 6, 14, 9]);
+    expect(prepGroups(items).map((g) => `${g.kind}|${g.group}|${items.filter((i) => i.kind === g.kind && i.group === g.group).length}`)).toEqual([
+      "todo|Bar & counter|11", "prep|Cooking & kitchen prep|17", "prep|Fresh prep & vegetables|17", "prep|Sauces & condiments|6",
+      "prep|Defrosting & replenishment|14", "prep|Drinks & desserts|9", "prep|Bar & counter|11",
+    ]);
   });
-  it("seeds the database with the same list", () => {
+  it("seeds the database with the same lists", () => {
     const sql = readFileSync(new URL("../../../supabase/migrations/0006_kitchen_prep.sql", import.meta.url), "utf8");
     for (const [id, name, cat] of PREP_MASTER) expect(sql).toContain(`('${id}', '${name.replace(/'/g, "''")}', '${cat}',`);
+    const bar = readFileSync(new URL("../../../supabase/migrations/0024_handover_list.sql", import.meta.url), "utf8");
+    BAR_ITEMS.forEach(([id, name, kind], i) => expect(bar).toContain(`('${id}', '${name.replace(/'/g, "''")}', '${kind}', 'Bar & counter', ${64 + i})`));
   });
-  it("filters by category and search words, ignoring case and order", () => {
-    expect(filterPrep(items, "all", "")).toHaveLength(63);
-    expect(filterPrep(items, "sauces", "")).toHaveLength(6);
+  it("filters by group and search words, ignoring case and order: to do first, then to prep", () => {
+    expect(filterPrep(items, "all", "")).toHaveLength(85);
+    expect(filterPrep(items, "all", "")[0].id).toBe("kp-075");
+    expect(filterPrep(items, "prep|Sauces & condiments", "")).toHaveLength(6);
     expect(filterPrep(items, "all", "S/V pork").map((i) => i.id)).toEqual(["kp-051", "kp-053"]);
-    expect(filterPrep(items, "all", "ONION").map((i) => i.id)).toEqual(["kp-020", "kp-021", "kp-029", "kp-032"]);
-    expect(filterPrep(items, "drinks", "onion")).toHaveLength(0);
+    expect(filterPrep(items, "all", "ONION").map((i) => i.id)).toEqual(["kp-075", "kp-020", "kp-021", "kp-029", "kp-032", "kp-068"]);
+    expect(filterPrep(items, "prep|Drinks & desserts", "onion")).toHaveLength(0);
     expect(filterPrep([...items.slice(0, 2), { ...items[2], active: false }], "all", "oil").map((i) => i.id)).toEqual(["kp-001", "kp-002"]);
+  });
+  it("managers edit the list; only the owner and operations managers take items off it", () => {
+    const who = (role: "staff" | "manager" | "ops" | "owner") => ({ access: [{ siteId: "EAS" as const, role, sections: [] }] });
+    expect([canEditPrepList(who("staff")), canEditPrepList(who("manager")), canEditPrepList(who("ops")), canEditPrepList(who("owner"))]).toEqual([false, true, true, true]);
+    expect([canRetirePrepItem(who("manager")), canRetirePrepItem(who("ops")), canRetirePrepItem(who("owner"))]).toEqual([false, true, true]);
+  });
+  it("checks a new or changed item: a name, a list, a group; no repeats on the same list", () => {
+    expect(cleanPrepItem({ name: "  Wipe   menus ", kind: "todo", group: "bar & COUNTER" }, items)).toEqual({ ok: true, value: { name: "Wipe menus", kind: "todo", group: "Bar & counter" } });
+    expect(cleanPrepItem({ name: "Wipe menus", kind: "todo", group: "Front" }, items)).toEqual({ ok: true, value: { name: "Wipe menus", kind: "todo", group: "Front" } });
+    expect(cleanPrepItem({ name: "cook rice", kind: "prep", group: "Cooking & kitchen prep" }, items)).toMatchObject({ ok: false, error: '"Cook rice" is already on the To prep list' });
+    expect(cleanPrepItem({ name: "Cook rice", kind: "todo", group: "Rice" }, items).ok).toBe(true);
+    expect(cleanPrepItem({ name: "Cook rice", kind: "prep", group: "Cooking & kitchen prep" }, items, "kp-007").ok).toBe(true); // itself
+    expect(cleanPrepItem({ name: "", kind: "prep", group: "X" }, items)).toMatchObject({ ok: false, error: "Write what it is" });
+    expect(cleanPrepItem({ name: "X", kind: "prep", group: " " }, items)).toMatchObject({ ok: false });
+    expect(cleanPrepItem({ name: "X", kind: "bar", group: "X" }, items)).toMatchObject({ ok: false, error: "Choose To do or To prep" });
+    expect(cleanPrepItem({ name: "x".repeat(81), kind: "prep", group: "X" }, items).ok).toBe(false);
+  });
+  it("moves an item up or down within its group only", () => {
+    expect(moveTarget(items, "kp-002", "up")?.id).toBe("kp-001");
+    expect(moveTarget(items, "kp-001", "up")).toBeUndefined();
+    expect(moveTarget(items, "kp-017", "down")).toBeUndefined(); // last in its group
+    expect(moveTarget(items, "kp-075", "down")?.id).toBe("kp-076");
   });
   it("lets everyone at the site use the board, front and back of house", () => {
     expect(canUsePrep({ siteId: "EAS", role: "staff", sections: ["BOH"] })).toBe(true);
@@ -344,7 +371,7 @@ describe("kitchen prep", () => {
     expect(plan.merge).toEqual([{ entryId: "d40", from: "o40", urgent: true, note: "Last tub" }]);
     expect(plan.markCarried.sort()).toEqual(["o40", "o63"]);
     expect(plan.missed.map((e) => e.itemId).sort()).toEqual(["kp-040", "kp-063"]);
-    expect(plan.stockedCount).toBe(60); // 63 minus rice, peanuts and lemonade
+    expect(plan.stockedCount).toBe(82); // 85 minus rice, peanuts and lemonade
   });
   it("a carried item stays with whoever it was for, also if it was picked again (done, then put back)", () => {
     const given = { assignedTo: "anh", assignedBy: "minh", assignedAt: 5 };
@@ -371,7 +398,7 @@ describe("kitchen prep", () => {
     expect(plan.stockedCount).toBe(1);
   });
   it("a handover with nothing needed confirms every active item as stocked", () => {
-    expect(planSubmit([], [], items.map((i) => i.id)).stockedCount).toBe(63);
+    expect(planSubmit([], [], items.map((i) => i.id)).stockedCount).toBe(85);
   });
   it("orders the report urgent first, then in list order", () => {
     const list = [entry("kp-063"), entry("kp-001"), entry("kp-040", { urgent: true })];

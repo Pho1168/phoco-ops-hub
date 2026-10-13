@@ -1,7 +1,9 @@
 import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Device } from "@/lib/domain/devices";
 import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib/domain/rota";
-import type { PrepEntry, PrepItem, PrepShift, SubmitPlan } from "@/lib/domain/prep";
+import type { PrepEntry, PrepItem, PrepKind, PrepShift, SubmitPlan } from "@/lib/domain/prep";
+/** What a manager sets on a handover list item. */
+export interface PrepItemFields { name: string; kind: PrepKind; group: string }
 import type { ListInfo, RawAnswer, RunInfo } from "@/lib/domain/records";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
@@ -129,7 +131,16 @@ export interface Store {
   assignHandover(target: HandoverTarget, siteId: SiteId, to: string | null, byId: string): Promise<boolean>;
 
   // Kitchen prep (one master list for every restaurant; handovers per site)
+  /** The master list (to do and to prep), items taken off it included. */
   prepItems(): Promise<PrepItem[]>;
+  /** Adds an item at the end of its group (a new group goes at the end of its list). Returns its id. */
+  addPrepItem(item: PrepItemFields, byId: string): Promise<string>;
+  /** Renames an item, or moves it to another list or group (where it goes last). False if there's no such item. */
+  updatePrepItem(id: string, item: PrepItemFields, byId: string): Promise<boolean>;
+  /** Swaps two items' places in their group (moving one up or down). False unless both are in the same group. */
+  swapPrepItems(a: string, b: string, byId: string): Promise<boolean>;
+  /** Takes an item off the list, or puts it back (never deleted). False if it's already that way. */
+  setPrepItemActive(id: string, active: boolean, byId: string): Promise<boolean>;
   prepEnabledSites(): Promise<SiteId[]>;
   /** The site's draft, if someone has started one. */
   prepDraft(siteId: SiteId): Promise<PrepHandover | undefined>;
