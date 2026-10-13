@@ -85,8 +85,13 @@ const no = (error: string): Checked => ({ ok: false, error });
 
 /** Who writes drafts: managers, operations managers and owners. */
 export const canDraft = (p: Pick<Person, "status" | "access">) => p.status === "active" && managedSites(p).length > 0;
-/** Who approves, publishes and retires: owners and operations managers. */
+/** Who approves, publishes and retires SOPs: owners and operations managers (training editors are the same people). */
 export const canApprove = (p: Pick<Person, "status" | "access">) => p.status === "active" && isLead(p);
+/** Recipes and dishes (they carry the allergens) are approved, retired and brought back by an owner only. */
+export const ownerApproves = (kind: LibraryKind) => kind !== "sop";
+/** Who approves this kind of document: owners and operations managers for SOPs; owners only for recipes and dishes. */
+export const approvesKind = (p: Pick<Person, "status" | "access">, kind: LibraryKind) => canApprove(p) && (!ownerApproves(kind) || isOwner(p));
+const approverWord = (kind: LibraryKind) => (ownerApproves(kind) ? "the owner" : "the owner or an operations manager");
 
 type Actor = Pick<Person, "id" | "status" | "access">;
 type Sited = Pick<Site, "id" | "kind" | "status">;
@@ -104,8 +109,12 @@ export function docReach(d: { published?: { body: Pick<SopBody, "sections"> }; o
   return Array.from(new Set([d.published, d.open].flatMap((v) => (v ? reachedSites(v.body.sections, sites) : []))));
 }
 
-/** Approving, sending back, retiring or bringing back for every site in `reach`: an owner, or an operations manager who runs them all. */
-export const coversReach = (p: Pick<Person, "access">, reach: SiteId[]) => isOwner(p) || (isOps(p) && reach.every((s) => opsSites(p).includes(s)));
+/**
+ * Approving, sending back, retiring or bringing back for every site in `reach`: an owner, or (SOPs only) an operations
+ * manager who runs them all.
+ */
+export const coversReach = (p: Pick<Person, "access">, reach: SiteId[], kind: LibraryKind) =>
+  isOwner(p) || (!ownerApproves(kind) && isOps(p) && reach.every((s) => opsSites(p).includes(s)));
 
 /** Wrote, changed or sent this version. */
 export const isContributor = (p: Pick<Person, "id">, v: Pick<LibraryVersion, "authorId" | "submittedBy" | "contributors">) =>
@@ -122,10 +131,10 @@ export function canEditDraft(p: Actor, v: Pick<LibraryVersion, "status">): Check
  * Taking a version back from approval: whoever wrote or sent it (if they still write SOPs), or an approver for all the
  * sites the SOP covers (`reach`: docReach).
  */
-export function canWithdraw(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy">, reach: SiteId[]): Checked {
+export function canWithdraw(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy">, reach: SiteId[], kind: LibraryKind): Checked {
   if (!canDraft(p)) return no("Only managers can change SOPs");
   if (v.status !== "in_review") return no("It isn't waiting for approval");
-  if (p.id === v.authorId || p.id === v.submittedBy || (canApprove(p) && coversReach(p, reach))) return yes;
+  if (p.id === v.authorId || p.id === v.submittedBy || (approvesKind(p, kind) && coversReach(p, reach, kind))) return yes;
   return no("Only whoever sent it, or an approver for its sites, can take it back");
 }
 
@@ -133,37 +142,37 @@ export function canWithdraw(p: Actor, v: Pick<LibraryVersion, "status" | "author
  * Approving (and publishing) or sending back: an owner, or an operations manager who didn't write, change or send
  * this version and runs every site the SOP covers (`reach`: docReach). Owners may approve their own, so they're never stuck.
  */
-export function canReview(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy" | "contributors">, reach: SiteId[]): Checked {
-  if (!canApprove(p)) return no("Only the owner or an operations manager can approve");
+export function canReview(p: Actor, v: Pick<LibraryVersion, "status" | "authorId" | "submittedBy" | "contributors">, reach: SiteId[], kind: LibraryKind): Checked {
+  if (!approvesKind(p, kind)) return no(`Only ${approverWord(kind)} can approve`);
   if (v.status !== "in_review") return no("It isn't waiting for approval");
   if (isOwner(p)) return yes;
   if (isContributor(p, v)) return no("You wrote or changed this version, so another approver checks it");
-  if (!coversReach(p, reach)) return no("It covers a site you don't run, so the owner approves it");
+  if (!coversReach(p, reach, kind)) return no("It covers a site you don't run, so the owner approves it");
   return yes;
 }
 
 /** Throwing away a draft: whoever started it (if they still write SOPs), or an approver for all the sites the SOP covers. */
-export function canDiscard(p: Actor, v: Pick<LibraryVersion, "status" | "authorId">, reach: SiteId[]): Checked {
+export function canDiscard(p: Actor, v: Pick<LibraryVersion, "status" | "authorId">, reach: SiteId[], kind: LibraryKind): Checked {
   if (!canDraft(p)) return no("Only managers can change SOPs");
   if (v.status !== "draft") return no("Only a draft can be discarded");
-  if (p.id === v.authorId || (canApprove(p) && coversReach(p, reach))) return yes;
+  if (p.id === v.authorId || (approvesKind(p, kind) && coversReach(p, reach, kind))) return yes;
   return no("Only whoever started it, or an approver for its sites, can discard it");
 }
 
 /** Retiring takes a published SOP out of use (a draft that was never published is discarded instead). */
-export function canRetire(p: Actor, doc: Pick<LibraryDoc, "retiredAt" | "published">, reach: SiteId[]): Checked {
-  if (!canApprove(p)) return no("Only the owner or an operations manager can retire an SOP");
+export function canRetire(p: Actor, doc: Pick<LibraryDoc, "kind" | "retiredAt" | "published">, reach: SiteId[]): Checked {
+  if (!approvesKind(p, doc.kind)) return no(`Only ${approverWord(doc.kind)} can retire ${doc.kind === "sop" ? "an SOP" : "a recipe"}`);
   if (doc.retiredAt) return no("It's already retired");
   if (!doc.published) return no("It was never published: discard the draft instead");
-  if (!coversReach(p, reach)) return no("It covers a site you don't run, so the owner retires it");
+  if (!coversReach(p, reach, doc.kind)) return no("It covers a site you don't run, so the owner retires it");
   return yes;
 }
 
-export function canReinstate(p: Actor, doc: Pick<LibraryDoc, "retiredAt" | "published">, reach: SiteId[]): Checked {
-  if (!canApprove(p)) return no("Only the owner or an operations manager can bring an SOP back");
+export function canReinstate(p: Actor, doc: Pick<LibraryDoc, "kind" | "retiredAt" | "published">, reach: SiteId[]): Checked {
+  if (!approvesKind(p, doc.kind)) return no(`Only ${approverWord(doc.kind)} can bring ${doc.kind === "sop" ? "an SOP" : "a recipe"} back`);
   if (!doc.retiredAt) return no("It isn't retired");
   if (!doc.published) return no("It was never published");
-  if (!coversReach(p, reach)) return no("It covers a site you don't run, so the owner brings it back");
+  if (!coversReach(p, reach, doc.kind)) return no("It covers a site you don't run, so the owner brings it back");
   return yes;
 }
 
@@ -235,19 +244,34 @@ export function readyForReview(body: SopBody): Checked {
   return yes;
 }
 
-type WithPhotos = { steps: SopStep[]; photo?: Photo };
+type PhotoItem = { photo?: Photo };
+type WithPhotos = { steps: SopStep[]; photo?: Photo; ingredients?: PhotoItem[]; components?: PhotoItem[] };
 
-/** Photo ids used in a body (its steps' photos, and a recipe's finished photo), to check they were uploaded. */
-export const photoIds = (body: WithPhotos) => [...body.steps.flatMap((s) => (s.photo ? [s.photo.id] : [])), ...(body.photo ? [body.photo.id] : [])];
+/** Photo ids used in a body: its steps' photos, and a recipe's finished photo and ingredient (or component) pictures. */
+export const photoIds = (body: WithPhotos) => [
+  ...body.steps.flatMap((s) => (s.photo ? [s.photo.id] : [])), ...(body.photo ? [body.photo.id] : []),
+  ...[...(body.ingredients ?? []), ...(body.components ?? [])].flatMap((i) => (i.photo ? [i.photo.id] : [])),
+];
 
-/** The body without these photos (ones the owner erased): each step keeps its words, and a step left empty goes. */
+/**
+ * The body without these photos (ones the owner erased): each step keeps its words, and a step left empty goes; an
+ * ingredient keeps its line. A dish's labels stay (they show again on a new photo).
+ */
 export function dropPhotos<B extends WithPhotos>(body: B, gone: Set<string>): B {
   const steps = body.steps.flatMap((s): SopStep[] => {
     if (!s.photo || !gone.has(s.photo.id)) return [s];
     return s.text || s.warning ? [{ text: s.text, ...(s.warning ? { warning: s.warning } : {}) }] : [];
   });
+  const lines = <I extends PhotoItem>(items: I[]) => items.map((i) => {
+    if (!i.photo || !gone.has(i.photo.id)) return i;
+    const { photo: _, ...rest } = i;
+    void _;
+    return rest as I;
+  });
   const out = { ...body, steps };
   if (out.photo && gone.has(out.photo.id)) delete out.photo;
+  if (out.ingredients) out.ingredients = lines(out.ingredients);
+  if (out.components) out.components = lines(out.components);
   return out;
 }
 
@@ -316,11 +340,11 @@ export function readStats(sections: Area[], versionId: string, people: Pick<Pers
 }
 
 /** What's waiting for this person in the library: versions they can approve, and their own drafts sent back. */
-export function libraryToDo(p: Actor, docs: Pick<LibraryDoc, "open" | "published" | "retiredAt">[], sites: Sited[]): number {
+export function libraryToDo(p: Actor, docs: Pick<LibraryDoc, "kind" | "open" | "published" | "retiredAt">[], sites: Sited[]): number {
   return docs.filter((d) => {
     const v = d.open;
     if (!v || d.retiredAt) return false;
-    if (v.status === "in_review") return canReview(p, v, docReach(d, sites)).ok;
+    if (v.status === "in_review") return canReview(p, v, docReach(d, sites), d.kind).ok;
     return v.status === "draft" && !!v.reviewNote && v.authorId === p.id;
   }).length;
 }

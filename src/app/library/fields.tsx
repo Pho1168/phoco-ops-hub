@@ -55,14 +55,14 @@ export function moved<T>(list: T[], i: number, d: -1 | 1): T[] {
 }
 
 /** A photo in an editor: removed by the owner, or the picture. */
-function Thumb({ photo, label, erased }: { photo: Photo; label: string; erased: boolean }) {
+export function Thumb({ photo, label, erased, small }: { photo: Photo; label: string; erased: boolean; small?: boolean }) {
   return erased
-    ? <div className="photo-removed" role="img" aria-label={`${label}: removed`}>Photo removed</div>
-    : <Image className="thumb" src={`/api/media/${photo.id}`} width={photo.w} height={photo.h} alt={label} unoptimized />;
+    ? <div className={`photo-removed ${small ? "small" : ""}`} role="img" aria-label={`${label}: removed`}>{small ? "Removed" : "Photo removed"}</div>
+    : <Image className={`thumb ${small ? "small" : ""}`} src={`/api/media/${photo.id}`} width={photo.w} height={photo.h} alt={label} unoptimized />;
 }
 
 /** "Add photo" / "Change photo": picks or takes a photo and uploads it. */
-function PhotoButton({ label, has, uploading, onFile }: { label: string; has: boolean; uploading?: boolean; onFile: (f: File | undefined) => void }) {
+export function PhotoButton({ label, has, uploading, onFile }: { label: string; has: boolean; uploading?: boolean; onFile: (f: File | undefined) => void }) {
   return (
     <label className="btn ghost small" style={{ gap: 8, cursor: uploading ? "progress" : "pointer" }}>
       <Icon name="camera" />{uploading ? "Uploading…" : has ? "Change photo" : "Add photo"}

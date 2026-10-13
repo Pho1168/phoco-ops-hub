@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALLERGEN_KEYS, allergenAlert, allergenAlerts, allergenChanges, allergenMatrix, alertStats, amountHint, cleanRecipe, dishesAtOdds, dishWarnings, factorFor, fitFor, formatQty,
-  inUnit, parseAmount, recipeReady, scaleQty, seesRecipes, unanswered, type Allergens, type DishBody, type PrepBody, type RecipeInput,
+  cardPanels, ingredientKey, ingredientPhotos, inUnit, noteLines, parseAmount, recipeReady, scaleQty, seesRecipes, unanswered, type Allergens, type DishBody, type PrepBody, type RecipeInput,
 } from "./recipes";
 import { codePrefix, dropPhotos, photoIds, type LibraryDoc } from "./library";
 import type { Person, Site, SiteAccess } from "./types";
@@ -88,6 +88,56 @@ describe("recipes: content", () => {
     const body = { steps: [{ text: "a", photo: { ...PHOTO, id: "9f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b" } }], photo: PHOTO };
     expect(photoIds(body)).toEqual(["9f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b", PHOTO.id]);
     expect(dropPhotos(body, new Set([PHOTO.id]))).toEqual({ steps: body.steps });
+  });
+});
+
+describe("recipes: the card (pictures, labels, standards)", () => {
+  const P2 = { ...PHOTO, id: "2f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b" }, P3 = { ...PHOTO, id: "3f0c8e3a-1c2d-4e5f-9a0b-1c2d3e4f5a6b" };
+  it("an ingredient or component can carry a picture; a line with only a picture still needs a name", () => {
+    const r = cleanRecipe("prep", prepInput({ items: [{ qty: 1, unit: "kg", name: "Sugar", note: "", photo: P2 }] }));
+    expect(r.ok && (r.value.body as PrepBody).ingredients).toEqual([{ qty: 1, unit: "kg", name: "Sugar", photo: P2 }]);
+    expect(cleanRecipe("prep", prepInput({ items: [{ qty: null, unit: "", name: "", note: "", photo: P2 }] }))).toMatchObject({ ok: false, error: "Ingredient 1 needs a name" });
+    expect(cleanRecipe("dish", dishInput({ items: [{ qty: 1, unit: "piece", name: "Baguette", note: "", photo: { id: "nope", w: 1, h: 1 } }] })))
+      .toMatchObject({ ok: false, error: "Component 1: the picture didn't upload properly. Add it again" });
+  });
+  it("a dish's labels sit on its photo (percent across and down) and its serving standards are short checks", () => {
+    const r = cleanRecipe("dish", dishInput({
+      callouts: [{ x: 12.345, y: 40, text: "  Protein   (generous) " }, { x: 50, y: 50, text: "  " }], standards: [" NOT over-burnt ", "", "Full, neat and consistent every time"],
+    }));
+    expect(r.ok && (r.value.body as DishBody).callouts).toEqual([{ x: 12.3, y: 40, text: "Protein (generous)" }]);
+    expect(r.ok && (r.value.body as DishBody).standards).toEqual(["NOT over-burnt", "Full, neat and consistent every time"]);
+    const none = cleanRecipe("dish", dishInput());
+    expect(none.ok && "callouts" in none.value.body).toBe(false);
+    expect(cleanRecipe("dish", dishInput({ callouts: [{ x: 120, y: 5, text: "Off" }] }))).toMatchObject({ ok: false, error: "A label isn't on the photo. Place it again" });
+    expect(cleanRecipe("dish", dishInput({ callouts: Array.from({ length: 9 }, (_, i) => ({ x: i, y: i, text: `L${i}` })) }))).toMatchObject({ ok: false });
+    expect(cleanRecipe("dish", dishInput({ standards: ["x".repeat(81)] }))).toMatchObject({ ok: false });
+    expect(cleanRecipe("prep", prepInput({ standards: ["Clean"] }))).toMatchObject({ ok: false, error: "Labels and serving standards are for dishes" });
+  });
+  it("ingredient pictures count as used, and one the owner erases is dropped (the line stays)", () => {
+    const body: Pick<PrepBody, "steps" | "ingredients"> = { steps: [{ text: "a" }], ingredients: [{ unit: "kg", name: "Sugar", photo: P2 }, { unit: "", name: "Water" }] };
+    expect(photoIds(body)).toEqual([P2.id]);
+    expect(dropPhotos(body, new Set([P2.id])).ingredients).toEqual([{ unit: "kg", name: "Sugar" }, { unit: "", name: "Water" }]);
+    expect(photoIds({ steps: [], components: [{ unit: "", name: "Baguette", photo: P3 }] } as Pick<DishBody, "steps" | "components">)).toEqual([P3.id]);
+  });
+  it("a picture of an ingredient is offered wherever that ingredient appears, whatever the case or plural", () => {
+    const same = (a: string, b: string) => ingredientKey(a) === ingredientKey(b);
+    expect([same("Sugar", " sugar "), same("Birds eye chillies", "bird's eye chilli"), same("Garlic (minced)", "garlic"), same("Tomatoes", "tomato"),
+      same("Berries", "berry"), same("Eggs", "egg"), same("Glass noodles", "glass noodle")]).toEqual([true, true, true, true, true, true, true]);
+    expect([same("Sugar", "Salt"), same("Fish sauce", "Soy sauce")]).toEqual([false, false]);
+    const older = { ...(cleanRecipe("prep", prepInput()) as { ok: true; value: { body: PrepBody } }).value.body, ingredients: [{ qty: 1, unit: "kg", name: "Sugar", photo: P2 }] };
+    const newer = { ...older, ingredients: [{ qty: 6, unit: "g", name: "sugar", photo: P3 }, { qty: 2, unit: "piece", name: "Birds eye chilli", photo: PHOTO }] };
+    const found = ingredientPhotos([older, newer] as PrepBody[]);
+    expect(found.get("sugar")?.photo).toEqual(P3);
+    expect(found.get(ingredientKey("Birds eye chilli"))?.photo).toEqual(PHOTO);
+    expect(ingredientPhotos([older, newer] as PrepBody[], new Set([P3.id])).get("sugar")?.photo).toEqual(P2); // an erased photo is never offered: the one before it is
+    expect(ingredientPhotos([older] as PrepBody[], new Set([P2.id])).get("sugar")).toBeUndefined();
+  });
+  it("a long method goes over two panels; notes become short checks", () => {
+    expect(cardPanels([1, 2, 3], 12)).toEqual({ first: [1, 2, 3], more: [] });
+    expect(cardPanels(Array.from({ length: 14 }, (_, i) => i + 1), 12)).toEqual({ first: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], more: [13, 14] });
+    expect(noteLines("- Keep refrigerated\n• Use within 7–10 days\n\n")).toEqual(["Keep refrigerated", "Use within 7–10 days"]);
+    expect(noteLines("Use kettle water. Stir well. Keep refrigerated.")).toEqual(["Use kettle water.", "Stir well.", "Keep refrigerated."]);
+    expect(noteLines("")).toEqual([]);
   });
 });
 

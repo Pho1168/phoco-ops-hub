@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canApprove, canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw, changeFor, cleanSop, coversReach, defaultReviewBy, docReach, dropPhotos, imageKind,
+  approvesKind, canApprove, canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw, changeFor, cleanSop, coversReach, defaultReviewBy, docReach, dropPhotos, imageKind,
   isContributor, jpegSize, libraryToDo, mustRead, nextCode, reachedSites, readStats, readsAt, readyForReview, reviewState, sopPrefix, validReviewBy, versionLabel,
   type LibraryDoc, type LibraryVersion, type SopBody,
 } from "./library";
@@ -42,14 +42,14 @@ describe("library: who writes and who approves", () => {
   });
   it("nobody approves a version they wrote, changed or sent, except an owner", () => {
     const mine = version({ status: "in_review", authorId: "ops", submittedBy: "ops", contributors: ["ops"] });
-    expect(canReview(ops, mine, ALL)).toMatchObject({ ok: false, error: "You wrote or changed this version, so another approver checks it" });
-    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "ops" }), ALL)).toMatchObject({ ok: false });
+    expect(canReview(ops, mine, ALL, "sop")).toMatchObject({ ok: false, error: "You wrote or changed this version, so another approver checks it" });
+    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "ops" }), ALL, "sop")).toMatchObject({ ok: false });
     // Changed it along the way (saved the draft), even if someone else wrote and sent it.
-    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "mgr", contributors: ["mgr", "ops"] }), ALL)).toMatchObject({ ok: false });
-    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "mgr", contributors: ["mgr"] }), ALL)).toEqual({ ok: true });
-    expect(canReview(owner, version({ status: "in_review", authorId: "own", submittedBy: "own", contributors: ["own"] }), ALL)).toEqual({ ok: true });
-    expect(canReview(mgr, version({ status: "in_review", authorId: "ops", submittedBy: "ops" }), ALL)).toMatchObject({ ok: false, error: "Only the owner or an operations manager can approve" });
-    expect(canReview(owner, version({ status: "draft" }), ALL)).toMatchObject({ ok: false, error: "It isn't waiting for approval" });
+    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "mgr", contributors: ["mgr", "ops"] }), ALL, "sop")).toMatchObject({ ok: false });
+    expect(canReview(ops, version({ status: "in_review", authorId: "mgr", submittedBy: "mgr", contributors: ["mgr"] }), ALL, "sop")).toEqual({ ok: true });
+    expect(canReview(owner, version({ status: "in_review", authorId: "own", submittedBy: "own", contributors: ["own"] }), ALL, "sop")).toEqual({ ok: true });
+    expect(canReview(mgr, version({ status: "in_review", authorId: "ops", submittedBy: "ops" }), ALL, "sop")).toMatchObject({ ok: false, error: "Only the owner or an operations manager can approve" });
+    expect(canReview(owner, version({ status: "draft" }), ALL, "sop")).toMatchObject({ ok: false, error: "It isn't waiting for approval" });
     expect([isContributor(ops, version({ contributors: ["ops"] })), isContributor(ops, version({ submittedBy: "ops" })), isContributor(ops, version())]).toEqual([true, true, false]);
   });
   it("an operations manager approves only what reaches sites they run; the owner approves the rest", () => {
@@ -57,19 +57,19 @@ describe("library: who writes and who approves", () => {
     expect(reachedSites(["PROD"], SITES)).toEqual(["WEM"]);
     expect(reachedSites([], SITES)).toEqual(["EAS", "WEM"]); // Sydenham is closed
     const sent = (sections: SopBody["sections"]) => version({ status: "in_review", body: { sections, purpose: "p", steps: [{ text: "s" }] } });
-    expect(canReview(easOps, sent(["BOH"]), reachedSites(["BOH"], SITES))).toEqual({ ok: true });
-    expect(canReview(easOps, sent(["PROD"]), reachedSites(["PROD"], SITES))).toMatchObject({ ok: false, error: "It covers a site you don't run, so the owner approves it" });
-    expect(canReview(easOps, sent([]), ALL)).toMatchObject({ ok: false });
-    expect(canReview(ops, sent([]), ALL)).toEqual({ ok: true });
-    expect(canReview(owner, sent(["PROD"]), reachedSites(["PROD"], SITES))).toEqual({ ok: true });
-    expect([coversReach(owner, ALL), coversReach(ops, ALL), coversReach(easOps, ["EAS"]), coversReach(easOps, ALL), coversReach(mgr, [])]).toEqual([true, true, true, false, false]);
+    expect(canReview(easOps, sent(["BOH"]), reachedSites(["BOH"], SITES), "sop")).toEqual({ ok: true });
+    expect(canReview(easOps, sent(["PROD"]), reachedSites(["PROD"], SITES), "sop")).toMatchObject({ ok: false, error: "It covers a site you don't run, so the owner approves it" });
+    expect(canReview(easOps, sent([]), ALL, "sop")).toMatchObject({ ok: false });
+    expect(canReview(ops, sent([]), ALL, "sop")).toEqual({ ok: true });
+    expect(canReview(owner, sent(["PROD"]), reachedSites(["PROD"], SITES), "sop")).toEqual({ ok: true });
+    expect([coversReach(owner, ALL, "sop"), coversReach(ops, ALL, "sop"), coversReach(easOps, ["EAS"], "sop"), coversReach(easOps, ALL, "sop"), coversReach(mgr, [], "sop")]).toEqual([true, true, true, false, false]);
   });
   it("narrowing who an SOP is for still counts the sites it would be taken from", () => {
     const body = (sections: SopBody["sections"]) => ({ sections, purpose: "p", steps: [{ text: "s" }] });
     // A production SOP (Wembley) re-scoped to Back of house (Eastcote): it covers both until published.
     const rescoped = doc({ published: version({ status: "published", body: body(["PROD"]) }), open: version({ status: "in_review", body: body(["BOH"]) }) });
     expect(docReach(rescoped, SITES)).toEqual(["WEM", "EAS"]);
-    expect(canReview(easOps, rescoped.open!, docReach(rescoped, SITES))).toMatchObject({ ok: false });
+    expect(canReview(easOps, rescoped.open!, docReach(rescoped, SITES), "sop")).toMatchObject({ ok: false });
     expect(docReach(doc({ open: version({ body: body(["BOH"]) }) }), SITES)).toEqual(["EAS"]);
     expect(docReach(doc(), SITES)).toEqual([]);
   });
@@ -82,20 +82,20 @@ describe("library: who writes and who approves", () => {
   it("taking back: whoever wrote or sent it (if they still write SOPs), or an approver for its sites", () => {
     const sent = version({ status: "in_review", authorId: "mgr", submittedBy: "mgr" });
     const EAS = ["EAS" as const], WEM = ["WEM" as const];
-    expect(canWithdraw(mgr, sent, EAS)).toEqual({ ok: true });
-    expect(canWithdraw(ops, sent, EAS)).toEqual({ ok: true });
-    expect(canWithdraw(wemMgr, sent, EAS)).toMatchObject({ ok: false });
-    expect(canWithdraw({ ...mgr, access: [at("EAS", "staff", ["BOH"])] }, sent, EAS)).toMatchObject({ ok: false }); // no longer a manager
-    expect(canWithdraw(easOps, sent, WEM)).toMatchObject({ ok: false, error: "Only whoever sent it, or an approver for its sites, can take it back" });
-    expect(canWithdraw(easOps, version({ status: "in_review", authorId: "opsE" }), WEM)).toEqual({ ok: true }); // their own
+    expect(canWithdraw(mgr, sent, EAS, "sop")).toEqual({ ok: true });
+    expect(canWithdraw(ops, sent, EAS, "sop")).toEqual({ ok: true });
+    expect(canWithdraw(wemMgr, sent, EAS, "sop")).toMatchObject({ ok: false });
+    expect(canWithdraw({ ...mgr, access: [at("EAS", "staff", ["BOH"])] }, sent, EAS, "sop")).toMatchObject({ ok: false }); // no longer a manager
+    expect(canWithdraw(easOps, sent, WEM, "sop")).toMatchObject({ ok: false, error: "Only whoever sent it, or an approver for its sites, can take it back" });
+    expect(canWithdraw(easOps, version({ status: "in_review", authorId: "opsE" }), WEM, "sop")).toEqual({ ok: true }); // their own
   });
   it("discarding a draft: whoever started it, or an approver for its sites", () => {
     const EAS = ["EAS" as const], WEM = ["WEM" as const];
-    expect(canDiscard(mgr, version(), EAS)).toEqual({ ok: true });
-    expect(canDiscard(wemMgr, version(), EAS)).toMatchObject({ ok: false });
-    expect(canDiscard(ops, version(), EAS)).toEqual({ ok: true });
-    expect(canDiscard(easOps, version(), WEM)).toMatchObject({ ok: false });
-    expect(canDiscard({ ...mgr, status: "frozen" }, version(), EAS)).toMatchObject({ ok: false });
+    expect(canDiscard(mgr, version(), EAS, "sop")).toEqual({ ok: true });
+    expect(canDiscard(wemMgr, version(), EAS, "sop")).toMatchObject({ ok: false });
+    expect(canDiscard(ops, version(), EAS, "sop")).toEqual({ ok: true });
+    expect(canDiscard(easOps, version(), WEM, "sop")).toMatchObject({ ok: false });
+    expect(canDiscard({ ...mgr, status: "frozen" }, version(), EAS, "sop")).toMatchObject({ ok: false });
   });
   it("retiring a published SOP and bringing it back: approvers for every site it covers", () => {
     const EAS = ["EAS" as const], WEM = ["WEM" as const];
@@ -109,6 +109,32 @@ describe("library: who writes and who approves", () => {
     expect(canReinstate(ops, doc({ retiredAt: 5, published: version({ status: "published" }) }), EAS)).toEqual({ ok: true });
     expect(canReinstate(easOps, doc({ retiredAt: 5, published: version({ status: "published" }) }), WEM)).toMatchObject({ ok: false });
     expect(canReinstate(ops, doc({ retiredAt: 5 }), EAS)).toMatchObject({ ok: false, error: "It was never published" });
+  });
+  it("recipes and dishes: only the owner approves, sends back, retires or brings them back; operations managers still write and send", () => {
+    const EAS = ["EAS" as const];
+    const sent = version({ status: "in_review", authorId: "mgr", submittedBy: "mgr" });
+    for (const kind of ["prep", "dish"] as const) {
+      expect([owner, ops, easOps, mgr].map((p) => approvesKind(p, kind))).toEqual([true, false, false, false]);
+      expect(canReview(ops, sent, EAS, kind)).toMatchObject({ ok: false, error: "Only the owner can approve" });
+      expect(canReview(owner, sent, EAS, kind)).toEqual({ ok: true });
+      expect(canReview(owner, version({ status: "in_review", authorId: "own", submittedBy: "own", contributors: ["own"] }), EAS, kind)).toEqual({ ok: true });
+      expect(coversReach(ops, EAS, kind)).toBe(false);
+      // Taking back or discarding someone else's: the owner only; their own: anyone who still writes.
+      expect(canWithdraw(ops, sent, EAS, kind)).toMatchObject({ ok: false });
+      expect(canWithdraw(mgr, sent, EAS, kind)).toEqual({ ok: true });
+      expect(canWithdraw(owner, sent, EAS, kind)).toEqual({ ok: true });
+      expect(canDiscard(ops, version(), EAS, kind)).toMatchObject({ ok: false });
+      expect(canDiscard(ops, version({ authorId: "ops" }), EAS, kind)).toEqual({ ok: true });
+      const live = doc({ kind, published: version({ status: "published" }) });
+      expect(canRetire(ops, live, EAS)).toMatchObject({ ok: false, error: "Only the owner can retire a recipe" });
+      expect(canRetire(owner, live, EAS)).toEqual({ ok: true });
+      expect(canReinstate(ops, { ...live, retiredAt: 5 }, EAS)).toMatchObject({ ok: false, error: "Only the owner can bring a recipe back" });
+      expect(canDraft(ops) && canEditDraft(ops, version()).ok).toBe(true);
+    }
+    // SOPs are unchanged: operations managers approve them for their sites.
+    expect(approvesKind(ops, "sop")).toBe(true);
+    expect(libraryToDo(ops, [doc({ kind: "dish", open: sent })], SITES)).toBe(0);
+    expect(libraryToDo(owner, [doc({ kind: "dish", open: sent })], SITES)).toBe(1);
   });
 });
 

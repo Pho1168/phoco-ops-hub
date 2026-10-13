@@ -60,14 +60,8 @@ export async function RecipeDoc({ ctx, doc, wanted }: { ctx: Ctx; doc: LibraryDo
   return (
     <>
       <TopBar ctx={ctx} />
-      <main>
-        <Link href="/library/recipes" className="muted" style={{ fontWeight: 600 }}>← Recipes</Link>
-        <div className="stack" style={{ gap: 6 }}>
-          <div className="eyebrow"><span className="lib-code">{doc.code}</span> · {KIND_TEXT[kind]} · version {v.version}{v.change && v.change !== "new" ? ` · ${CHANGE_TEXT[v.change]}` : ""}</div>
-          <h1 className="h-display">{v.title}</h1>
-          <div className="muted">{v.body.category ? `${v.body.category} · ` : ""}{kind === "prep" ? "Made by" : "Built by"}: {who(v.body.sections)} · approved by {v.approvedByName} on {dayMonthYearAt(v.publishedAt!)}
-            {writer && v.reviewBy ? ` · review by ${dayMonthYear(v.reviewBy)}` : ""}</div>
-        </div>
+      <main className="recipe-page">
+        <Link href="/library/recipes" className="muted rc-back" style={{ fontWeight: 600 }}>← Recipes</Link>
 
         {doc.retiredAt && <div className="alert bad" role="status"><div className="grow"><div className="strong">Retired on {dayMonthYearAt(doc.retiredAt)}</div>{doc.retiredNote && <div style={{ fontSize: 13 }}>{doc.retiredNote}</div>}</div></div>}
         {!doc.retiredAt && !isCurrent && (
@@ -88,7 +82,10 @@ export async function RecipeDoc({ ctx, doc, wanted }: { ctx: Ctx; doc: LibraryDo
           <div className="alert bad" role="status"><div className="grow stack" style={{ gap: 4 }}><div className="strong">Needs a new version</div>
             {warnings.map((w) => <div key={w} style={{ fontSize: 14 }}>{w}</div>)}</div></div>
         )}
-        <RecipeBodyView kind={kind} title={v.title} body={v.body} links={links} gone={gone} eraseIn={eraseIn} stepMode={isCurrent} />
+        <RecipeBodyView kind={kind} title={v.title} code={doc.code} version={v.version} body={v.body} links={links} gone={gone} eraseIn={eraseIn} stepMode={isCurrent} />
+        <div className="muted rc-after">{KIND_TEXT[kind]} · version {v.version}{v.change && v.change !== "new" ? ` (${CHANGE_TEXT[v.change].toLowerCase()})` : ""} ·{" "}
+          {kind === "prep" ? "made by" : "built by"} {who(v.body.sections).toLowerCase()} · approved by {v.approvedByName} on {dayMonthYearAt(v.publishedAt!)}
+          {writer && v.reviewBy ? ` · review by ${dayMonthYear(v.reviewBy)}` : ""}</div>
 
         {stats.length > 0 && (
           <section className="card stack" aria-label="Allergen change confirmed">

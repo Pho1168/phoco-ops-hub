@@ -53,7 +53,7 @@ export default async function Library() {
   /** For whoever looks: approve it, or who does. */
   const waitingChip = (d: LibraryDoc) => {
     const v = d.open!;
-    if (approver && canReview(ctx.person, v, docReach(d, sites)).ok) return { text: d.published ? "New version" : "New SOP", tone: "late" };
+    if (approver && canReview(ctx.person, v, docReach(d, sites), d.kind).ok) return { text: d.published ? "New version" : "New SOP", tone: "late" };
     if (approver && isContributor(ctx.person, v)) return { text: "Another approver checks it", tone: "" };
     if (approver) return { text: "The owner approves it", tone: "" };
     return { text: "Waiting", tone: "" };

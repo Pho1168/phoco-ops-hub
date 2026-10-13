@@ -67,9 +67,11 @@ export function DraftForm<S>({ kind, mode, docId, versionId, rev: loadedRev, pub
   // Changes left unsaved last time (in this tab): offer to put them back. Checked once, against what was loaded.
   const loaded = useRef({ initial, fingerprint });
   useEffect(() => {
-    const b = readBackup<S>(key);
-    if (!b) return;
+    const kept = readBackup<S>(key);
+    if (!kept) return;
     const { initial: first, fingerprint: print } = loaded.current;
+    // Kept before the editor had a field (say, a dish's labels): that field starts as loaded.
+    const b = { ...kept, state: { ...(first as object), ...(kept.state as object) } as S };
     if (print(b.state) === print(first)) dropBackup(key); else setRestore(b);
   }, [key]);
 

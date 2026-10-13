@@ -1473,7 +1473,7 @@ const RecipeZ = z.object({
   sections: z.array(z.string().max(10)).max(3),
   category: z.string().max(200),
   items: z.array(z.object({ qty: z.number().finite().nullable(), unit: z.string().max(40), name: z.string().max(300), note: z.string().max(400),
-    prep: z.string().max(64).nullable().optional() })).max(120),
+    prep: z.string().max(64).nullable().optional(), photo: PhotoZ.nullable().optional() })).max(120),
   steps: z.array(StepZ).max(60),
   photo: PhotoZ.nullable().optional(),
   allergens: z.record(z.string().max(20), z.string().max(20)).refine((r) => Object.keys(r).length <= 20),
@@ -1481,6 +1481,8 @@ const RecipeZ = z.object({
   storage: z.string().max(1000).optional(),
   shelfLife: z.object({ qty: z.number().finite().nullable(), unit: z.string().max(10) }).nullable().optional(),
   notes: z.string().max(3000).optional(),
+  callouts: z.array(z.object({ x: z.number().finite(), y: z.number().finite(), text: z.string().max(200) })).max(20).optional(),
+  standards: z.array(z.string().max(400)).max(20).optional(),
   modifications: z.string().max(3000).optional(),
   dietary: z.array(z.string().max(20)).max(5).optional(),
 });
@@ -1619,9 +1621,9 @@ export async function moveDraft(versionId: string, move: string, rev: number, no
   if (!why.success) return { ok: false, error: why.error.issues[0]?.message ?? "Check the note" };
   const reach = docReach(doc, await db.sites());
   const can = m === "submit" ? canEditDraft(ctx.person, v)
-    : m === "withdraw" ? canTakeBack(ctx.person, v, reach)
-    : m === "send_back" ? canReview(ctx.person, v, reach)
-    : canDiscard(ctx.person, v, reach);
+    : m === "withdraw" ? canTakeBack(ctx.person, v, reach, doc.kind)
+    : m === "send_back" ? canReview(ctx.person, v, reach, doc.kind)
+    : canDiscard(ctx.person, v, reach, doc.kind);
   if (!can.ok) return can;
   if (m === "submit") {
     const ready = readyFor(doc.kind, v.body);
@@ -1647,7 +1649,7 @@ export async function publishVersion(versionId: string, input: unknown): Promise
   const v = await db.libraryVersion(LibIdZ.parse(versionId));
   const doc = v && (await db.libraryDoc(v.docId));
   if (!v || !doc) return { ok: false, error: "That version isn't there any more" };
-  const can = canReview(ctx.person, v, docReach(doc, await db.sites()));
+  const can = canReview(ctx.person, v, docReach(doc, await db.sites()), doc.kind);
   if (!can.ok) return can;
   if (doc.retiredAt) return { ok: false, error: "It's retired. Bring it back first" };
   const ready = readyFor(doc.kind, v.body);

@@ -1,20 +1,26 @@
 "use client";
 
+import Image from "next/image";
+import { useState } from "react";
 import { SOP_LIMITS, type LibraryBody, type Photo } from "@/lib/domain/library";
 import {
-  ALLERGENS, amountHint, DIETS, dishWarnings, MARK_TEXT, parseAmount, RECIPE_LIMITS, UNITS, unanswered,
+  ALLERGENS, amountHint, DIETS, dishWarnings, ingredientKey, MARK_TEXT, parseAmount, RECIPE_LIMITS, UNITS, unanswered,
   type Allergens, type DishBody, type Item, type Mark, type PrepBody, type RecipeKind,
 } from "@/lib/domain/recipes";
 import { DraftForm } from "./DraftForm";
-import { editSteps, moved, newKey, PhotoField, stepsInput, stepsPrint, StepsField, type EditStep } from "./fields";
+import type { Picture } from "./editor-lists";
+import { editSteps, moved, newKey, PhotoButton, PhotoField, stepsInput, stepsPrint, StepsField, Thumb, upload, type EditStep } from "./fields";
 
-interface EditItem { key: string; qty: string; unit: string; name: string; note: string; prep: string }
+interface EditItem { key: string; qty: string; unit: string; name: string; note: string; prep: string; photo?: Photo; uploading?: boolean }
+interface EditCallout { key: string; x: number; y: number; text: string }
 interface RecipeState {
   title: string; sections: string[]; category: string; items: EditItem[]; steps: EditStep[];
   /** The finished photo; `uploading` (like a step's) isn't kept on the device. */
   finished: { photo?: Photo; uploading?: boolean }; allergens: Record<string, string>;
   makesQty: string; makesUnit: string; storage: string; shelfQty: string; shelfUnit: "hours" | "days"; notes: string;
   modifications: string; dietary: string[];
+  /** Dishes: labels on the photo and the serving standard. */
+  callouts: EditCallout[]; standards: { key: string; text: string }[];
 }
 /** A prep recipe the dish can link to (retired ones only show if a component already links to them). */
 export interface PrepOption { id: string; code: string; title: string; allergens: Allergens; retired: boolean }
@@ -22,7 +28,7 @@ export interface PrepOption { id: string; code: string; title: string; allergens
 const blankItem = (): EditItem => ({ key: newKey(), qty: "", unit: "", name: "", note: "", prep: "" });
 const qtyText = (n: number | undefined) => (n === undefined ? "" : String(n));
 const editItems = (items: Item[]): EditItem[] => (items.length
-  ? items.map((i) => ({ key: newKey(), qty: qtyText(i.qty), unit: i.unit, name: i.name, note: i.note ?? "", prep: i.prep ?? "" }))
+  ? items.map((i) => ({ key: newKey(), qty: qtyText(i.qty), unit: i.unit, name: i.name, note: i.note ?? "", prep: i.prep ?? "", photo: i.photo }))
   : [blankItem(), blankItem(), blankItem()]);
 
 function fromBody(kind: RecipeKind, title: string, body: PrepBody | DishBody): RecipeState {
@@ -33,26 +39,110 @@ function fromBody(kind: RecipeKind, title: string, body: PrepBody | DishBody): R
     makesQty: qtyText(prep?.makes?.qty), makesUnit: prep?.makes?.unit ?? "", storage: prep?.storage ?? "",
     shelfQty: qtyText(prep?.shelfLife?.qty), shelfUnit: prep?.shelfLife?.unit ?? "days", notes: prep?.notes ?? "",
     modifications: dish?.modifications ?? "", dietary: dish?.dietary ?? [],
+    callouts: (dish?.callouts ?? []).map((c) => ({ key: newKey(), ...c })),
+    standards: (dish?.standards?.length ? dish.standards : kind === "dish" ? [""] : []).map((text) => ({ key: newKey(), text })),
   };
 }
 /** Typed numbers: "" is none; "1,5" is 1.5; anything that isn't clearly a number ("1,500", "abc") is sent as -1, so the server refuses it. */
 const num = (t: string) => { const a = parseAmount(t); return typeof a === "string" ? -1 : a; };
 const toInput = (kind: RecipeKind) => (s: RecipeState) => ({
   title: s.title, sections: s.sections, category: s.category,
-  items: s.items.map((i) => ({ qty: num(i.qty), unit: i.unit, name: i.name, note: i.note, prep: kind === "dish" && i.prep ? i.prep : null })),
+  items: s.items.map((i) => ({ qty: num(i.qty), unit: i.unit, name: i.name, note: i.note, prep: kind === "dish" && i.prep ? i.prep : null, photo: i.photo ?? null })),
   steps: stepsInput(s.steps), photo: s.finished.photo ?? null, allergens: s.allergens,
   ...(kind === "prep"
     ? { makes: { qty: num(s.makesQty), unit: s.makesUnit }, storage: s.storage, shelfLife: { qty: num(s.shelfQty), unit: s.shelfUnit }, notes: s.notes }
-    : { modifications: s.modifications, dietary: s.dietary }),
+    : { modifications: s.modifications, dietary: s.dietary, callouts: s.callouts.map(({ x, y, text }) => ({ x, y, text })), standards: s.standards.map((t) => t.text) }),
 });
 const fingerprint = (s: RecipeState) => JSON.stringify([s.title.trim(), [...s.sections].sort(), s.category.trim(),
-  s.items.map((i) => [i.qty.trim(), i.unit.trim(), i.name.trim(), i.note.trim(), i.prep]).filter((i) => i.some(Boolean)), stepsPrint(s.steps), s.finished.photo?.id ?? "",
+  s.items.map((i) => [i.qty.trim(), i.unit.trim(), i.name.trim(), i.note.trim(), i.prep, i.photo?.id ?? ""]).filter((i) => i.some(Boolean)), stepsPrint(s.steps), s.finished.photo?.id ?? "",
   Object.entries(s.allergens).filter(([, v]) => v).sort(), s.makesQty.trim(), s.makesUnit.trim(), s.storage.trim(), s.shelfQty.trim(), s.shelfUnit, s.notes.trim(),
-  s.modifications.trim(), [...s.dietary].sort()]);
-const busy = (s: RecipeState) => !!s.finished.uploading || s.steps.some((x) => x.uploading);
+  s.modifications.trim(), [...s.dietary].sort(), s.callouts.filter((c) => c.text.trim()).map((c) => [c.x, c.y, c.text.trim()]),
+  s.standards.map((t) => t.text.trim()).filter(Boolean)]);
+const busy = (s: RecipeState) => !!s.finished.uploading || s.steps.some((x) => x.uploading) || s.items.some((x) => x.uploading);
+
+/**
+ * An ingredient's picture for its tile on the card: one already taken for the same ingredient (offered by name, or
+ * picked from the list), or a new one.
+ */
+function ItemPicture({ it, label, pictures, erased, patch, setErr }: {
+  it: EditItem; label: string; pictures: Picture[]; erased: string[]; patch: (p: Partial<EditItem>) => void; setErr: (e: string) => void;
+}) {
+  const key = ingredientKey(it.name);
+  const match = key ? pictures.find((p) => p.key === key && p.photo.id !== it.photo?.id) : undefined;
+  const add = async (file: File | undefined) => {
+    if (!file) return;
+    setErr("");
+    patch({ uploading: true });
+    try { patch({ photo: await upload(file), uploading: false }); } catch (e) {
+      patch({ uploading: false });
+      setErr(e instanceof Error ? e.message : "The picture didn't upload. Try again");
+    }
+  };
+  return (
+    <div className="item-pic row wrap" style={{ gap: 8 }}>
+      {it.photo ? <Thumb photo={it.photo} label={label} erased={erased.includes(it.photo.id)} small /> : <span className="pic-empty" aria-hidden="true" />}
+      {!it.photo && match && (
+        <button type="button" className="btn ghost small" onClick={() => patch({ photo: match.photo })}>
+          <Image className="thumb tiny" src={`/api/media/${match.photo.id}`} width={match.photo.w} height={match.photo.h} alt="" unoptimized />
+          Use the {match.name.toLowerCase()} picture</button>
+      )}
+      {pictures.length > 0 && (
+        <select className="txt pic-pick" aria-label={`Saved picture for ${label}`} value=""
+          onChange={(e) => { const p = pictures.find((x) => x.photo.id === e.target.value); if (p) patch({ photo: p.photo }); }}>
+          <option value="">{it.photo ? "Other saved picture" : "Saved pictures"}</option>
+          {pictures.map((p) => <option key={p.photo.id} value={p.photo.id}>{p.name}</option>)}
+        </select>
+      )}
+      <PhotoButton label={`New picture for ${label}`} has={!!it.photo} uploading={it.uploading} onFile={(f) => void add(f)} />
+      {it.photo && <button type="button" className="btn ghost small" onClick={() => patch({ photo: undefined })}>Remove picture</button>}
+    </div>
+  );
+}
+
+/**
+ * A dish's photo with its labels: "Add a label", then tap where it points; "Move" and tap again. Labels show as
+ * numbered pins here and as captions on the card.
+ */
+function CalloutsField({ photo, callouts, set, erased }: { photo?: Photo; callouts: EditCallout[]; set: (fn: (c: EditCallout[]) => EditCallout[]) => void; erased: string[] }) {
+  const [placing, setPlacing] = useState<string | null>(null);
+  const patch = (key: string, p: Partial<EditCallout>) => set((cur) => cur.map((c) => (c.key === key ? { ...c, ...p } : c)));
+  if (!photo || erased.includes(photo.id)) return <span className="muted">Add a photo of the finished dish first, then pin labels to it (&ldquo;Protein (generous)&rdquo;).</span>;
+  const tap = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!placing) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)), y = Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100));
+    patch(placing, { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 });
+    setPlacing(null);
+  };
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <div className={`callout-place ${placing ? "placing" : ""}`} onClick={tap} role={placing ? "button" : undefined}
+        aria-label={placing ? "Tap where the label points" : undefined}>
+        <Image src={`/api/media/${photo.id}`} width={photo.w} height={photo.h} alt="The finished dish" unoptimized />
+        {callouts.map((c, i) => <span key={c.key} className="pin" style={{ left: `${c.x}%`, top: `${c.y}%` }} aria-hidden="true">{i + 1}</span>)}
+      </div>
+      {placing && <div className="alert" role="status"><div className="grow strong">Tap the photo where the label points</div>
+        <button type="button" className="btn ghost small" onClick={() => setPlacing(null)}>Cancel</button></div>}
+      {callouts.map((c, i) => (
+        <div key={c.key} className="row" style={{ gap: 6 }}>
+          <span className="pin static" aria-hidden="true">{i + 1}</span>
+          <input className="txt grow" aria-label={`Label ${i + 1}`} maxLength={RECIPE_LIMITS.callout} placeholder="e.g. Pickles & cucumber" value={c.text}
+            onChange={(e) => patch(c.key, { text: e.target.value })} />
+          <button type="button" className="btn ghost small" aria-label={`Move label ${i + 1}`} onClick={() => setPlacing(c.key)}>Move</button>
+          <button type="button" className="btn ghost small" aria-label={`Remove label ${i + 1}`} onClick={() => set((cur) => cur.filter((x) => x.key !== c.key))}>✕</button>
+        </div>
+      ))}
+      {callouts.length < RECIPE_LIMITS.callouts && (
+        <button type="button" className="btn ghost" onClick={() => { const key = newKey(); set((cur) => [...cur, { key, x: 50, y: 50, text: "" }]); setPlacing(key); }}>Add a label</button>
+      )}
+    </div>
+  );
+}
 
 /** Ingredients (prep) or a portion's components (dish): amount, unit, name, note, and for a dish the prep recipe it is. */
-function ItemsField({ kind, items, set, preps }: { kind: RecipeKind; items: EditItem[]; set: (fn: (i: EditItem[]) => EditItem[]) => void; preps: PrepOption[] }) {
+function ItemsField({ kind, items, set, preps, pictures, erased, setErr }: {
+  kind: RecipeKind; items: EditItem[]; set: (fn: (i: EditItem[]) => EditItem[]) => void; preps: PrepOption[]; pictures: Picture[]; erased: string[]; setErr: (e: string) => void;
+}) {
   const word = kind === "prep" ? "Ingredient" : "Component";
   const patch = (key: string, p: Partial<EditItem>) => set((cur) => cur.map((i) => (i.key === key ? { ...i, ...p } : i)));
   return (
@@ -85,10 +175,12 @@ function ItemsField({ kind, items, set, preps }: { kind: RecipeKind; items: Edit
               </select>
             )}
           </div>
+          <ItemPicture it={it} label={`${word.toLowerCase()} ${i + 1}`} pictures={pictures} erased={erased} patch={(p) => patch(it.key, p)} setErr={setErr} />
         </div>
       ))}
       {items.length < RECIPE_LIMITS.items && <button type="button" className="btn ghost" onClick={() => set((cur) => [...cur, blankItem()])}>Add a line</button>}
-      <span className="muted">Amounts are numbers (0.5 for half). Leave the amount empty for things like &ldquo;a drizzle&rdquo;: they aren&apos;t scaled.</span>
+      <span className="muted">Amounts are numbers (0.5 for half). Leave the amount empty for things like &ldquo;a drizzle&rdquo;: they aren&apos;t scaled.
+        A picture taken once for an ingredient is offered for every recipe that uses it.</span>
     </section>
   );
 }
@@ -123,13 +215,15 @@ function AllergensField({ kind, allergens, set }: { kind: RecipeKind; allergens:
  * portion's components, how it's built, kitchen notes, dietary tags). Both mark every allergen and may have a photo
  * of the finished thing. Saving, approval and keeping unsaved changes are DraftForm's.
  */
-export function RecipeEditor({ kind, mode, docId, versionId, rev, published, initial, erased = [], canDiscard, personId, categories, preps }: {
+export function RecipeEditor({ kind, mode, docId, versionId, rev, published, initial, erased = [], canDiscard, personId, categories, preps, pictures }: {
   kind: RecipeKind; mode: "new" | "draft"; docId?: string; versionId?: string; rev?: number; published?: boolean;
   initial: { title: string; body: PrepBody | DishBody }; erased?: string[]; canDiscard?: boolean; personId: string;
   /** Categories already used, offered as the category is typed. */
   categories: string[];
   /** Prep recipes a dish's components can link to. */
   preps: PrepOption[];
+  /** Pictures already taken for ingredients, to reuse. */
+  pictures: Picture[];
 }) {
   const prepMap = new Map(preps.map((p) => [p.id, p]));
   return (
@@ -181,7 +275,28 @@ export function RecipeEditor({ kind, mode, docId, versionId, rev, published, ini
                   set={(p) => set((x) => ({ ...x, finished: { photo: p.photo, uploading: p.uploading } }))} /></div>
             </section>
 
-            <ItemsField kind={kind} items={s.items} preps={preps} set={(fn) => set((x) => ({ ...x, items: fn(x.items) }))} />
+            {kind === "dish" && (
+              <section className="card stack" aria-label="Serving standard">
+                <h2 className="h-sec">Serving standard</h2>
+                <span className="muted">Labels on the photo point out what matters; the checks say how it must look every time. Both show on the dish&apos;s card.</span>
+                <CalloutsField photo={s.finished.photo} callouts={s.callouts} erased={erased} set={(fn) => set((x) => ({ ...x, callouts: fn(x.callouts) }))} />
+                <div className="stack" style={{ gap: 6 }}>
+                  <span className="strong">Checks</span>
+                  {s.standards.map((t, i) => (
+                    <div key={t.key} className="row" style={{ gap: 6 }}>
+                      <span className="tick" aria-hidden="true">✓</span>
+                      <input className="txt grow" aria-label={`Check ${i + 1}`} maxLength={RECIPE_LIMITS.standard} placeholder={i === 0 ? "e.g. NOT over-burnt" : "e.g. Full, neat and consistent every time"}
+                        value={t.text} onChange={(e) => { const text = e.target.value; set((x) => ({ ...x, standards: x.standards.map((y) => (y.key === t.key ? { ...y, text } : y)) })); }} />
+                      <button type="button" className="btn ghost small" aria-label={`Remove check ${i + 1}`}
+                        onClick={() => set((x) => ({ ...x, standards: x.standards.length > 1 ? x.standards.filter((y) => y.key !== t.key) : [{ key: newKey(), text: "" }] }))}>✕</button>
+                    </div>
+                  ))}
+                  {s.standards.length < RECIPE_LIMITS.standards && <button type="button" className="btn ghost" onClick={() => set((x) => ({ ...x, standards: [...x.standards, { key: newKey(), text: "" }] }))}>Add a check</button>}
+                </div>
+              </section>
+            )}
+
+            <ItemsField kind={kind} items={s.items} preps={preps} pictures={pictures} erased={erased} setErr={setErr} set={(fn) => set((x) => ({ ...x, items: fn(x.items) }))} />
             <StepsField steps={s.steps} set={(fn) => set((x) => ({ ...x, steps: fn(x.steps) }))} setErr={setErr} erased={erased}
               title={kind === "prep" ? "Method" : "How it's built"} placeholder={kind === "prep" ? "What to do, in plain words" : "e.g. Noodles in a warm bowl, brisket on top"} />
 
@@ -197,8 +312,9 @@ export function RecipeEditor({ kind, mode, docId, versionId, rev, published, ini
                       <option value="days">days</option><option value="hours">hours</option>
                     </select>
                   </span></label>
-                <label className="stack" style={{ gap: 6 }}><span className="strong">Notes</span>
-                  <textarea id="recipe-notes" maxLength={RECIPE_LIMITS.notes} placeholder="Anything else the cook should know" value={s.notes}
+                <label className="stack" style={{ gap: 6 }}><span className="strong">Important notes</span>
+                  <span className="muted">One per line: each shows as a tick on the card.</span>
+                  <textarea id="recipe-notes" maxLength={RECIPE_LIMITS.notes} placeholder={"Use kettle water to dissolve sugar\nKeep refrigerated"} value={s.notes}
                     onChange={(e) => { const notes = e.target.value; set((x) => ({ ...x, notes })); }} /></label>
               </section>
             ) : (
