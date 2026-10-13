@@ -59,7 +59,8 @@ export const sectionName = (s: string) => SECTION_NAME[s] ?? s;
 
 // ---------- what's waiting from handover ----------
 
-export interface HandoverNote { category: string; body: string; needsAction: boolean; closedAt?: number; createdAt: number }
+export interface HandoverNote { category: string; body: string; needsAction: boolean; closedAt?: number; createdAt: number; assignedTo?: string }
+export interface WaitingPrep { name: string; urgent: boolean; assignedTo?: string }
 /** What's waiting at a site, as it goes into a reminder on someone's phone. */
 export interface Waiting {
   /** Open notes that need action, in categories whose text may show on a lock screen. */
@@ -67,7 +68,9 @@ export interface Waiting {
   /** Open customer complaints: only their number goes, as they can name a customer. */
   complaints: number;
   /** Prep still to do, urgent first. */
-  prep: { name: string; urgent: boolean }[];
+  prep: WaitingPrep[];
+  /** Open notes that need action and are for someone, whatever their category: each person's own line says what kind. */
+  assigned: HandoverNote[];
 }
 
 /**
@@ -78,13 +81,46 @@ export const PHONE_TEXT_CATEGORIES = ["Food safety", "Equipment", "Stock shortag
 export const PHONE_COUNT_CATEGORIES = ["Customer complaint"];
 export const TABLET_ONLY_CATEGORIES = ["Staff note"];
 
-export function waitingFrom(notes: HandoverNote[], prep: { name: string; urgent: boolean }[]): Waiting {
+export function waitingFrom(notes: HandoverNote[], prep: WaitingPrep[]): Waiting {
   const open = notes.filter((n) => n.needsAction && !n.closedAt);
   return {
     actions: noteOrder(open.filter((n) => PHONE_TEXT_CATEGORIES.includes(n.category))),
     complaints: open.filter((n) => PHONE_COUNT_CATEGORIES.includes(n.category)).length,
     prep: [...prep].sort((a, b) => Number(b.urgent) - Number(a.urgent)),
+    assigned: noteOrder(open.filter((n) => n.assignedTo)),
   };
+}
+
+/**
+ * How a handover note shows on someone's phone (My shifts, a manager's read-only Handover page, a reminder): its
+ * words if a lock screen may show them, otherwise only what kind of note it is, to be read on the tablet.
+ */
+export function phoneNote(n: { category: string; body: string }): { text: string; onTablet: boolean } {
+  if (PHONE_TEXT_CATEGORIES.includes(n.category)) return { text: n.category === "Food safety" ? `Food safety: ${n.body}` : n.body, onTablet: false };
+  if (PHONE_COUNT_CATEGORIES.includes(n.category)) return { text: "A customer complaint to follow up", onTablet: true };
+  return { text: n.category === "Staff note" ? "A staff note" : "A note", onTablet: true };
+}
+
+/** Whether a note can be read on a phone at all (a manager's read-only Handover page): otherwise it's only counted there. */
+export const phoneShows = (n: { category: string; body: string }) => !phoneNote(n).onTablet;
+
+export interface ForYouItem { kind: "prep" | "note"; text: string; urgent: boolean; onTablet: boolean }
+
+/**
+ * What's for someone at one site: open notes that need action and prep still to do that were given to them. In the
+ * Handover tab's order: food safety first, then urgent prep, other notes, the rest of the prep.
+ */
+export function forYou(personId: string, prep: WaitingPrep[], notes: HandoverNote[]): ForYouItem[] {
+  const mine = noteOrder(notes.filter((n) => n.needsAction && !n.closedAt && n.assignedTo === personId));
+  const note = (n: HandoverNote): ForYouItem => ({ kind: "note", ...phoneNote(n), urgent: n.category === "Food safety" });
+  const myPrep = prep.filter((x) => x.assignedTo === personId);
+  const item = (x: WaitingPrep): ForYouItem => ({ kind: "prep", text: x.name, urgent: x.urgent, onTablet: false });
+  return [
+    ...mine.filter((n) => n.category === "Food safety").map(note),
+    ...myPrep.filter((x) => x.urgent).map(item),
+    ...mine.filter((n) => n.category !== "Food safety").map(note),
+    ...myPrep.filter((x) => !x.urgent).map(item),
+  ];
 }
 
 const clip = (s: string, n: number) => {
@@ -93,25 +129,45 @@ const clip = (s: string, n: number) => {
 };
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** The handover lines of a reminder. Empty when nothing is waiting. */
-export function waitingLines(w: Waiting, maxItems = 3): string[] {
-  const out = w.actions.slice(0, maxItems).map((n) => `• ${n.category === "Food safety" ? "Food safety: " : ""}${clip(n.body, 70)}`);
-  if (w.actions.length > maxItems) out.push(`• +${w.actions.length - maxItems} more on the tablet`);
-  if (w.complaints) out.push(`• ${plural(w.complaints, "customer complaint")} to follow up`);
-  if (w.prep.length) {
-    const urgent = w.prep.filter((p) => p.urgent).length;
-    const names = w.prep.slice(0, maxItems).map((p) => p.name).join(", ");
-    out.push(`• Prep to do: ${w.prep.length}${urgent ? ` (${urgent} urgent)` : ""}: ${names}${w.prep.length > maxItems ? ` +${w.prep.length - maxItems} more` : ""}`);
+/** The first handover line of someone's reminder: what was given to them. Undefined when nothing is. */
+export function forYouLine(w: Waiting, personId: string, maxItems = 3): string | undefined {
+  const items = forYou(personId, w.prep, w.assigned);
+  if (!items.length) return undefined;
+  const part = (i: ForYouItem) => i.kind === "prep" ? `${i.text}${i.urgent ? " (urgent)" : ""}`
+    : i.onTablet ? `${i.text.charAt(0).toLowerCase()}${i.text.slice(1)} (on the tablet)` : clip(i.text, 50);
+  return `For you: ${items.slice(0, maxItems).map(part).join(", ")}${items.length > maxItems ? ` +${items.length - maxItems} more` : ""}`;
+}
+
+/**
+ * The handover lines of a reminder. Empty when nothing is waiting. `unassigned`: only what isn't for anyone in
+ * particular (a person's own items have their own line, and what was given to someone else is theirs).
+ */
+export function waitingLines(w: Waiting, maxItems = 3, unassigned = false): string[] {
+  const actions = w.actions.filter((n) => !unassigned || !n.assignedTo);
+  const complaints = w.complaints - (unassigned ? w.assigned.filter((n) => PHONE_COUNT_CATEGORIES.includes(n.category)).length : 0);
+  const prep = w.prep.filter((p) => !unassigned || !p.assignedTo);
+  const out = actions.slice(0, maxItems).map((n) => `• ${n.category === "Food safety" ? "Food safety: " : ""}${clip(n.body, 70)}`);
+  if (actions.length > maxItems) out.push(`• +${actions.length - maxItems} more on the tablet`);
+  if (complaints) out.push(`• ${plural(complaints, "customer complaint")} to follow up`);
+  if (prep.length) {
+    const urgent = prep.filter((p) => p.urgent).length;
+    const names = prep.slice(0, maxItems).map((p) => p.name).join(", ");
+    out.push(`• Prep to do: ${prep.length}${urgent ? ` (${urgent} urgent)` : ""}: ${names}${prep.length > maxItems ? ` +${prep.length - maxItems} more` : ""}`);
   }
   return out;
 }
 
-/** The reminder itself: start time first (it's what a lock screen shows), then what's waiting, then how to reply. */
+/**
+ * The reminder itself: start time first (it's what a lock screen shows), then what's been given to them, then what
+ * isn't for anyone in particular, then how to reply.
+ */
 export function shiftReminderMessage(s: ReminderShift, w: Waiting | undefined, today: string): { title: string; body: string } {
   const day = s.date === today ? "today" : s.date === addDays(today, 1) ? "tomorrow" : shortDay(s.date);
   const lines = [`${s.start}–${s.end} · ${sectionName(s.section)}`];
-  const waiting = w ? waitingLines(w) : [];
-  if (waiting.length) lines.push("Waiting from handover:", ...waiting);
+  const mine = w ? forYouLine(w, s.personId) : undefined;
+  if (mine) lines.push(mine);
+  const waiting = w ? waitingLines(w, 3, true) : [];
+  if (waiting.length) lines.push(mine ? "Also waiting from handover:" : "Waiting from handover:", ...waiting);
   lines.push("Tap to reply: on my way, running late or can't make it.");
   return { title: `Shift at ${s.start} ${day} · ${s.siteName}`, body: lines.join("\n") };
 }

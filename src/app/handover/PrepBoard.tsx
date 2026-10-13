@@ -3,18 +3,26 @@
 import Link from "next/link";
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { prepEditDraft, prepSubmit, switchSite } from "@/app/actions";
+import { assignHandover, prepEditDraft, prepSubmit, switchSite } from "@/app/actions";
+import type { PickGroup } from "@/lib/domain/assign";
 import { categoryLabel, filterPrep, PREP_CATEGORIES, PREP_SHIFTS, type PrepCategory, type PrepItem, type PrepShift } from "@/lib/domain/prep";
+import { ForSelect, forLabelOf } from "./ForSelect";
 
-export interface Pick { urgent: boolean; note?: string }
+/** A picked item: `assignee` is who it's for (`assigneeName` in case they're no longer on the list). */
+export interface Pick { urgent: boolean; note?: string; assignee?: string; assigneeName?: string }
 interface Props {
   siteId: string; siteName: string; sites: { id: string; name: string }[];
   items: PrepItem[]; shift: PrepShift; picks: Record<string, Pick>;
-  /** Still outstanding from the last handover: they carry over by themselves. */
-  carried: Record<string, Pick>;
+  /**
+   * Still outstanding from the last handover: they carry over by themselves, staying with whoever they're for. `entryId`
+   * is the item on that handover (changing who it's for changes it there); `forBy`: "by Minh, Tue 22:31".
+   */
+  carried: Record<string, Pick & { entryId: string; forBy?: string }>;
   draftBy?: string;
   /** Notes that go on this handover with the prep items. */
   notesGoing: number;
+  /** Who can be picked, for each shift the handover can be for. */
+  pickBy: Record<PrepShift, PickGroup[]>;
 }
 
 export function PrepBoard(p: Props) {
@@ -32,10 +40,12 @@ export function PrepBoard(p: Props) {
   const shown = useMemo(() => filterPrep(p.items, cat, query), [p.items, cat, query]);
   const active = p.items.filter((i) => i.active);
   const name = new Map(p.items.map((i) => [i.id, i.name]));
-  const neededIds = active.map((i) => i.id).filter((id) => picks[id]);
-  const carriedOnly = Object.keys(p.carried).filter((id) => !picks[id]);
-  const neededCount = neededIds.length + carriedOnly.length;
+  const pickedIds = active.map((i) => i.id).filter((id) => picks[id]);
+  const carriedIds = Object.keys(p.carried);
+  const carriedOnly = carriedIds.filter((id) => !picks[id]);
+  const neededCount = pickedIds.length + carriedOnly.length;
   const stocked = active.length - neededCount;
+  const pickNow = p.pickBy[shift] ?? [];
 
   const save = async (change: Parameters<typeof prepEditDraft>[0], undo: () => void) => {
     setSaving((n) => n + 1); setErr("");
@@ -46,7 +56,7 @@ export function PrepBoard(p: Props) {
     finally { setSaving((n) => n - 1); }
   };
   const toggle = (id: string) => {
-    if (p.carried[id] && !picks[id]) return;
+    if (p.carried[id] && !picks[id]) return; // carries over by itself; who it's for is set on the review step
     const was = picks[id];
     setPicks((cur) => { const n = { ...cur }; if (was) delete n[id]; else n[id] = { urgent: false }; return n; });
     save({ itemId: id, needed: !was }, () => setPicks((cur) => { const n = { ...cur }; if (was) n[id] = was; else delete n[id]; return n; }));
@@ -55,6 +65,27 @@ export function PrepBoard(p: Props) {
     const was = picks[id];
     setPicks((cur) => ({ ...cur, [id]: { ...cur[id], ...patch } }));
     save({ itemId: id, needed: true, urgent: patch.urgent, note: patch.note === undefined ? undefined : patch.note || null }, () => setPicks((cur) => ({ ...cur, [id]: was })));
+  };
+  /** Gives a picked item to someone (saved with the draft). */
+  const assign = (id: string, to: string | null) => {
+    const was = picks[id];
+    if (!was) return;
+    setPicks((cur) => ({ ...cur, [id]: { ...was, assignee: to ?? undefined, assigneeName: undefined } }));
+    save({ itemId: id, needed: true, assignee: to }, () => setPicks((cur) => ({ ...cur, [id]: was })));
+  };
+  /**
+   * Gives a carried item to someone: on the handover it's still waiting on, so the Handover tab shows it too, and it
+   * carries over with them. (It isn't picked again: if it's done before this handover is sent, it simply drops off.)
+   */
+  const [carriedFor, setCarriedFor] = useState<Record<string, string | null>>({});
+  const assignCarried = (id: string, to: string | null) => {
+    const was = carriedFor[id];
+    const undo = () => setCarriedFor((m) => { const n = { ...m }; if (was === undefined) delete n[id]; else n[id] = was; return n; });
+    setErr(""); setCarriedFor((m) => ({ ...m, [id]: to })); setSaving((n) => n + 1);
+    assignHandover({ kind: "prep", id: p.carried[id].entryId, to })
+      .then((r) => { if (!r.ok) { undo(); setErr(r.error); } })
+      .catch(() => { undo(); setErr("No connection. That change wasn't saved, try again"); })
+      .finally(() => setSaving((n) => n - 1));
   };
   const pickShift = (s: PrepShift) => { const was = shift; setShift(s); save({ shift: s }, () => setShift(was)); };
   const go = (m: typeof mode) => { setMode(m); topRef.current?.scrollIntoView({ block: "start" }); };
@@ -85,7 +116,25 @@ export function PrepBoard(p: Props) {
   );
 
   if (mode === "review") {
+    const neededIds = pickedIds.filter((id) => !p.carried[id]);
     const list = [...neededIds].sort((a, b) => Number(!!picks[b].urgent) - Number(!!picks[a].urgent));
+    const carriedList = [...carriedIds].sort((a, b) => Number(!!p.carried[b].urgent) - Number(!!p.carried[a].urgent));
+    const forPick = (id: string) => (
+      <div className="for-pick" style={{ marginTop: 0 }}>
+        <span>For</span>
+        <ForSelect value={picks[id]?.assignee ?? ""} current={picks[id]?.assigneeName} pick={pickNow} label={forLabelOf(name.get(id) ?? id)} onChange={(to) => assign(id, to)} />
+      </div>
+    );
+    const carriedPick = (id: string) => {
+      const c = p.carried[id], changed = id in carriedFor;
+      return (
+        <div className="for-pick" style={{ marginTop: 0 }}>
+          <span>For</span>
+          <ForSelect value={(changed ? carriedFor[id] : c.assignee) ?? ""} current={c.assigneeName} pick={pickNow} label={forLabelOf(name.get(id) ?? id)} onChange={(to) => assignCarried(id, to)} />
+          {c.forBy && !changed && c.assignee && <span className="by">{c.forBy}</span>}
+        </div>
+      );
+    };
     return (
       <>
         <main>
@@ -104,14 +153,27 @@ export function PrepBoard(p: Props) {
                   <input className="txt note" maxLength={200} placeholder="Note (optional), e.g. only half a tub left" defaultValue={picks[id].note ?? ""}
                     aria-label={`Note for ${name.get(id)}`}
                     onBlur={(e) => { if ((e.target.value.trim() || undefined) !== (picks[id].note || undefined)) flag(id, { urgent: picks[id].urgent, note: e.target.value.trim() }); }} />
+                  {forPick(id)}
                 </li>
               ))}
             </ul>
           </section>
-          {carriedOnly.length > 0 && (
+          {carriedList.length > 0 && (
             <section className="stack">
-              <h2 className="h-sec">Carried over ({carriedOnly.length})</h2>
-              <div className="card muted">Not done from the last handover. These go on this handover by themselves: {carriedOnly.map((id) => name.get(id)).join(", ")}.</div>
+              <h2 className="h-sec">Carried over ({carriedList.length})</h2>
+              <div className="muted">Not done from the last handover. These go on this handover by themselves, staying with whoever they&apos;re for unless you change it.</div>
+              <ul className="prep-review">
+                {carriedList.map((id) => (
+                  <li key={id} className={p.carried[id].urgent ? "urgent" : ""}>
+                    <div className="row" style={{ gap: 10 }}>
+                      <span className="grow strong" style={{ fontSize: 15 }}>{name.get(id)}</span>
+                      {p.carried[id].urgent && <span className="chip bad">Urgent</span>}
+                    </div>
+                    {p.carried[id].note && <div className="prep-note">{p.carried[id].note}</div>}
+                    {carriedPick(id)}
+                  </li>
+                ))}
+              </ul>
             </section>
           )}
           {p.notesGoing > 0 && (
@@ -159,7 +221,7 @@ export function PrepBoard(p: Props) {
           {shown.map((i) => {
             const head = i.category !== lastCat ? <h2 key={`h-${i.category}`} className="h-sec prep-cat">{categoryLabel(i.category)}</h2> : null;
             lastCat = i.category;
-            const on = !!picks[i.id];
+            const on = !!picks[i.id]; // picked while it was done, then put back: it can be taken off again here
             const carried = !on && !!p.carried[i.id];
             return [head, (
               <button key={i.id} type="button" className={`prep-item${on ? " on" : ""}${carried ? " carried" : ""}`} aria-pressed={on || carried}

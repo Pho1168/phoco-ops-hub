@@ -36,6 +36,7 @@ import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
+import { canBeGiven, noteCanBeFor } from "@/lib/domain/assign";
 import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
 import type { Person, Role, SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, requireLead, SESSION_COOKIE, SESSION_TTL_MS, type Ctx } from "@/lib/session";
@@ -208,21 +209,72 @@ export async function signOffRun(listId: string, pin: string): Promise<ActionRes
 }
 
 // ---------- handover notes ----------
+/** Who a handover item is for: a person's id (the demo's aren't UUIDs), or null for nobody in particular. */
+const AssigneeZ = z.string().min(1).max(64).nullable();
 const NoteZ = z.object({
   category: z.enum(NOTE_CATEGORIES),
   body: z.string().trim().min(1, "Write the note first").max(1000, "Keep the note under 1000 characters"),
   needsAction: z.boolean(),
+  assignee: AssigneeZ.optional(),
 });
+
+/** The person a handover item at this site is being given to, if they can be (canBeGiven). */
+async function assigneeAt(siteId: SiteId, to: string | null | undefined): Promise<{ ok: true; person?: Person } | { ok: false; error: string }> {
+  if (!to) return { ok: true };
+  const person = await store().person(to);
+  if (!canBeGiven(person, siteId)) return { ok: false, error: "They don't work here any more. Pick someone else" };
+  return { ok: true, person };
+}
 
 /** A note for the next shift. Shows straight away on the Handover tab and goes on the next handover report. */
 export async function addNote(input: unknown): Promise<ActionResult> {
   const ctx = await requireCtx();
   const n = NoteZ.safeParse(input);
   if (!n.success) return { ok: false, error: n.error.issues[0]?.message ?? "That note couldn't be saved" };
-  await store().addHandover({ siteId: ctx.site.id, createdBy: ctx.person.id, ...n.data });
+  const { assignee, ...note } = n.data;
+  if (assignee && !noteCanBeFor(note)) return { ok: false, error: "A note for info isn't for anyone in particular" };
+  const to = await assigneeAt(ctx.site.id, assignee);
+  if (!to.ok) return to;
+  await store().addHandover({ siteId: ctx.site.id, createdBy: ctx.person.id, ...note, assignedTo: to.person?.id });
   await store().audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "handover.add",
-    detail: `${n.data.needsAction ? "Needs action" : "For info"} · ${n.data.category}: ${n.data.body}` });
-  revalidatePath("/handover"); revalidatePath("/today");
+    detail: `${note.needsAction ? "Needs action" : "For info"} · ${note.category}: ${note.body}${to.person ? ` · for ${to.person.name}` : ""}` });
+  revalidatePath("/handover"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+const AssignZ = z.object({ kind: z.enum(["prep", "note"]), id: z.string().uuid(), to: AssigneeZ });
+
+/**
+ * Gives a prep item from the last handover, or a note that needs doing, to someone at the site, or changes who it's
+ * for. Anyone signed in on the tablet can (not on a phone: those are read-only). Every change is in the activity log.
+ */
+export async function assignHandover(input: unknown): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const a = AssignZ.safeParse(input);
+  if (!a.success) return { ok: false, error: "That change couldn't be saved" };
+  const { kind, id, to } = a.data;
+  const db = store();
+  let what: string, was: { id?: string; name?: string };
+  if (kind === "prep") {
+    const { error } = await prepCtx();
+    if (error) return { ok: false, error };
+    const entry = (await db.prepOutstanding(ctx.site.id)).find((e) => e.id === id);
+    if (!entry) return { ok: false, error: "That item isn't waiting any more. It may have just been done" };
+    what = (await db.prepItems()).find((i) => i.id === entry.itemId)?.name ?? entry.itemId;
+    was = { id: entry.assignedTo, name: entry.assignedToName };
+  } else {
+    const note = (await db.handover(ctx.site.id)).find((n) => n.id === id);
+    if (!note || !noteCanBeFor(note)) return { ok: false, error: "That note isn't waiting any more. It may have just been done" };
+    what = `${note.category}: ${note.body.slice(0, 80)}`;
+    was = { id: note.assignedTo, name: note.assignedToName };
+  }
+  if ((was.id ?? null) === to) return { ok: true };
+  const person = await assigneeAt(ctx.site.id, to);
+  if (!person.ok) return person;
+  if (!(await db.assignHandover({ kind, id }, ctx.site.id, to, ctx.person.id))) return { ok: false, error: "Someone has just changed this one. Have a look and try again" };
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "handover.assign",
+    detail: `${kind === "prep" ? "Prep: " : ""}${what} · for ${person.person?.name ?? "anyone"}${was.id ? ` (was ${was.name ?? "someone"})` : ""}` });
+  revalidatePath("/handover"); revalidatePath("/me");
   return { ok: true };
 }
 
@@ -256,17 +308,34 @@ async function prepCtx(): Promise<{ ctx: Awaited<ReturnType<typeof requireCtx>>;
   return { ctx };
 }
 
-/** Draft changes save as staff tap, so a refresh or a second phone sees the same draft. */
+/**
+ * Draft changes save as staff tap, so a refresh or a second phone sees the same draft. Giving an item to someone (or
+ * changing who it's for) also marks it needed, and goes in the activity log.
+ */
 export async function prepEditDraft(input: unknown): Promise<ActionResult> {
   const { ctx, error } = await prepCtx();
   if (error) return { ok: false, error };
   const c = z.object({
     shift: PrepShiftZ.optional(), itemId: PrepItemZ.optional(), needed: z.boolean().optional(),
-    urgent: z.boolean().optional(), note: z.string().trim().max(200).nullable().optional(),
+    urgent: z.boolean().optional(), note: z.string().trim().max(200).nullable().optional(), assignee: AssigneeZ.optional(),
   }).safeParse(input);
   if (!c.success) return { ok: false, error: "That change couldn't be saved" };
-  if (c.data.itemId && !(await store().prepItems()).some((i) => i.id === c.data.itemId && i.active)) return { ok: false, error: "That item isn't on the list any more" };
-  await store().prepEditDraft(ctx.site.id, ctx.person.id, c.data);
+  const db = store();
+  const item = c.data.itemId ? (await db.prepItems()).find((i) => i.id === c.data.itemId && i.active) : undefined;
+  if (c.data.itemId && !item) return { ok: false, error: "That item isn't on the list any more" };
+  if (c.data.assignee === undefined) {
+    await db.prepEditDraft(ctx.site.id, ctx.person.id, c.data);
+    return { ok: true };
+  }
+  if (!item || c.data.needed === false) return { ok: false, error: "That change couldn't be saved" };
+  const to = await assigneeAt(ctx.site.id, c.data.assignee);
+  if (!to.ok) return to;
+  const before = (await db.prepDraft(ctx.site.id))?.entries.find((e) => e.itemId === item.id);
+  await db.prepEditDraft(ctx.site.id, ctx.person.id, { ...c.data, needed: true });
+  if ((before?.assignedTo ?? null) !== c.data.assignee) {
+    await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "handover.assign",
+      detail: `Prep (handover not sent yet): ${item.name} · for ${to.person?.name ?? "anyone"}${before?.assignedTo ? ` (was ${before.assignedToName ?? "someone"})` : ""}` });
+  }
   return { ok: true };
 }
 

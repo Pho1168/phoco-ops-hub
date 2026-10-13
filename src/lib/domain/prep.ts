@@ -129,13 +129,18 @@ export interface PrepEntry {
   id: string; handoverId: string; siteId: string; itemId: string; status: PrepStatus;
   urgent: boolean; note?: string; carriedFrom?: string;
   createdBy: string; createdAt: number; completedBy?: string; completedAt?: number;
+  /** Who it's for (rules in assign.ts), and who last changed that and when. Carried into a newer handover, it's for nobody in particular. */
+  assignedTo?: string; assignedBy?: string; assignedAt?: number;
 }
+
+/** Who a carried item is for, and who said so when: it stays with them (assign.ts). */
+export type CarriedFor = Pick<PrepEntry, "assignedTo" | "assignedBy" | "assignedAt">;
 
 export interface SubmitPlan {
   /** Outstanding items from earlier handovers that weren't picked again: added to the new handover. */
-  carryIn: { itemId: string; from: string; urgent: boolean; note?: string }[];
+  carryIn: ({ itemId: string; from: string; urgent: boolean; note?: string } & CarriedFor)[];
   /** Outstanding items that were also picked again: the draft entry is linked to the old one instead of duplicated. */
-  merge: { entryId: string; from: string; urgent: boolean; note?: string }[];
+  merge: ({ entryId: string; from: string; urgent: boolean; note?: string } & CarriedFor)[];
   /** Old entries that now live on in the new handover. */
   markCarried: string[];
   /** Items that were still outstanding when this handover was submitted, i.e. their shift ended without them. */
@@ -146,20 +151,22 @@ export interface SubmitPlan {
 
 /**
  * Submitting a draft. Nothing outstanding is lost: it moves into the new handover once, never twice,
- * keeping the urgent flag and note. The old entry is kept as "carried" so the history shows the hand-on.
+ * keeping the urgent flag, the note and who it's for. The old entry is kept as "carried" so the history shows the hand-on.
  */
 export function planSubmit(draft: PrepEntry[], outstanding: PrepEntry[], activeItemIds: string[]): SubmitPlan {
   const byItem = new Map(draft.map((e) => [e.itemId, e]));
   const plan: SubmitPlan = { carryIn: [], merge: [], markCarried: [], missed: [], stockedCount: 0 };
   const seen = new Set<string>();
+  const forOf = (e: PrepEntry): CarriedFor => (e.assignedBy ? { assignedTo: e.assignedTo, assignedBy: e.assignedBy, assignedAt: e.assignedAt } : {});
   for (const old of [...outstanding].sort((a, b) => b.createdAt - a.createdAt)) {
     plan.markCarried.push(old.id);
     plan.missed.push(old);
     if (seen.has(old.itemId)) continue; // already carried from a newer handover
     seen.add(old.itemId);
     const mine = byItem.get(old.itemId);
-    if (mine) plan.merge.push({ entryId: mine.id, from: old.id, urgent: mine.urgent || old.urgent, note: mine.note || old.note });
-    else plan.carryIn.push({ itemId: old.itemId, from: old.id, urgent: old.urgent, note: old.note });
+    // Picked again (it was done, then put back): it stays with whoever the waiting item is for, as the review step shows.
+    if (mine) plan.merge.push({ entryId: mine.id, from: old.id, urgent: mine.urgent || old.urgent, note: mine.note || old.note, ...forOf(old) });
+    else plan.carryIn.push({ itemId: old.itemId, from: old.id, urgent: old.urgent, note: old.note, ...forOf(old) });
   }
   const needed = new Set([...draft.map((e) => e.itemId), ...Array.from(seen)]);
   plan.stockedCount = activeItemIds.filter((id) => !needed.has(id)).length;

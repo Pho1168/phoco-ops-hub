@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  canReply, dueReminders, latestReplies, PHONE_COUNT_CATEGORIES, PHONE_TEXT_CATEGORIES, reminderAt, reminderKey, replyAlertUntil, replyMessages, replyOpen,
-  replySendAfter, sameReply, shiftEnd, shiftReminderMessage, startingLaterToday, TABLET_ONLY_CATEGORIES, teamDay, todaysShifts, waitingFrom, waitingLines,
-  type ReminderShift, type ShiftReply,
+  canReply, dueReminders, forYou, forYouLine, latestReplies, PHONE_COUNT_CATEGORIES, PHONE_TEXT_CATEGORIES, phoneNote, reminderAt, reminderKey, replyAlertUntil,
+  replyMessages, replyOpen, replySendAfter, sameReply, shiftEnd, shiftReminderMessage, startingLaterToday, TABLET_ONLY_CATEGORIES, teamDay, todaysShifts,
+  waitingFrom, waitingLines, type ReminderShift, type ShiftReply,
 } from "./reminders";
 import { NOTE_CATEGORIES } from "./handover";
 import { londonToUtc } from "./time";
@@ -135,6 +135,66 @@ describe("what a reminder says", () => {
     const m = shiftReminderMessage(shift({ date: "2026-10-15", start: "00:30", end: "06:00", section: "FOH" }), waitingFrom([], []), "2026-10-14");
     expect(m.title).toBe("Shift at 00:30 tomorrow · Eastcote");
     expect(m.body).toBe("00:30–06:00 · Front of house\nTap to reply: on my way, running late or can't make it.");
+  });
+});
+
+describe("what's been given to someone", () => {
+  const t = at("2026-10-14", "08:00");
+  const note = (category: string, body: string, assignedTo?: string, over: { needsAction?: boolean; closedAt?: number; createdAt?: number } = {}) =>
+    ({ category, body, needsAction: true, createdAt: t, assignedTo, ...over });
+  const notes = [
+    note("Equipment", "Fridge 3 door not closing properly", "p1"),
+    note("Food safety", "Walk-in chiller read 9°C at 15:00, moved stock", "p1", { createdAt: t - 1 }),
+    note("Staff note", "Talk to Sam about lateness", "p1"),
+    note("Customer complaint", "Mrs Smith 07700 900123 says soup was cold", "p1"),
+    note("Customer complaint", "Table 4 waited 40 minutes"),
+    note("Other", "Bins out", "p2"),
+    note("Other", "Done already", "p1", { closedAt: t + 5 }),
+    note("Other", "Just so you know", "p1", { needsAction: false }),
+  ];
+  const prep = [{ name: "Cook rice", urgent: false, assignedTo: "p1" }, { name: "Soak pho noodles", urgent: true, assignedTo: "p1" }, { name: "Smash ice", urgent: false, assignedTo: "p2" }, { name: "Salad", urgent: false }];
+
+  it("in the Handover tab's order, with staff notes and complaints left to the tablet", () => {
+    expect(forYou("p1", prep, notes)).toEqual([
+      { kind: "note", text: "Food safety: Walk-in chiller read 9°C at 15:00, moved stock", urgent: true, onTablet: false },
+      { kind: "prep", text: "Soak pho noodles", urgent: true, onTablet: false },
+      { kind: "note", text: "Fridge 3 door not closing properly", urgent: false, onTablet: false },
+      { kind: "note", text: "A staff note", urgent: false, onTablet: true },
+      { kind: "note", text: "A customer complaint to follow up", urgent: false, onTablet: true },
+      { kind: "prep", text: "Cook rice", urgent: false, onTablet: false },
+    ]);
+    expect(forYou("p3", prep, notes)).toEqual([]);
+    expect(phoneNote({ category: "Something new", body: "Not decided yet" })).toEqual({ text: "A note", onTablet: true });
+  });
+
+  it("their reminder starts with it; then only what isn't for anyone in particular", () => {
+    const w = waitingFrom(notes, prep);
+    const m = shiftReminderMessage(shift({ personId: "p1" }), w, "2026-10-14");
+    expect(m.body.split("\n")).toEqual([
+      "11:00–22:15 · Back of house",
+      "For you: Food safety: Walk-in chiller read 9°C at 15:00, m…, Soak pho noodles (urgent), Fridge 3 door not closing properly +3 more",
+      "Also waiting from handover:",
+      "• 1 customer complaint to follow up",
+      "• Prep to do: 1: Salad",
+      "Tap to reply: on my way, running late or can't make it.",
+    ]);
+    expect(m.body).not.toMatch(/Sam|Smith|07700|Table 4|Bins out|Smash ice/);
+  });
+
+  it("what's for someone else is theirs; with nothing for them, the reminder lists the rest", () => {
+    const w = waitingFrom(notes, prep);
+    const m = shiftReminderMessage(shift({ personId: "p2" }), w, "2026-10-14");
+    expect(m.body.split("\n").slice(1, 5)).toEqual(["For you: Bins out, Smash ice", "Also waiting from handover:", "• 1 customer complaint to follow up", "• Prep to do: 1: Salad"]);
+    const nobody = shiftReminderMessage(shift({ personId: "p9" }), w, "2026-10-14");
+    expect(nobody.body.split("\n").slice(1, 4)).toEqual(["Waiting from handover:", "• 1 customer complaint to follow up", "• Prep to do: 1: Salad"]);
+    expect(forYouLine(w, "p9")).toBeUndefined();
+    // Without a person (and with nothing given to anyone) the lines are as they always were.
+    expect(waitingLines(w)).toContain("• Prep to do: 4 (1 urgent): Soak pho noodles, Cook rice, Smash ice +1 more");
+  });
+
+  it("a staff note or complaint for them says to read it on the tablet", () => {
+    const w = waitingFrom([note("Staff note", "Talk to Sam", "p1"), note("Customer complaint", "Mrs Smith", "p1")], []);
+    expect(forYouLine(w, "p1")).toBe("For you: a staff note (on the tablet), a customer complaint to follow up (on the tablet)");
   });
 });
 

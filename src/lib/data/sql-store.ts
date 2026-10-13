@@ -232,13 +232,19 @@ const toDevice = (r: DeviceRow): Device => ({ id: r.id, siteId: r.site_id, label
 interface PrepEntryRow {
   id: string; handover_id: string; site_id: SiteId; item_id: string; status: PrepEntry["status"]; urgent: boolean; note: string | null;
   carried_from: string | null; created_by: string; created_at: Date; completed_by: string | null; completed_at: Date | null;
-  created_by_name?: string | null; completed_by_name?: string | null;
+  assigned_to: string | null; assigned_by: string | null; assigned_at: Date | null;
+  created_by_name?: string | null; completed_by_name?: string | null; assigned_to_name?: string | null; assigned_by_name?: string | null;
 }
 const toPrepEntry = (r: PrepEntryRow): PrepEntryView => ({
   id: r.id, handoverId: r.handover_id, siteId: r.site_id, itemId: r.item_id, status: r.status, urgent: r.urgent, note: opt(r.note),
   carriedFrom: opt(r.carried_from), createdBy: r.created_by, createdAt: r.created_at.getTime(), completedBy: opt(r.completed_by),
   completedAt: ms(r.completed_at), createdByName: r.created_by_name ?? "", completedByName: opt(r.completed_by_name ?? null),
+  assignedTo: opt(r.assigned_to), assignedBy: opt(r.assigned_by), assignedAt: ms(r.assigned_at),
+  assignedToName: opt(r.assigned_to_name ?? null), assignedByName: opt(r.assigned_by_name ?? null),
 });
+/** Someone a handover item can be given to (canBeGiven in src/lib/domain/assign.ts): active and working at the site. */
+const givable = (q: postgres.Sql, personId: string, siteId: SiteId) =>
+  q`exists (select 1 from people p join person_sites ps on ps.person_id = p.id where p.id = ${personId} and p.status = 'active' and ps.site_id = ${siteId})`;
 interface PrepHandoverRow {
   id: string; site_id: SiteId; shift: PrepShift; status: "draft" | "submitted"; created_by: string; created_by_name: string | null;
   created_at: Date; updated_at: Date; submitted_by: string | null; submitted_by_name: string | null; submitted_at: Date | null; stocked_count: number | null;
@@ -247,8 +253,9 @@ async function prepEntriesOf(ids: string[]): Promise<PrepEntryView[]> {
   if (!ids.length) return [];
   const q = sql();
   const rows = await q<PrepEntryRow[]>`
-    select e.*, c.display_name as created_by_name, d.display_name as completed_by_name
+    select e.*, c.display_name as created_by_name, d.display_name as completed_by_name, a.display_name as assigned_to_name, ab.display_name as assigned_by_name
     from prep_entries e join people c on c.id = e.created_by left join people d on d.id = e.completed_by
+      left join people a on a.id = e.assigned_to left join people ab on ab.id = e.assigned_by
     where e.handover_id = any(${ids}::uuid[])`;
   return rows.map(toPrepEntry);
 }
@@ -598,22 +605,44 @@ export const sqlStore: Store = {
 
   async handover(siteId, createdSince = Date.now() - 7 * 86_400_000) {
     const q = sql();
-    const rows = await q<{ id: string; site_id: SiteId; category: string; body: string; needs_action: boolean; created_by: string; created_by_name: string | null; created_at: Date; closed_at: Date | null; closed_by: string | null; closed_by_name: string | null }[]>`
+    const rows = await q<{ id: string; site_id: SiteId; category: string; body: string; needs_action: boolean; created_by: string; created_by_name: string | null; created_at: Date; closed_at: Date | null; closed_by: string | null; closed_by_name: string | null;
+      assigned_to: string | null; assigned_to_name: string | null; assigned_by: string | null; assigned_by_name: string | null; assigned_at: Date | null }[]>`
       select h.id, h.site_id, h.category, h.body, h.needs_action, h.created_by, p.display_name as created_by_name,
-             h.created_at, h.closed_at, h.closed_by, c.display_name as closed_by_name
+             h.created_at, h.closed_at, h.closed_by, c.display_name as closed_by_name,
+             h.assigned_to, a.display_name as assigned_to_name, h.assigned_by, ab.display_name as assigned_by_name, h.assigned_at
       from handover_items h left join people p on p.id = h.created_by left join people c on c.id = h.closed_by
+        left join people a on a.id = h.assigned_to left join people ab on ab.id = h.assigned_by
       where h.site_id = ${siteId} and (h.closed_at is null or h.created_at >= ${new Date(createdSince)})
       order by h.created_at desc`;
     return rows.map((r): HandoverItem => ({
       id: r.id, siteId: r.site_id, category: r.category, body: r.body, needsAction: r.needs_action,
       createdBy: r.created_by, createdByName: r.created_by_name ?? "", createdAt: r.created_at.getTime(),
       closedAt: ms(r.closed_at), closedBy: opt(r.closed_by), closedByName: opt(r.closed_by_name),
+      assignedTo: opt(r.assigned_to), assignedToName: opt(r.assigned_to_name), assignedBy: opt(r.assigned_by), assignedByName: opt(r.assigned_by_name), assignedAt: ms(r.assigned_at),
     }));
   },
   async addHandover(h) {
     const q = sql();
-    await q`insert into handover_items (site_id, category, body, needs_action, created_by)
-            values (${h.siteId}, ${h.category}, ${h.body}, ${h.needsAction}, ${h.createdBy})`;
+    // Only a note that needs doing is for someone (the action checks they work at the site).
+    const to = h.assignedTo && isUuid(h.assignedTo) && h.needsAction ? h.assignedTo : null;
+    await q`insert into handover_items (site_id, category, body, needs_action, created_by, assigned_to, assigned_by, assigned_at)
+            values (${h.siteId}, ${h.category}, ${h.body}, ${h.needsAction}, ${h.createdBy}, ${to}, ${to ? h.createdBy : null}, ${to ? q`now()` : null})`;
+  },
+  async assignHandover(target, siteId, to, byId) {
+    if (!isUuid(target.id) || (to !== null && !isUuid(to))) return false;
+    const q = sql();
+    const ok = to === null ? q`true` : givable(q, to, siteId);
+    const rows = target.kind === "prep"
+      ? await q`update prep_entries e set assigned_to = ${to}, assigned_by = ${byId}, assigned_at = now()
+                from prep_handovers h
+                where e.id = ${target.id} and e.site_id = ${siteId} and e.status = 'outstanding' and e.assigned_to is distinct from ${to}::uuid
+                  and h.id = e.handover_id and h.status = 'submitted' and ${ok}
+                returning e.id`
+      : await q`update handover_items set assigned_to = ${to}, assigned_by = ${byId}, assigned_at = now()
+                where id = ${target.id} and site_id = ${siteId} and closed_at is null and needs_action
+                  and assigned_to is distinct from ${to}::uuid and ${ok}
+                returning id`;
+    return rows.length > 0;
   },
   async closeHandover(id, siteId, personId) {
     if (!isUuid(id)) return false;
@@ -660,13 +689,20 @@ export const sqlStore: Store = {
                on conflict (handover_id, item_id) do nothing`;
       if (change.urgent !== undefined) await tx`update prep_entries set urgent = ${change.urgent} where handover_id = ${h.id} and item_id = ${change.itemId}`;
       if (change.note !== undefined) await tx`update prep_entries set note = ${change.note || null} where handover_id = ${h.id} and item_id = ${change.itemId}`;
+      const to = change.assignee;
+      if (to !== undefined && (to === null || isUuid(to))) {
+        await tx`update prep_entries set assigned_to = ${to}, assigned_by = ${personId}, assigned_at = now()
+                 where handover_id = ${h.id} and item_id = ${change.itemId} and assigned_to is distinct from ${to}::uuid
+                   and ${to === null ? tx`true` : givable(tx, to, siteId)}`;
+      }
     });
   },
   async prepOutstanding(siteId) {
     const q = sql();
     const rows = await q<PrepEntryRow[]>`
-      select e.*, c.display_name as created_by_name, null as completed_by_name
+      select e.*, c.display_name as created_by_name, null as completed_by_name, a.display_name as assigned_to_name, ab.display_name as assigned_by_name
       from prep_entries e join prep_handovers h on h.id = e.handover_id join people c on c.id = e.created_by
+        left join people a on a.id = e.assigned_to left join people ab on ab.id = e.assigned_by
       where e.site_id = ${siteId} and e.status = 'outstanding' and h.status = 'submitted'`;
     return rows.map(toPrepEntry);
   },
@@ -680,12 +716,18 @@ export const sqlStore: Store = {
         where e.site_id = ${siteId} and e.status = 'outstanding' and ph.status = 'submitted' for update of e`).map(toPrepEntry);
       const active = (await tx<{ id: string }[]>`select id from prep_items where active`).map((r) => r.id);
       const plan = makePlan(draft, outstanding, active);
+      // A carried item stays with whoever it was for, keeping who said so and when.
+      const forOf = (x: { assignedTo?: string; assignedBy?: string; assignedAt?: number }) =>
+        [x.assignedBy ? x.assignedTo ?? null : null, x.assignedBy ?? null, x.assignedBy && x.assignedAt ? new Date(x.assignedAt) : null] as const;
       for (const c of plan.carryIn) {
-        await tx`insert into prep_entries (handover_id, site_id, item_id, urgent, note, carried_from, created_by)
-                 values (${h.id}, ${siteId}, ${c.itemId}, ${c.urgent}, ${c.note ?? null}, ${c.from}, ${personId})`;
+        const [to, by, at] = forOf(c);
+        await tx`insert into prep_entries (handover_id, site_id, item_id, urgent, note, carried_from, created_by, assigned_to, assigned_by, assigned_at)
+                 values (${h.id}, ${siteId}, ${c.itemId}, ${c.urgent}, ${c.note ?? null}, ${c.from}, ${personId}, ${to}, ${by}, ${at})`;
       }
       for (const m of plan.merge) {
-        await tx`update prep_entries set carried_from = ${m.from}, urgent = ${m.urgent}, note = ${m.note ?? null} where id = ${m.entryId}`;
+        const [to, by, at] = forOf(m);
+        await tx`update prep_entries set carried_from = ${m.from}, urgent = ${m.urgent}, note = ${m.note ?? null},
+                   assigned_to = ${to}, assigned_by = ${by}, assigned_at = ${at} where id = ${m.entryId}`;
       }
       if (plan.markCarried.length) await tx`update prep_entries set status = 'carried' where id = any(${plan.markCarried}::uuid[]) and status = 'outstanding'`;
       await tx`update prep_handovers set status = 'submitted', submitted_by = ${personId}, submitted_at = now(), updated_at = now(),
@@ -1023,14 +1065,14 @@ export const sqlStore: Store = {
       published: r.status === "published", cancelled: !!r.cancelled_at,
     }));
   },
-  async shiftsOnDate(date) {
+  async shiftsOnDate(date, until = date) {
     const q = sql();
     const rows = await q<{ id: string; site_id: SiteId; site_name: string; section: string; week: string; starts_at: Date; ends_at: Date; person_id: string; staff_code: string }[]>`
       select s.id, s.site_id, si.name as site_name, s.section, to_char(s.week_start, 'YYYY-MM-DD') as week, s.starts_at, s.ends_at, s.person_id, p.staff_code
       from shifts s join sites si on si.id = s.site_id join people p on p.id = s.person_id
       join rota_weeks w on w.site_id = s.site_id and w.week_start = s.week_start and w.status = 'published'
       where s.cancelled_at is null and p.status = 'active' and si.status = 'open'
-        and s.starts_at >= ${new Date(londonToUtc(date, "00:00"))} and s.starts_at < ${new Date(londonToUtc(addDays(date, 1), "00:00"))}`;
+        and s.starts_at >= ${new Date(londonToUtc(date, "00:00"))} and s.starts_at < ${new Date(londonToUtc(addDays(until, 1), "00:00"))}`;
     return rows.map((r) => ({
       id: r.id, siteId: r.site_id, siteName: r.site_name, section: r.section, week: r.week,
       date: londonDate(r.starts_at.getTime()), start: londonHM(r.starts_at.getTime()), end: londonHM(r.ends_at.getTime()),

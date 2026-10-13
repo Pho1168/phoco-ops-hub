@@ -28,6 +28,8 @@ import { MustRead } from "@/components/MustRead";
 import { TrainingDue } from "@/components/TrainingDue";
 import { myTraining } from "@/lib/training-service";
 import { allergenChangesToConfirm, sopsToRead } from "@/lib/library-service";
+import { forYouAt } from "@/lib/handover-service";
+import { phoneHandoverSites } from "@/lib/domain/handover";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -83,7 +85,11 @@ export default async function MyShifts() {
     offered: r.offers.some((o) => o.personId === ctx.person.id && !o.withdrawnAt),
   }));
 
-  const [toRead, allergenChanges, training] = await Promise.all([sopsToRead(ctx.person, db), allergenChangesToConfirm(ctx.person, db), myTraining(ctx.person, allSites, db)]);
+  const [toRead, allergenChanges, training, forMe] = await Promise.all([
+    sopsToRead(ctx.person, db), allergenChangesToConfirm(ctx.person, db), myTraining(ctx.person, allSites, db), forYouAt(ctx.person, allSites, db),
+  ]);
+  // Managers on their own phone can read the handover (read-only) at the open sites they manage.
+  const readsHandover = ctx.scope === "shifts" && phoneHandoverSites(ctx.person, allSites).length > 0;
 
   const days = new Map<string, typeof shifts>();
   for (const s of shifts) days.set(s.date, [...(days.get(s.date) ?? []), s]);
@@ -99,12 +105,15 @@ export default async function MyShifts() {
         </div>
       </header>
       <main style={{ paddingBottom: 40 }}>
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">Next 4 weeks · published rotas only</div><h1 className="h-display">My shifts</h1></div>
-          <Link className="btn ghost small" href="/library">SOPs</Link>
-          <Link className="btn ghost small" href="/library/allergens">Allergens</Link>
-          {training.rows.length > 0 && <Link className="btn ghost small" href="/library/training">Training</Link>}
-          <Link className="btn ghost small" href="/rota">Team rota</Link>
+        <div className="stack" style={{ gap: 10 }}>
+          <div><div className="eyebrow">Next 4 weeks · published rotas only</div><h1 className="h-display">My shifts</h1></div>
+          <nav className="row wrap" aria-label="More" style={{ gap: 8 }}>
+            {readsHandover && <Link className="btn ghost small" href="/handover">Handover</Link>}
+            <Link className="btn ghost small" href="/library">SOPs</Link>
+            <Link className="btn ghost small" href="/library/allergens">Allergens</Link>
+            {training.rows.length > 0 && <Link className="btn ghost small" href="/library/training">Training</Link>}
+            <Link className="btn ghost small" href="/rota">Team rota</Link>
+          </nav>
         </div>
 
         <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName, when: when(n.createdAt) }))} />
@@ -115,6 +124,23 @@ export default async function MyShifts() {
           <GasCheck key={site.id} siteId={site.id} siteName={site.name} state={g.state as "due" | "overdue" | "done"} closeAt={londonHM(g.day.closeAt)} needsPin={onTablet}
             done={g.check ? `Checked by ${g.check.personName} at ${londonHM(g.check.createdAt)}` : undefined} />
         ))}
+
+        {forMe.length > 0 && (
+          <section className="card stack" aria-label="For you" style={{ gap: 8 }}>
+            <h2 className="h-sec">For you</h2>
+            {forMe.map(({ site, items }) => (
+              <div key={site.id} className="stack" style={{ gap: 4 }}>
+                {forMe.length > 1 && <div className="strong">{site.name}</div>}
+                <ul className="for-you">
+                  {items.map((i, n) => (
+                    <li key={n}>{i.urgent && <span className="chip bad">Urgent</span>} {i.text}{i.onTablet && <span className="muted"> · read it on the tablet</span>}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+            <div className="muted" style={{ fontSize: 13 }}>From the handover{forMe.length === 1 ? ` at ${forMe[0].site.name}` : ""}. Tick them off on the tablet when they&apos;re done.</div>
+          </section>
+        )}
 
         {!onTablet && <RemindersToggle publicKey={publicKey} />}
 

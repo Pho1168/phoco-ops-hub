@@ -193,6 +193,14 @@ main.wide { max-width: 1100px; }
 .prep-note { font-size: 13px; color: var(--ink-2); margin-top: 2px; }
 .prep-report li.info { background: var(--surface-2); }
 .note-body { font-weight: 600; font-size: 16px; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Who a handover item is for */
+.for-pick { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.for-pick > span:first-child { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.for-pick select { min-height: 40px; font-size: 14px; flex: 1 1 160px; min-width: 0; max-width: 320px; }
+.for-pick .by { font-size: 12px; color: var(--ink-2); }
+.prep-for { font-size: 14px; margin-top: 6px; }
+.for-you { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 15px; }
+.for-you .chip { margin-right: 4px; }
 
 /* Team rota */
 .rota-grid-wrap { overflow-x: auto; background: var(--surface); border-radius: 16px; }

@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { store } from "@/lib/data";
 import { noteOrder, notesForHandover } from "@/lib/domain/handover";
-import { reportOrder, shiftLabel } from "@/lib/domain/prep";
+import { reportOrder } from "@/lib/domain/prep";
+import { sentForLabel } from "@/lib/domain/assign";
+import { givablePeople } from "@/lib/handover-service";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { HandoverList } from "../HandoverList";
 import { handoverPage } from "../load";
@@ -22,11 +24,12 @@ export default async function HandoverReport(props: { searchParams: Promise<{ id
   const history = await db.prepHandovers(ctx.site.id, 50);
   const i = history.findIndex((x) => x.id === h.id);
   const prevSentAt = i >= 0 ? history[i + 1]?.submittedAt : undefined;
-  const [items, notes] = await Promise.all([db.prepItems(), db.handover(ctx.site.id, prevSentAt ?? h.submittedAt! - 14 * 86_400_000)]);
+  const [items, notes, people] = await Promise.all([db.prepItems(), db.handover(ctx.site.id, prevSentAt ?? h.submittedAt! - 14 * 86_400_000), db.people()]);
+  const here = new Set(givablePeople(people, ctx.site.id).map((p) => p.id));
   const byId = new Map(items.map((x) => [x.id, x]));
   const theirs = noteOrder(notesForHandover(notes, h.submittedAt!, prevSentAt));
-  const prep = reportOrder(h.entries, items).map((e) => ({ e, t: prepTile(e, byId) }));
-  const open = [...theirs.map(noteTile), ...prep.filter(({ e }) => e.status !== "completed").map(({ e, t }) => ({ ...t, carried: e.status === "carried" ? false : t.carried, detail: e.status === "carried" ? "Carried on to the next handover" : t.detail }))];
+  const prep = reportOrder(h.entries, items).map((e) => ({ e, t: prepTile(e, byId, here) }));
+  const open = [...theirs.map((n) => noteTile(n, here)), ...prep.filter(({ e }) => e.status !== "completed").map(({ e, t }) => ({ ...t, carried: e.status === "carried" ? false : t.carried, detail: e.status === "carried" ? "Carried on to the next handover" : t.detail }))];
   const done = prep.filter(({ e }) => e.status === "completed").map(({ t }) => t);
 
   return (
@@ -40,7 +43,7 @@ export default async function HandoverReport(props: { searchParams: Promise<{ id
               <h1 className="h-display">{ctx.site.name}</h1>
               <dl className="prep-meta">
                 <div><dt>Sent</dt><dd>{when(h.submittedAt!)}</dd></div>
-                <div><dt>For</dt><dd>{shiftLabel(h.shift)}</dd></div>
+                <div><dt>For</dt><dd>{sentForLabel(h.shift, h.submittedAt!)}</dd></div>
                 <div><dt>From</dt><dd>{h.submittedByName}</dd></div>
                 <div><dt>Stocked</dt><dd>{h.stockedCount} items confirmed</dd></div>
               </dl>
