@@ -113,14 +113,20 @@ function AllergenStrip({ allergens, modifications, dietary = [] }: { allergens: 
  * result, important notes, storage and allergens. A dish: the finished photo with its labels, the serving standard,
  * what's in a portion and how it's built, and its allergens. Amounts follow the size picked in the header.
  */
-export function RecipeCard({ kind, title, code, version, body, links, gone, stepMode }: {
+export function RecipeCard({ kind, title, code, version, body, links, gone, stepMode, stamp, printable }: {
   kind: RecipeKind; title: string; code: string; version?: number; body: PrepBody | DishBody; links: Links; gone: string[]; stepMode?: boolean;
+  /** Not the version in use (a draft, an old or retired one): said on the card, on screen and on paper. */
+  stamp?: string;
+  /** Offer "Print A4" (only the version in use). */
+  printable?: boolean;
 }) {
   const [factor, setFactor] = useState(1);
   const prep = kind === "prep" ? (body as PrepBody) : undefined, dish = kind === "dish" ? (body as DishBody) : undefined;
   const items = prep ? prep.ingredients : dish!.components;
   const notes = useMemo(() => noteLines(prep?.notes ?? ""), [prep?.notes]);
   const stepsForMode = body.steps.map((s) => (s.photo && gone.includes(s.photo.id) ? { text: s.text, warning: s.warning } : s));
+  // Too much for one A4 page: printed in plain flow over two, rather than squeezed.
+  const long = items.length > 12 || body.steps.length > 12 || body.steps.reduce((n, st) => n + st.text.length + (st.warning?.length ?? 0), 0) > 1400;
   const shelf = prep?.shelfLife ? `${prep.shelfLife.qty} ${prep.shelfLife.qty === 1 ? prep.shelfLife.unit.replace(/s$/, "") : prep.shelfLife.unit}` : undefined;
 
   const head = (
@@ -128,6 +134,7 @@ export function RecipeCard({ kind, title, code, version, body, links, gone, step
       <div className="rc-title">
         <span className="rc-code">{code}{version ? ` · v${version}` : ""}{body.category ? ` · ${body.category}` : ""}</span>
         <h1>{title}</h1>
+        {stamp && <span className="rc-stamp" role="status">{stamp}</span>}
       </div>
       <div className="rc-tools">
         {items.some((i) => i.qty !== undefined) && (
@@ -137,14 +144,14 @@ export function RecipeCard({ kind, title, code, version, body, links, gone, step
           </>
         )}
         {stepMode && body.steps.length > 0 && <StepMode title={title} steps={stepsForMode} />}
-        <button type="button" className="btn ghost small rc-print" onClick={() => window.print()}><Icon name="print" />Print A4</button>
+        {printable && <button type="button" className="btn ghost small rc-print" onClick={() => window.print()}><Icon name="print" />Print A4</button>}
       </div>
     </header>
   );
 
   if (prep) {
     return (
-      <article className="rcard prep" aria-label={title}>
+      <article className={`rcard prep ${stamp ? "stamped" : ""} ${long ? "long" : ""}`} aria-label={title}>
         {head}
         <section className="rc-sec rc-ing-sec" aria-label="Ingredients">
           <h2 className="rc-band">Ingredients</h2>
@@ -177,7 +184,7 @@ export function RecipeCard({ kind, title, code, version, body, links, gone, step
   const d = dish!;
   const photoOk = !!d.photo && !gone.includes(d.photo.id);
   return (
-    <article className="rcard dish" aria-label={title}>
+    <article className={`rcard dish ${stamp ? "stamped" : ""} ${long ? "long" : ""}`} aria-label={title}>
       {head}
       <section className="rc-hero" aria-label="The serving standard">
         {d.photo ? (

@@ -1716,7 +1716,11 @@ export async function erasePhoto(docId: string, mediaId: string, reason: string)
   const versions = await db.libraryVersions(doc.id);
   if (!versions.some((v) => photoIds(v.body as SopBody | PrepBody).includes(id.data))) return { ok: false, error: `That photo isn't in this ${kindWord(doc.kind)}` };
   if (!(await db.eraseMedia(id.data, ctx.person.id))) return { ok: false, error: "It has already been erased" };
-  await db.audit({ actorId: ctx.person.id, action: "library.photo_erase", detail: `Erased a photo in ${doc.code} (${why.data})` });
+  // An ingredient picture can be reused in other recipes: it's gone from those too, so the log names them.
+  const others = doc.kind === "sop" ? [] : (await Promise.all([db.libraryDocs("prep"), db.libraryDocs("dish")])).flat()
+    .filter((d) => d.id !== doc.id && [d.published, d.open].some((v) => v && photoIds(v.body as PrepBody).includes(id.data))).map((d) => d.code);
+  await db.audit({ actorId: ctx.person.id, action: "library.photo_erase",
+    detail: `Erased a photo in ${doc.code}${others.length ? ` (also used in ${others.join(", ")})` : ""} (${why.data})` });
   revalidatePath(`/library/${doc.id}`); revalidatePath(`/library/${doc.id}/draft`);
   return { ok: true };
 }

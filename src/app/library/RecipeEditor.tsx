@@ -100,13 +100,23 @@ function ItemPicture({ it, label, pictures, erased, patch, setErr }: {
 }
 
 /**
- * A dish's photo with its labels: "Add a label", then tap where it points; "Move" and tap again. Labels show as
- * numbered pins here and as captions on the card.
+ * A dish's photo with its labels: "Add a label", then tap where it points; "Move" and tap again. On a keyboard, the
+ * arrow keys move the label being placed and Enter puts it down. Labels show as numbered pins here and as captions
+ * on the card.
  */
 function CalloutsField({ photo, callouts, set, erased }: { photo?: Photo; callouts: EditCallout[]; set: (fn: (c: EditCallout[]) => EditCallout[]) => void; erased: string[] }) {
   const [placing, setPlacing] = useState<string | null>(null);
   const patch = (key: string, p: Partial<EditCallout>) => set((cur) => cur.map((c) => (c.key === key ? { ...c, ...p } : c)));
   if (!photo || erased.includes(photo.id)) return <span className="muted">Add a photo of the finished dish first, then pin labels to it (&ldquo;Protein (generous)&rdquo;).</span>;
+  const keys = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!placing) return;
+    const step = e.shiftKey ? 10 : 2;
+    const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (d) {
+      e.preventDefault();
+      set((cur) => cur.map((c) => (c.key === placing ? { ...c, x: Math.min(100, Math.max(0, c.x + d[0])), y: Math.min(100, Math.max(0, c.y + d[1])) } : c)));
+    } else if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); setPlacing(null); }
+  };
   const tap = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!placing) return;
     const r = e.currentTarget.getBoundingClientRect();
@@ -116,12 +126,17 @@ function CalloutsField({ photo, callouts, set, erased }: { photo?: Photo; callou
   };
   return (
     <div className="stack" style={{ gap: 8 }}>
-      <div className={`callout-place ${placing ? "placing" : ""}`} onClick={tap} role={placing ? "button" : undefined}
-        aria-label={placing ? "Tap where the label points" : undefined}>
+      <div className={`callout-place ${placing ? "placing" : ""}`} onClick={tap} onKeyDown={keys} role={placing ? "button" : undefined}
+        tabIndex={placing ? 0 : undefined} ref={(el) => {
+          if (!el) return;
+          if (!placing) delete el.dataset.placing; // focus moves to the photo once each time a label is being placed
+          else if (el.dataset.placing !== placing) { el.dataset.placing = placing; el.focus(); }
+        }}
+        aria-label={placing ? "Tap where the label points, or move it with the arrow keys and press Enter" : undefined}>
         <Image src={`/api/media/${photo.id}`} width={photo.w} height={photo.h} alt="The finished dish" unoptimized />
         {callouts.map((c, i) => <span key={c.key} className="pin" style={{ left: `${c.x}%`, top: `${c.y}%` }} aria-hidden="true">{i + 1}</span>)}
       </div>
-      {placing && <div className="alert" role="status"><div className="grow strong">Tap the photo where the label points</div>
+      {placing && <div className="alert" role="status"><div className="grow strong">Tap the photo where the label points (or use the arrow keys, then Enter)</div>
         <button type="button" className="btn ghost small" onClick={() => setPlacing(null)}>Cancel</button></div>}
       {callouts.map((c, i) => (
         <div key={c.key} className="row" style={{ gap: 6 }}>

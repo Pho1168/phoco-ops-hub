@@ -136,7 +136,8 @@ describe("recipes: the card (pictures, labels, standards)", () => {
     expect(cardPanels([1, 2, 3], 12)).toEqual({ first: [1, 2, 3], more: [] });
     expect(cardPanels(Array.from({ length: 14 }, (_, i) => i + 1), 12)).toEqual({ first: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], more: [13, 14] });
     expect(noteLines("- Keep refrigerated\n• Use within 7–10 days\n\n")).toEqual(["Keep refrigerated", "Use within 7–10 days"]);
-    expect(noteLines("Use kettle water. Stir well. Keep refrigerated.")).toEqual(["Use kettle water.", "Stir well.", "Keep refrigerated."]);
+    expect(noteLines("Keep at 5°C. Max. 3 days.")).toEqual(["Keep at 5°C. Max. 3 days."]); // a paragraph stays one check
+    expect(noteLines("-18°C or below\n✓ Label it")).toEqual(["-18°C or below", "Label it"]);
     expect(noteLines("")).toEqual([]);
   });
 });

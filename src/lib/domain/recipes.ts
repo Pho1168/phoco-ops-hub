@@ -456,10 +456,7 @@ export function cardPanels<S>(steps: S[], max: number = CARD_STEPS): { first: S[
   return steps.length <= max ? { first: steps, more: [] } : { first: steps.slice(0, max), more: steps.slice(max) };
 }
 
-/** Notes as short checks: one per line, or per sentence when written as one paragraph. */
+/** Notes as short checks, one per line (a bullet or "- " in front is dropped; "-18°C" keeps its minus). */
 export function noteLines(notes: string): string[] {
-  const lines = notes.split(/\n+/).map((l) => l.replace(/^\s*[-•*✓✔]\s*/, "").trim()).filter(Boolean);
-  if (lines.length !== 1) return lines;
-  const parts = lines[0].split(/(?<=[.!])\s+(?=[A-Z0-9])/).map((p) => p.trim()).filter(Boolean);
-  return parts.length > 1 && parts.length <= 8 ? parts : lines;
+  return notes.split(/\n+/).map((l) => l.replace(/^\s*(?:[•*✓✔]|-(?=\s))\s*/, "").trim()).filter(Boolean);
 }

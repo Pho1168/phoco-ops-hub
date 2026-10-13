@@ -82,7 +82,8 @@ export async function RecipeDoc({ ctx, doc, wanted }: { ctx: Ctx; doc: LibraryDo
           <div className="alert bad" role="status"><div className="grow stack" style={{ gap: 4 }}><div className="strong">Needs a new version</div>
             {warnings.map((w) => <div key={w} style={{ fontSize: 14 }}>{w}</div>)}</div></div>
         )}
-        <RecipeBodyView kind={kind} title={v.title} code={doc.code} version={v.version} body={v.body} links={links} gone={gone} eraseIn={eraseIn} stepMode={isCurrent} />
+        <RecipeBodyView kind={kind} title={v.title} code={doc.code} version={v.version} body={v.body} links={links} gone={gone} eraseIn={eraseIn} stepMode={isCurrent}
+          stamp={doc.retiredAt ? "Retired: not in use" : isCurrent ? undefined : "Replaced version: not in use"} />
         <div className="muted rc-after">{KIND_TEXT[kind]} · version {v.version}{v.change && v.change !== "new" ? ` (${CHANGE_TEXT[v.change].toLowerCase()})` : ""} ·{" "}
           {kind === "prep" ? "made by" : "built by"} {who(v.body.sections).toLowerCase()} · approved by {v.approvedByName} on {dayMonthYearAt(v.publishedAt!)}
           {writer && v.reviewBy ? ` · review by ${dayMonthYear(v.reviewBy)}` : ""}</div>

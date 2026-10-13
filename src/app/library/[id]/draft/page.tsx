@@ -140,7 +140,8 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
           <div className="alert" role="status"><div className="grow stack" style={{ gap: 4 }}><div className="strong">Check before approving</div>
             {warnings.map((w) => <div key={w} style={{ fontSize: 14 }}>{w}</div>)}</div></div>
         )}
-        <RecipeBodyView kind={kind} title={v.title} code={doc.code} body={body} links={links} gone={gone} eraseIn={ctx.isOwner ? doc.id : undefined} />
+        <RecipeBodyView kind={kind} title={v.title} code={doc.code} body={body} links={links} gone={gone} eraseIn={ctx.isOwner ? doc.id : undefined}
+          stamp="Waiting for approval: not in use yet" />
         {review.ok
           ? <ReviewPanel docId={doc.id} versionId={v.id} rev={v.rev} hasPublished={!!doc.published} reviewBy={reviewBy} tomorrow={tomorrow} asks={asks}
               changeNote="A major change is marked as one, so managers go through it with the kitchen." />

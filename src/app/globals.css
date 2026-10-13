@@ -441,6 +441,7 @@ main.recipe-page > .rc-back { max-width: none; }
 .rc-title { min-width: 0; }
 .rc-title h1 { font-family: var(--display); font-weight: 800; text-transform: uppercase; color: var(--brand); font-size: clamp(30px, 4.4vw, 58px); line-height: .92; margin: 0; letter-spacing: .3px; }
 .rc-code { display: block; font-size: 12px; color: var(--ink-2); font-weight: 600; margin-bottom: 2px; }
+.rc-stamp { display: inline-block; margin-top: 6px; background: var(--bad); color: var(--bad-ink-on); border-radius: 8px; padding: 3px 10px; font-weight: 700; font-size: 14px; }
 .rc-tools { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .rc-tools .btn { min-height: 40px; }
 .rc-makes { background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 6px 14px; font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: .3px; text-transform: uppercase; white-space: nowrap; }
@@ -452,7 +453,7 @@ main.recipe-page > .rc-back { max-width: none; }
 .rc-more[open] > div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 4; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; width: max-content; max-width: 300px; box-shadow: 0 8px 24px rgba(0, 0, 0, .16); }
 .rc-band { font-family: var(--display); font-weight: 700; text-transform: uppercase; font-size: 21px; letter-spacing: .6px; line-height: 1.1; background: var(--brand); color: var(--brand-ink);
   margin: 0; padding: 6px 12px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-.rc-sec { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--surface); border-radius: 12px; overflow: hidden; }
+.rc-sec { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--surface); border-radius: 12px; overflow: auto; }
 .rcard.prep { grid-template-areas: "head" "ings" "method" "foot"; }
 .rc-ing-sec { grid-area: ings; } .rc-method-sec { grid-area: method; } .rc-foot { grid-area: foot; }
 .rc-pic { display: block; max-width: 100%; border-radius: 8px; background: var(--surface-2); }
@@ -548,7 +549,6 @@ main.recipe-page > .rc-back { max-width: none; }
   .rcard.prep { grid-template-areas: "head" "ings" "method" "foot"; grid-template-rows: auto minmax(0, .85fr) minmax(0, 2fr) minmax(0, 1fr); }
   .rcard.prep:has(.rc-ings.list) { grid-template-rows: auto minmax(0, 1.1fr) minmax(0, 2fr) minmax(0, .9fr); }
   .rcard.dish { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); grid-template-areas: "head head" "hero hero" "under under" "portion build"; grid-template-rows: auto auto auto minmax(0, 1fr); }
-  .rcard.dish .rc-sec { overflow: auto; }
 }
 @media (min-width: 900px) and (min-height: 500px) and (orientation: landscape) {
   .rcard { height: var(--rc-h); min-height: 480px; }
@@ -573,19 +573,34 @@ main.recipe-page > .rc-back { max-width: none; }
 @media print {
   main.recipe-page { padding: 0; max-width: none; }
   main.recipe-page > :not(.rcard) { display: none !important; }
-  .rcard { page: recipe; break-inside: avoid; width: 194mm; height: 279mm; min-height: 0; border: 0; padding: 0; gap: 3mm;
+  /* One A4 page. A recipe too long for one (RecipeCard's "long") prints in plain flow over two instead (below). */
+  .rcard { page: recipe; width: 194mm; height: 279mm; min-height: 0; border: 0; padding: 0; gap: 3mm;
     --bg: #F6F1E7; --surface: #FFFFFF; --surface-2: #EFEBE2; --ink: #1F2A22; --ink-2: #4F5E53; --line: #E3DCCD; --brand: #2F4A3A; --brand-ink: #F6F1E7;
     --sage: #DCE3D6; --sage-ink: #2F4A3A; --accent: #C2611A; --accent-ink: #FFFFFF; --bad-soft: #FBE3E0; --bad-ink: #8C1D18; --warn-soft: #F3E6C8; --warn-ink: #6B4E0E; --bad: #B3261E;
     -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .rc-tools > :not(.rc-makes) { display: none !important; }
   .rcard.prep { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "ings" "method" "foot"; grid-template-rows: auto minmax(0, .8fr) minmax(0, 2.1fr) minmax(0, .85fr); }
   .rcard.dish { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); grid-template-areas: "head head" "hero hero" "under under" "portion build"; grid-template-rows: auto auto auto minmax(0, 1fr); }
-  .rc-hero-box { width: min(100%, calc(105mm * var(--arn))); }
-  .rc-ings.tiles { grid-template-columns: repeat(var(--n), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
-  .rc-ings.tiles .rc-ing-pic { flex: 1 1 0; height: auto; }
-  .rc-steps:not(.compact) { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
-  .rc-steps li.off-panel { display: flex; }
+  .rc-ings.tiles, .rc-steps:not(.compact) { grid-auto-rows: minmax(0, 1fr); }
   .rc-steps li { overflow: hidden; }
+  .rc-stamp { border: 1px solid #B3261E; }
+  .rcard.long { height: auto; display: block; }
+  .rcard.long .rc-sec, .rcard.long .rc-ings, .rcard.long .rc-ings li, .rcard.long .rc-steps li, .rcard.long .rc-notes, .rcard.long .rc-store,
+  .rcard.long .rc-allergens, .rcard.long .rc-result { overflow: visible; }
+  .rcard.long > * { margin-bottom: 3mm; }
+  .rcard.long .rc-sec, .rcard.long .rc-method-wrap { display: block; }
+  .rcard.long .rc-ings, .rcard.long .rc-steps { flex: none; }
+  .rcard.long .rc-foot, .rcard.long .rc-under, .rcard.long .rc-hero, .rcard.long .rc-head { break-inside: avoid; }
+  .rcard.long .rc-foot { min-height: 40mm; }
+  .rcard.long .rc-ings.tiles, .rcard.long .rc-steps:not(.compact) { grid-auto-rows: auto; }
+  .rcard.long .rc-steps li { break-inside: avoid; }
+  .rcard.long .rc-steps li .rc-pic { flex: none; height: 24mm; }
+  .rcard.long .rc-result .rc-pic { flex: none; height: 30mm; }
+  .rc-hero-box { width: min(100%, calc(105mm * var(--arn))); }
+  .rc-ings.tiles { grid-template-columns: repeat(var(--n), minmax(0, 1fr)); }
+  .rc-ings.tiles .rc-ing-pic { flex: 1 1 0; height: auto; }
+  .rc-steps:not(.compact) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .rc-steps li.off-panel { display: flex; }
   .rc-steps li .rc-pic { flex: 1 1 0; aspect-ratio: auto; }
   .rc-panel { display: none; }
   .rc-foot { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); }

@@ -21,15 +21,17 @@ function photosIn(body: PrepBody | DishBody): { photo: Photo; label: string }[] 
  * (for reading in full). `links`: linked prep recipes; `gone`: photos the owner erased; `eraseIn`: the owner may erase
  * photos (a privacy tool, kept off the card); `stepMode`: offer step by step.
  */
-export function RecipeBodyView({ kind, title, code, version, body, links, gone, eraseIn, stepMode }: {
+export function RecipeBodyView({ kind, title, code, version, body, links, gone, eraseIn, stepMode, stamp }: {
   kind: RecipeKind; title: string; code: string; version?: number; body: PrepBody | DishBody; links: Record<string, { title: string; code: string; live: boolean }>;
   gone: string[]; eraseIn?: string; stepMode?: boolean;
+  /** Set for anything but the version in use ("Draft: not approved", "Replaced version"): shown on the card, and it can't be printed. */
+  stamp?: string;
 }) {
   const dish = kind === "dish" ? (body as DishBody) : undefined;
   const erasable = eraseIn ? photosIn(body).filter((p) => !gone.includes(p.photo.id)) : [];
   return (
     <>
-      <RecipeCard kind={kind} title={title} code={code} version={version} body={body} links={links} gone={gone} stepMode={stepMode} />
+      <RecipeCard kind={kind} title={title} code={code} version={version} body={body} links={links} gone={gone} stepMode={stepMode} stamp={stamp} printable={!stamp} />
       <div className="rc-after">
         <AllergenCard allergens={body.allergens} modifications={dish?.modifications} dietary={dish?.dietary} />
         {eraseIn && erasable.length > 0 && photoIds(body).length > 0 && (
