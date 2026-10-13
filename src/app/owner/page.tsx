@@ -16,6 +16,7 @@ import { readyShownUntil } from "@/lib/domain/daily";
 import { londonHM } from "@/lib/domain/time";
 import { accountsFor, canManageAccount, ROLE_SHORT } from "@/lib/domain/staff";
 import { activityFor } from "@/lib/domain/activity";
+import { rotaGoneQuiet } from "@/lib/domain/rota";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +83,7 @@ export default async function Owner() {
     const r = src?.lastResult;
     return {
       siteId: s.id, site: s.name, connected: !!src, last: src?.lastImportAt ? fmt(src.lastImportAt) : undefined,
+      quiet: !!src && rotaGoneQuiet(src, now),
       summary: r ? `${r.shifts} shifts · ${r.added} new · ${r.changed} changed · ${r.cancelled} cancelled · ${r.notices} messages` : undefined,
       published: r?.published.length ? r.published.map((w) => `week of ${shortDay(w)}`).join(", ") : undefined,
       issues: r?.issues ?? [],

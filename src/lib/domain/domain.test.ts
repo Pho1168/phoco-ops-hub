@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { classifyReading, parseReading } from "./temperature";
 import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
-import { buildEveningNotices, buildImportNotices, buildTeamWeek, parseExport, parseStaffTab, parseWeekTable, planSync, weekStartOf, type StoredShift, type TeamShift } from "./rota";
+import { buildEveningNotices, buildImportNotices, buildTeamWeek, parseExport, parseStaffTab, parseWeekTable, planSync, rotaGoneQuiet, weekStartOf, type StoredShift, type TeamShift } from "./rota";
 import { afterQuietHours, dayMonthYear, daysBetween, isIsoDate, londonToUtc } from "./time";
 import { hashPin, isValidPin, verifyPin } from "./pin";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, sessionDeviceOk, PAIR_ALPHABET, type Device } from "./devices";
@@ -133,6 +133,13 @@ describe("PINs", () => {
 });
 
 describe("rota import", () => {
+  it("a sheet has gone quiet after more than 2 hours without sending, from when it was connected if it never has", () => {
+    const h = 3_600_000, now = 100 * h;
+    expect(rotaGoneQuiet({ createdAt: 0, lastImportAt: now - 2 * h }, now)).toBe(false);
+    expect(rotaGoneQuiet({ createdAt: 0, lastImportAt: now - 2 * h - 1 }, now)).toBe(true);
+    expect(rotaGoneQuiet({ createdAt: now - h }, now)).toBe(false);
+    expect(rotaGoneQuiet({ createdAt: now - 3 * h }, now)).toBe(true);
+  });
   const header = ["Week starting", "Week #", "Slot", "Rota row", "Name", "Section"];
   const row = (name: string, section: string, days: Record<number, [string, string]>, checks = "0", week = "05/10/2026") => {
     const r = [week, "1", "1", "8", name, section, "", "", "", "", "", "", "", "", checks];

@@ -180,6 +180,17 @@ export function buildEveningNotices(tomorrow: string, shifts: { staffCode: strin
 
 export const EVENING_REMINDER_AT = "18:00";
 
+/** A connected sheet sends every hour. Nothing for longer than this means its hourly send has stopped. */
+export const ROTA_STALE_HOURS = 2;
+
+/**
+ * Whether a connected rota sheet has gone quiet: no rota received for more than ROTA_STALE_HOURS (counting from when
+ * it was connected, if it has never sent one). Changes made in the sheet since then aren't in the app.
+ */
+export function rotaGoneQuiet(src: { createdAt: number; lastImportAt?: number }, now: number): boolean {
+  return now - (src.lastImportAt ?? src.createdAt) > ROTA_STALE_HOURS * 3_600_000;
+}
+
 /** The Monday of the week a London date falls in. */
 export function weekStartOf(date: string): string {
   const dow = (new Date(`${date}T12:00:00Z`).getUTCDay() + 6) % 7; // Mon = 0

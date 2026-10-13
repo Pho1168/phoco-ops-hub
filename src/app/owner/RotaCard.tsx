@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { connectRotaSheet } from "@/app/actions";
 
-export interface RotaRow { siteId: string; site: string; connected: boolean; last?: string; summary?: string; published?: string; issues: string[] }
+/** `quiet`: connected, but nothing received for over ROTA_STALE_HOURS (its hourly send has stopped). */
+export interface RotaRow { siteId: string; site: string; connected: boolean; last?: string; summary?: string; published?: string; issues: string[]; quiet?: boolean }
 
 /** Each site's rota sheet: what it last sent. Only owners connect a sheet (`canConnect`): the script holds a private key. */
 export function RotaCard({ rows, canConnect }: { rows: RotaRow[]; canConnect: boolean }) {
@@ -22,6 +23,16 @@ export function RotaCard({ rows, canConnect }: { rows: RotaRow[]; canConnect: bo
             <div className="grow stack" style={{ gap: 4 }}>
               <div className="strong">{r.site}</div>
               <div className="muted">{!r.connected ? "Not connected yet" : r.last ? `Last received ${r.last} · ${r.summary}` : "Connected, waiting for the sheet to send"}</div>
+              {r.quiet && (
+                <div className="alert bad" role="alert" style={{ padding: "10px 12px" }}>
+                  <div className="grow" style={{ fontSize: 14 }}>
+                    <div className="strong">No rota from this sheet {r.last ? `since ${r.last}` : "yet"}</div>
+                    It should send every hour, so changes made in the sheet since then aren&apos;t in the app. On a computer, open the sheet and use
+                    <strong> Ops Hub → Send rota to Ops Hub now</strong>. Then in <strong>Extensions → Apps Script → Triggers</strong> check there&apos;s
+                    an hourly <strong>sendRota</strong>; if not, run <strong>setUp</strong> once.
+                  </div>
+                </div>
+              )}
               {r.published && <div className="muted">Newly published: {r.published}</div>}
               {r.issues.length > 0 && (
                 <details><summary className="muted" style={{ cursor: "pointer" }}>{r.issues.length} thing{r.issues.length > 1 ? "s" : ""} to check in the sheet</summary>
