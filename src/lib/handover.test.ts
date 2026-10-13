@@ -49,7 +49,7 @@ describe("who handover items are for", () => {
     await demoStore.prepSetDone(rice.id, "EAS", "DEMO-FOH", true);
     const sent = (await demoStore.prepSubmit("EAS", "DEMO-MGR", planSubmit))!;
     expect((await demoStore.prepHandover(sent.handoverId))!.entries.map((e) => e.itemId)).toEqual(["kp-018"]);
-    expect(sent.plan.stockedCount).toBe(62);
+    expect(sent.plan.stockedCount).toBe(84);
     resetDemo();
   });
 

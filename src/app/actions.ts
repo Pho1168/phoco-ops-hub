@@ -34,7 +34,7 @@ import { canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, cleanPathw
 import { trainingData } from "@/lib/training-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
-import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
+import { canEditPrepList, canRetirePrepItem, canUndo, canUsePrep, cleanPrepItem, kindLabel as prepKindLabel, moveTarget, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
 import { canBeGiven, noteCanBeFor } from "@/lib/domain/assign";
 import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
@@ -297,7 +297,7 @@ export async function setNoteDone(id: string, done: boolean): Promise<ActionResu
 
 // ---------- kitchen prep ----------
 const PrepShiftZ = z.enum(["next", "tomorrow_am", "tomorrow_pm"]);
-const PrepItemZ = z.string().regex(/^kp-\d{3}$/);
+const PrepItemZ = z.string().regex(/^kp-\d{3,}$/);
 const UuidZ = z.string().uuid();
 
 /** Anyone working at a site where the prep board is switched on. */
@@ -380,6 +380,83 @@ export async function prepSetDone(handoverId: string, entryId: string, done: boo
     await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "prep.undo", detail: `Put "${name}" back to outstanding` });
   }
   revalidatePath("/handover"); revalidatePath("/today");
+  return { ok: true };
+}
+
+// ---------- the handover master list (Manage → Handover list) ----------
+const PrepFieldsZ = z.object({ name: z.string().max(200), kind: z.string().max(10), group: z.string().max(200) });
+
+/** Managers, operations managers and the owner, on the full app. */
+async function prepListCtx(): Promise<{ ctx: Ctx; error?: string }> {
+  const ctx = await requireCtx();
+  return canEditPrepList(ctx.person) ? { ctx } : { ctx, error: "Only managers change the handover list" };
+}
+const listChanged = () => { revalidatePath("/manage/handover-list"); revalidatePath("/handover/prep"); revalidatePath("/handover"); };
+
+/** Adds an item to the handover list (`id` null), or renames it or moves it to another list or group. */
+export async function savePrepItem(id: string | null, input: unknown): Promise<ActionResult & { id?: string }> {
+  const { ctx, error } = await prepListCtx();
+  if (error) return { ok: false, error };
+  const f = PrepFieldsZ.safeParse(input);
+  const itemId = id === null ? null : PrepItemZ.safeParse(id);
+  if (!f.success || (itemId && !itemId.success)) return { ok: false, error: "That change couldn't be saved" };
+  const db = store();
+  const items = await db.prepItems();
+  const was = itemId ? items.find((i) => i.id === itemId.data) : undefined;
+  if (itemId && !was) return { ok: false, error: "That item isn't on the list" };
+  if (was && !was.active) return { ok: false, error: "Put it back on the list first" };
+  const c = cleanPrepItem(f.data, items, was?.id);
+  if (!c.ok) return c;
+  const v = c.value;
+  if (!was) {
+    const newId = await db.addPrepItem(v, ctx.person.id);
+    await db.audit({ actorId: ctx.person.id, action: "prep.list.add", detail: `Handover list: added "${v.name}" (${prepKindLabel(v.kind)} · ${v.group})` });
+    listChanged();
+    return { ok: true, id: newId };
+  }
+  if (was.name === v.name && was.kind === v.kind && was.group === v.group) return { ok: true, id: was.id };
+  await db.updatePrepItem(was.id, v, ctx.person.id);
+  await db.audit({ actorId: ctx.person.id, action: "prep.list.edit",
+    detail: `Handover list: "${was.name}" (${prepKindLabel(was.kind)} · ${was.group}) is now "${v.name}" (${prepKindLabel(v.kind)} · ${v.group})` });
+  listChanged();
+  return { ok: true, id: was.id };
+}
+
+/** Moves an item one place up or down its group. */
+export async function movePrepItem(id: string, dir: string): Promise<ActionResult> {
+  const { ctx, error } = await prepListCtx();
+  if (error) return { ok: false, error };
+  const itemId = PrepItemZ.safeParse(id), d = z.enum(["up", "down"]).safeParse(dir);
+  if (!itemId.success || !d.success) return { ok: false, error: "That change couldn't be saved" };
+  const db = store();
+  const items = await db.prepItems();
+  const other = moveTarget(items, itemId.data, d.data);
+  if (!other) return { ok: true }; // already first or last
+  if (!(await db.swapPrepItems(itemId.data, other.id, ctx.person.id))) return { ok: false, error: "The list has just changed. Have a look and try again" };
+  const it = items.find((i) => i.id === itemId.data)!;
+  await db.audit({ actorId: ctx.person.id, action: "prep.list.move", detail: `Handover list: moved "${it.name}" ${d.data} (${it.group})` });
+  listChanged();
+  return { ok: true };
+}
+
+/** Takes an item off the handover list, or puts it back: the owner and operations managers only. */
+export async function setPrepItemActive(id: string, active: boolean): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  if (!canRetirePrepItem(ctx.person)) return { ok: false, error: "Only the owner or an operations manager takes things off the list" };
+  const itemId = PrepItemZ.safeParse(id), on = z.boolean().safeParse(active);
+  if (!itemId.success || !on.success) return { ok: false, error: "That change couldn't be saved" };
+  const db = store();
+  const items = await db.prepItems();
+  const it = items.find((i) => i.id === itemId.data);
+  if (!it) return { ok: false, error: "That item isn't on the list" };
+  if (on.data) {
+    const clash = cleanPrepItem({ name: it.name, kind: it.kind, group: it.group }, items, it.id);
+    if (!clash.ok) return clash;
+  }
+  if (!(await db.setPrepItemActive(it.id, on.data, ctx.person.id))) return { ok: true };
+  await db.audit({ actorId: ctx.person.id, action: on.data ? "prep.list.reinstate" : "prep.list.retire",
+    detail: `Handover list: ${on.data ? "put back" : "took off"} "${it.name}" (${prepKindLabel(it.kind)} · ${it.group})` });
+  listChanged();
   return { ok: true };
 }
 

@@ -44,10 +44,14 @@ function ruleFor(limit?: string): string | undefined {
   return undefined;
 }
 
+/** Checklists switched off since (as in the database): Bar & Counter Prep became the handover list's Bar & counter group (migration 0024). */
+const RETIRED_LISTS = new Set(["EAS-BAR-PREP"]);
+
 function buildChecklists(): Checklist[] {
   const out: Checklist[] = [];
   for (const [siteId, site] of Object.entries(library as unknown as Lib)) {
     for (const c of site.checklists) {
+      if (RETIRED_LISTS.has(c.id)) continue;
       let pos = 0;
       const items: ChecklistItem[] = [];
       for (const [section, its] of c.sections) for (const it of its) {
@@ -528,7 +532,36 @@ export const demoStore: Store = {
     h.closedAt = undefined; h.closedBy = undefined; return true;
   },
 
-  async prepItems() { return S().prepItems; },
+  async prepItems() { return S().prepItems.map((i) => ({ ...i })); },
+  async addPrepItem(item, byId) {
+    void byId;
+    const n = Math.max(0, ...S().prepItems.map((i) => Number(i.id.slice(3)) || 0)) + 1;
+    const id = `kp-${String(n).padStart(3, "0")}`;
+    S().prepItems.push({ id, ...item, position: Math.max(0, ...S().prepItems.map((i) => i.position)) + 1, active: true });
+    return id;
+  },
+  async updatePrepItem(id, item, byId) {
+    void byId;
+    const it = S().prepItems.find((i) => i.id === id);
+    if (!it) return false;
+    const moved = it.kind !== item.kind || it.group !== item.group;
+    Object.assign(it, item, moved ? { position: Math.max(...S().prepItems.map((i) => i.position)) + 1 } : {});
+    return true;
+  },
+  async swapPrepItems(a, b, byId) {
+    void byId;
+    const [x, y] = [S().prepItems.find((i) => i.id === a), S().prepItems.find((i) => i.id === b)];
+    if (!x || !y || a === b || x.kind !== y.kind || x.group !== y.group) return false;
+    [x.position, y.position] = [y.position, x.position];
+    return true;
+  },
+  async setPrepItemActive(id, active, byId) {
+    void byId;
+    const it = S().prepItems.find((i) => i.id === id);
+    if (!it || it.active === active) return false;
+    it.active = active;
+    return true;
+  },
   async prepEnabledSites() { return S().prepSites; },
   async prepDraft(siteId) { const h = S().prepHandovers.find((x) => x.siteId === siteId && x.status === "draft"); return h ? prepFull(h.id) : undefined; },
   async prepEditDraft(siteId, personId, change) {

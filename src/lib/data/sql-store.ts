@@ -10,7 +10,7 @@ import type { Priority, Task, TaskCategory, TaskStatus } from "@/lib/domain/task
 import type { LateMinutes, ReplyKind, ShiftReply } from "@/lib/domain/reminders";
 import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
 import { nextCode, type BodyOf, type ChangeKind, type LibraryBody, type LibraryDoc, type LibraryKind, type LibraryVersion, type VersionStatus } from "@/lib/domain/library";
-import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/prep";
+import type { PrepEntry, PrepItem, PrepKind, PrepShift } from "@/lib/domain/prep";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
 import type { Device } from "@/lib/domain/devices";
@@ -661,9 +661,46 @@ export const sqlStore: Store = {
 
   async prepItems() {
     const q = sql();
-    const rows = await q<{ id: string; name: string; category: PrepCategory; position: number; active: boolean }[]>`
-      select id, name, category, position, active from prep_items order by position`;
-    return rows.map((r): PrepItem => ({ id: r.id, name: r.name, category: r.category, position: r.position, active: r.active }));
+    const rows = await q<{ id: string; name: string; kind: PrepKind; grp: string; position: number; active: boolean }[]>`
+      select id, name, kind, grp, position, active from prep_items order by position`;
+    return rows.map((r): PrepItem => ({ id: r.id, name: r.name, kind: r.kind, group: r.grp, position: r.position, active: r.active }));
+  },
+  async addPrepItem(item, byId) {
+    return withTx(async (tx) => {
+      // One at a time, so two people adding at once get different ids and places.
+      await tx`lock table prep_items in share row exclusive mode`;
+      const [{ n, pos }] = await tx<{ n: number; pos: number }[]>`
+        select coalesce(max(substring(id from 4)::int) filter (where id ~ '^kp-[0-9]+$'), 0) + 1 as n, coalesce(max(position), 0) + 1 as pos from prep_items`;
+      const id = `kp-${String(n).padStart(3, "0")}`;
+      await tx`insert into prep_items (id, name, kind, grp, position, created_by) values (${id}, ${item.name}, ${item.kind}, ${item.group}, ${pos}, ${byId})`;
+      return id;
+    });
+  },
+  async updatePrepItem(id, item, byId) {
+    const q = sql();
+    const r = await q`
+      update prep_items set name = ${item.name}, kind = ${item.kind}, grp = ${item.group}, updated_at = now(), updated_by = ${byId},
+        position = case when kind = ${item.kind} and grp = ${item.group} then position else (select max(position) + 1 from prep_items) end
+      where id = ${id} returning id`;
+    return r.length > 0;
+  },
+  async swapPrepItems(a, b, byId) {
+    return withTx(async (tx) => {
+      const rows = await tx<{ id: string; kind: string; grp: string; position: number }[]>`
+        select id, kind, grp, position from prep_items where id in (${a}, ${b}) for update`;
+      const [x, y] = [rows.find((r) => r.id === a), rows.find((r) => r.id === b)];
+      if (!x || !y || a === b || x.kind !== y.kind || x.grp !== y.grp) return false;
+      await tx`update prep_items set position = ${y.position}, updated_at = now(), updated_by = ${byId} where id = ${a}`;
+      await tx`update prep_items set position = ${x.position}, updated_at = now(), updated_by = ${byId} where id = ${b}`;
+      return true;
+    });
+  },
+  async setPrepItemActive(id, active, byId) {
+    const q = sql();
+    const r = await q`
+      update prep_items set active = ${active}, retired_at = ${active ? null : q`now()`}, retired_by = ${active ? null : byId}, updated_at = now(), updated_by = ${byId}
+      where id = ${id} and active <> ${active} returning id`;
+    return r.length > 0;
   },
   async prepEnabledSites() {
     const q = sql();

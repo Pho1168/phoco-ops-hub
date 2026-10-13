@@ -5,7 +5,7 @@ import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { assignHandover, prepEditDraft, prepSubmit, switchSite } from "@/app/actions";
 import type { PickGroup } from "@/lib/domain/assign";
-import { categoryLabel, filterPrep, PREP_CATEGORIES, PREP_SHIFTS, type PrepCategory, type PrepItem, type PrepShift } from "@/lib/domain/prep";
+import { filterPrep, kindLabel, prepGroups, PREP_KINDS, PREP_SHIFTS, type PrepItem, type PrepShift } from "@/lib/domain/prep";
 import { ForSelect, forLabelOf } from "./ForSelect";
 
 /** A picked item: `assignee` is who it's for (`assigneeName` in case they're no longer on the list). */
@@ -29,7 +29,7 @@ export function PrepBoard(p: Props) {
   const router = useRouter();
   const [shift, setShift] = useState<PrepShift>(p.shift);
   const [picks, setPicks] = useState<Record<string, Pick>>(p.picks);
-  const [cat, setCat] = useState<PrepCategory | "all">("all");
+  const [cat, setCat] = useState<string>("all"); // "all" or "kind|group"
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"pick" | "review">("pick");
   const [saving, setSaving] = useState(0);
@@ -197,7 +197,8 @@ export function PrepBoard(p: Props) {
     );
   }
 
-  let lastCat: PrepCategory | null = null;
+  let lastKind = "", lastGroup = "";
+  const groups = prepGroups(p.items.filter((i) => i.active));
   return (
     <>
       <main>
@@ -209,21 +210,26 @@ export function PrepBoard(p: Props) {
           </Link>
         )}
         <div className="prep-tools">
-          <select aria-label="Category" value={cat} onChange={(e) => setCat(e.target.value as PrepCategory | "all")}>
-            <option value="all">All categories</option>
-            {PREP_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+          <select aria-label="Group" value={cat} onChange={(e) => setCat(e.target.value)}>
+            <option value="all">Everything</option>
+            {PREP_KINDS.map((k) => (
+              <optgroup key={k.id} label={k.label}>
+                {groups.filter((g) => g.kind === k.id).map((g) => <option key={`${g.kind}|${g.group}`} value={`${g.kind}|${g.group}`}>{g.group}</option>)}
+              </optgroup>
+            ))}
           </select>
-          <input className="txt" type="search" placeholder="Search, e.g. oil" aria-label="Search prep items" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="txt" type="search" placeholder="Search, e.g. oil" aria-label="Search the list" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         {p.draftBy && <div className="muted">Draft started by {p.draftBy}. Everyone on shift adds to the same list.</div>}
         {shown.length === 0 && <div className="card muted">Nothing matches &quot;{query}&quot;.</div>}
         <div className="prep-grid">
           {shown.map((i) => {
-            const head = i.category !== lastCat ? <h2 key={`h-${i.category}`} className="h-sec prep-cat">{categoryLabel(i.category)}</h2> : null;
-            lastCat = i.category;
+            const kindHead = i.kind !== lastKind ? <h2 key={`k-${i.kind}`} className="h-display prep-kind">{kindLabel(i.kind)}</h2> : null;
+            const head = i.kind !== lastKind || i.group !== lastGroup ? <h3 key={`h-${i.kind}|${i.group}`} className="h-sec prep-cat">{i.group}</h3> : null;
+            lastKind = i.kind; lastGroup = i.group;
             const on = !!picks[i.id]; // picked while it was done, then put back: it can be taken off again here
             const carried = !on && !!p.carried[i.id];
-            return [head, (
+            return [kindHead, head, (
               <button key={i.id} type="button" className={`prep-item${on ? " on" : ""}${carried ? " carried" : ""}`} aria-pressed={on || carried}
                 aria-disabled={carried || undefined} onClick={() => toggle(i.id)}>
                 <span className="mark" aria-hidden="true">{on || carried ? "!" : ""}</span>

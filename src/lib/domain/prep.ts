@@ -1,7 +1,10 @@
-import type { SiteAccess } from "./types";
+import { isLead, managedSites } from "./access";
+import type { Person, SiteAccess } from "./types";
 
 /**
- * Kitchen prep handover. One master list is shared by every restaurant; each site keeps its own handovers.
+ * Kitchen handover list: things to do and things to prep. One master list is shared by every restaurant; each site
+ * keeps its own handovers. Managers add and edit items (Manage → Handover list); the owner and operations managers
+ * also take them off the list and put them back. Items are never deleted, so past handovers still point at them.
  *
  * Outgoing shift: tap only the items that are Needed (saved as a draft as they go), then submit with
  * "everything else is stocked", which records that the rest was checked. Incoming shift: one report of
@@ -9,10 +12,19 @@ import type { SiteAccess } from "./types";
  * Anything still outstanding when the next handover is submitted carries over into it, and the manager is alerted.
  */
 
-export type PrepCategory = "cooking" | "fresh" | "sauces" | "defrost" | "drinks";
+export type PrepKind = "todo" | "prep";
 export type PrepShift = "next" | "tomorrow_am" | "tomorrow_pm";
 export type PrepStatus = "outstanding" | "completed" | "carried";
 
+/** The two lists, in the order they show: things to do, then things to prep. */
+export const PREP_KINDS: { id: PrepKind; label: string }[] = [
+  { id: "todo", label: "To do" },
+  { id: "prep", label: "To prep" },
+];
+export const kindLabel = (k: PrepKind) => PREP_KINDS.find((x) => x.id === k)?.label ?? k;
+
+/** The groups the original list was seeded with (prep_items.category, kept for history). */
+export type PrepCategory = "cooking" | "fresh" | "sauces" | "defrost" | "drinks";
 export const PREP_CATEGORIES: { id: PrepCategory; label: string }[] = [
   { id: "cooking", label: "Cooking & kitchen prep" },
   { id: "fresh", label: "Fresh prep & vegetables" },
@@ -20,6 +32,7 @@ export const PREP_CATEGORIES: { id: PrepCategory; label: string }[] = [
   { id: "defrost", label: "Defrosting & replenishment" },
   { id: "drinks", label: "Drinks & desserts" },
 ];
+export const categoryLabel = (c: PrepCategory) => PREP_CATEGORIES.find((x) => x.id === c)?.label ?? c;
 
 export const PREP_SHIFTS: { id: PrepShift; label: string }[] = [
   { id: "next", label: "Next shift" },
@@ -27,15 +40,14 @@ export const PREP_SHIFTS: { id: PrepShift; label: string }[] = [
   { id: "tomorrow_pm", label: "Tomorrow evening" },
 ];
 
-export const categoryLabel = (c: PrepCategory) => PREP_CATEGORIES.find((x) => x.id === c)?.label ?? c;
 export const shiftLabel = (s: PrepShift) => PREP_SHIFTS.find((x) => x.id === s)?.label ?? s;
 
-export interface PrepItem { id: string; name: string; category: PrepCategory; position: number; active: boolean }
+/** One thing on the master list. Groups show in the order of their first item; items by position within a group. */
+export interface PrepItem { id: string; name: string; kind: PrepKind; group: string; position: number; active: boolean }
 
 /**
- * The master list (63 items). Ids are stable: never reuse or renumber one. To drop an item, mark it
- * inactive in a migration (prep_items.active = false) so past handovers still point at it.
- * supabase/migrations/0006_kitchen_prep.sql seeds the same list; a test keeps the two in step.
+ * The list the database was first seeded with (63 items, all to prep): supabase/migrations/0006_kitchen_prep.sql has
+ * the same, and a test keeps the two in step. It's edited in the app since; ids are never reused or renumbered.
  */
 export const PREP_MASTER: [id: string, name: string, category: PrepCategory][] = [
   ["kp-001", "Change oil – left", "cooking"],
@@ -103,7 +115,89 @@ export const PREP_MASTER: [id: string, name: string, category: PrepCategory][] =
   ["kp-063", "Lemonade", "drinks"],
 ];
 
-export const masterItems = (): PrepItem[] => PREP_MASTER.map(([id, name, category], i) => ({ id, name, category, position: i + 1, active: true }));
+/**
+ * The bar and counter jobs that were the "Bar & Counter Prep" checklist (retired), added to the list as their own
+ * group by migration 0024 (a test keeps the two in step).
+ */
+export const BAR_ITEMS: [id: string, name: string, kind: PrepKind][] = [
+  ["kp-064", "Cut limes into wedges", "prep"],
+  ["kp-065", "Cut coriander stalks to length", "prep"],
+  ["kp-066", "Slice cucumber", "prep"],
+  ["kp-067", "Slice chillies", "prep"],
+  ["kp-068", "Shred spring onions finely", "prep"],
+  ["kp-069", "Pick coriander leaves", "prep"],
+  ["kp-070", "Pick mint leaves", "prep"],
+  ["kp-071", "Cut romaine to size", "prep"],
+  ["kp-072", "Portion bun", "prep"],
+  ["kp-073", "Slice lemons", "prep"],
+  ["kp-074", "Break ice", "prep"],
+  ["kp-075", "Check sweet chilli onions", "todo"],
+  ["kp-076", "Restock packaging", "todo"],
+  ["kp-077", "Restock drinks", "todo"],
+  ["kp-078", "Check banh mi stock", "todo"],
+  ["kp-079", "Check house mayo", "todo"],
+  ["kp-080", "Restock pickle", "todo"],
+  ["kp-081", "Restock pate", "todo"],
+  ["kp-082", "Restock sauces", "todo"],
+  ["kp-083", "Refill and freeze water containers", "todo"],
+  ["kp-084", "Check mix jugs", "todo"],
+  ["kp-085", "Restock che", "todo"],
+];
+export const BAR_GROUP = "Bar & counter";
+
+/** The list as it is after migration 0024 (the demo starts from it). */
+export const masterItems = (): PrepItem[] => [
+  ...PREP_MASTER.map(([id, name, category], i): PrepItem => ({ id, name, kind: "prep", group: categoryLabel(category), position: i + 1, active: true })),
+  ...BAR_ITEMS.map(([id, name, kind], i): PrepItem => ({ id, name, kind, group: BAR_GROUP, position: PREP_MASTER.length + i + 1, active: true })),
+];
+
+// ---------- the master list ----------
+
+/** Managers (and the owner and operations managers) add and edit items; there's one list for every site. */
+export const canEditPrepList = (p: Pick<Person, "access">) => managedSites(p).length > 0;
+/** Only the owner and operations managers take an item off the list, or put one back. */
+export const canRetirePrepItem = (p: Pick<Person, "access">) => isLead(p);
+
+export const PREP_NAME_MAX = 80;
+export const PREP_GROUP_MAX = 40;
+
+/** A new or changed item, tidied and checked. Names are unique on each list (ignoring case), among items in use. */
+export function cleanPrepItem(input: { name: string; kind: string; group: string }, items: PrepItem[], id?: string):
+  { ok: true; value: { name: string; kind: PrepKind; group: string } } | { ok: false; error: string } {
+  const name = input.name.trim().replace(/\s+/g, " "), group = input.group.trim().replace(/\s+/g, " ");
+  if (!PREP_KINDS.some((k) => k.id === input.kind)) return { ok: false, error: "Choose To do or To prep" };
+  const kind = input.kind as PrepKind;
+  if (!name) return { ok: false, error: "Write what it is" };
+  if (name.length > PREP_NAME_MAX) return { ok: false, error: `Keep it under ${PREP_NAME_MAX} characters` };
+  if (!group) return { ok: false, error: "Choose a group, or type a new one" };
+  if (group.length > PREP_GROUP_MAX) return { ok: false, error: `Keep the group under ${PREP_GROUP_MAX} characters` };
+  const same = items.find((i) => i.id !== id && i.active && i.kind === kind && i.name.toLowerCase() === name.toLowerCase());
+  if (same) return { ok: false, error: `"${same.name}" is already on the ${kindLabel(kind)} list` };
+  // An existing group keeps its spelling.
+  const known = items.find((i) => i.kind === kind && i.group.toLowerCase() === group.toLowerCase());
+  return { ok: true, value: { name, kind, group: known?.group ?? group } };
+}
+
+/** The groups on each list, in order: to do first, then to prep, each group where its first item is. */
+export function prepGroups(items: PrepItem[]): { kind: PrepKind; group: string }[] {
+  const seen = new Map<string, { kind: PrepKind; group: string; first: number }>();
+  for (const i of items) {
+    const k = `${i.kind}|${i.group}`;
+    const g = seen.get(k);
+    if (!g || i.position < g.first) seen.set(k, { kind: i.kind, group: i.group, first: i.position });
+  }
+  const kindOrder = (k: PrepKind) => PREP_KINDS.findIndex((x) => x.id === k);
+  return Array.from(seen.values()).sort((a, b) => kindOrder(a.kind) - kindOrder(b.kind) || a.first - b.first).map(({ kind, group }) => ({ kind, group }));
+}
+
+/** The item a move swaps places with: the one before or after it in its group (in use), if any. */
+export function moveTarget(items: PrepItem[], id: string, dir: "up" | "down"): PrepItem | undefined {
+  const it = items.find((i) => i.id === id);
+  if (!it) return undefined;
+  const group = items.filter((i) => i.kind === it.kind && i.group === it.group && i.active).sort((a, b) => a.position - b.position);
+  const at = group.findIndex((i) => i.id === id);
+  return at < 0 ? undefined : group[dir === "up" ? at - 1 : at + 1];
+}
 
 /**
  * Everyone working at the site uses the prep board, front and back of house alike: the teams are small and
@@ -115,14 +209,17 @@ export function canUsePrep(access: SiteAccess | undefined): boolean {
 
 const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-/** Active items in a category ("all" for every one) whose name contains every word typed, in list order. */
-export function filterPrep(items: PrepItem[], category: PrepCategory | "all", query: string): PrepItem[] {
+/**
+ * Active items in a group (`"kind|group"`, or "all" for every one) whose name contains every word typed, in list order:
+ * to do first, then to prep, groups in order, items by position.
+ */
+export function filterPrep(items: PrepItem[], filter: string, query: string): PrepItem[] {
   const words = fold(query).split(/[^a-z0-9]+/).filter(Boolean);
-  const order = (c: PrepCategory) => PREP_CATEGORIES.findIndex((x) => x.id === c);
+  const order = new Map(prepGroups(items).map((g, n) => [`${g.kind}|${g.group}`, n]));
   return items
-    .filter((i) => i.active && (category === "all" || i.category === category))
+    .filter((i) => i.active && (filter === "all" || `${i.kind}|${i.group}` === filter))
     .filter((i) => { const n = fold(i.name); return words.every((w) => n.includes(w)); })
-    .sort((a, b) => order(a.category) - order(b.category) || a.position - b.position);
+    .sort((a, b) => (order.get(`${a.kind}|${a.group}`) ?? 0) - (order.get(`${b.kind}|${b.group}`) ?? 0) || a.position - b.position);
 }
 
 export interface PrepEntry {

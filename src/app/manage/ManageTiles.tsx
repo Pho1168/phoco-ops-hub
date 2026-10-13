@@ -11,6 +11,7 @@ const TILES = [
   { href: "/library/recipes", icon: "prep", title: "Recipes and allergens", text: "Prep recipes and dishes to write and approve; who has seen an allergen change", count: "recipesToDo" as const, countLabel: "to do" },
   { href: "/manage/notices", icon: "notice", title: "Team notices", text: "Post a notice and see who has read it", count: "noticesActive" as const, countLabel: "live" },
   { href: "/manage/time-off", icon: "timeoff", title: "Time off", text: "Holiday requests to approve or decline", count: "timeOffPending" as const, countLabel: "to decide" },
+  { href: "/manage/handover-list", icon: "handover", title: "Handover list", text: "The things to do and to prep the closing shift picks from" },
   { href: "/manage/cover", icon: "handover", title: "Shift cover", text: "Who can cover a shift: approve, then update the rota sheet", count: "coverToDo" as const, countLabel: "to do" },
   { href: "/manage/training", icon: "book", title: "Training", text: "Skills passports: confirm hands-on skills, see who's overdue", count: "trainingToDo" as const, countLabel: "to do" },
   { href: "/manage/certificates", icon: "cert", title: "Certificates", text: "Food hygiene, allergens, first aid and expiry dates", count: "certIssues" as const, countLabel: "need attention" },

@@ -1,6 +1,6 @@
 import type { HandoverItem, PrepEntryView } from "@/lib/data/store";
 import { entryCanBeFor, noteCanBeFor } from "@/lib/domain/assign";
-import { categoryLabel, type PrepItem } from "@/lib/domain/prep";
+import { kindLabel, type PrepItem } from "@/lib/domain/prep";
 import type { Tile } from "./HandoverList";
 
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -20,7 +20,7 @@ const forFields = (x: { assignedTo?: string; assignedToName?: string; assignedBy
 export function prepTile(e: PrepEntryView, items: Map<string, PrepItem>, here?: Set<string>): Tile {
   const item = items.get(e.itemId);
   return {
-    kind: "prep", id: e.id, title: item?.name ?? e.itemId, label: `Prep · ${categoryLabel(item?.category ?? "cooking")}`,
+    kind: "prep", id: e.id, title: item?.name ?? e.itemId, label: item ? `${kindLabel(item.kind)} · ${item.group}` : "To prep",
     urgent: e.urgent, carried: !!e.carriedFrom, detail: e.note, completedAt: e.completedAt, completedByName: e.completedByName,
     assignable: entryCanBeFor(e), ...forFields(e, here),
   };
