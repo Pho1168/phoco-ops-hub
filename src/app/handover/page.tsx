@@ -6,7 +6,7 @@ import { currentNotes, noteOrder } from "@/lib/domain/handover";
 import { reportOrder, shiftLabel } from "@/lib/domain/prep";
 import { phoneShows } from "@/lib/domain/reminders";
 import { faultsOf, sinceText, SEVERITY_LABEL } from "@/lib/domain/equipment";
-import { pickFor, rotaAround } from "@/lib/handover-service";
+import { givablePeople, pickFor, rotaAround } from "@/lib/handover-service";
 import { BottomNav, PhoneTopBar, TopBar } from "@/components/Chrome";
 import { HandoverList } from "./HandoverList";
 import { NoteForm } from "./NoteForm";
@@ -34,7 +34,7 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
     db.handover(site.id),
     db.equipment(site.id),
     db.equipmentEvents({ siteId: site.id, openFaultsOnly: true }),
-    readOnly ? Promise.resolve([]) : db.people(),
+    db.people(),
   ]);
   const kitName = new Map(kit.map((e) => [e.id, e.name]));
   const kitFaults = faultsOf(kitOpen).filter((f) => kitName.has(f.fault.equipmentId))
@@ -46,6 +46,8 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
   const sentTimes = history.map((h) => h.submittedAt!);
   // Anyone on the tablet can give something to someone: the people working the shift it's about come first.
   const pick = readOnly ? undefined : pickFor(site, pickPeriod(latest && { shift: latest.shift, submittedAt: latest.submittedAt! }, now, rota), rota, people, now);
+  // Who can be given things here now: anyone else an item is for has left or is frozen, so it's for anyone.
+  const here = new Set(givablePeople(people, site.id).map((p) => p.id));
   // On a phone, staff notes and complaints are only counted: they're read on the tablet.
   const onPhone = (n: HandoverItem) => !readOnly || phoneShows(n);
 
@@ -54,15 +56,15 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
   const notesOpen = allNotes.filter(onPhone);
   const notesHidden = allNotes.length - notesOpen.length;
   const open = [
-    ...notesOpen.filter((n) => n.category === "Food safety" && n.needsAction).map(noteTile),
-    ...prepOpen.filter((e) => e.urgent).map((e) => prepTile(e, byId)),
-    ...notesOpen.filter((n) => !(n.category === "Food safety" && n.needsAction)).map(noteTile),
-    ...prepOpen.filter((e) => !e.urgent).map((e) => prepTile(e, byId)),
+    ...notesOpen.filter((n) => n.category === "Food safety" && n.needsAction).map((n) => noteTile(n, here)),
+    ...prepOpen.filter((e) => e.urgent).map((e) => prepTile(e, byId, here)),
+    ...notesOpen.filter((n) => !(n.category === "Food safety" && n.needsAction)).map((n) => noteTile(n, here)),
+    ...prepOpen.filter((e) => !e.urgent).map((e) => prepTile(e, byId, here)),
   ];
   const doneSince = latest?.submittedAt ?? now - 24 * 3_600_000;
   const done = [
-    ...(latest?.entries.filter((e) => e.status === "completed").map((e) => prepTile(e, byId)) ?? []),
-    ...notes.filter((n) => n.closedAt && n.closedAt > doneSince && onPhone(n)).map(noteTile),
+    ...(latest?.entries.filter((e) => e.status === "completed").map((e) => prepTile(e, byId, here)) ?? []),
+    ...notes.filter((n) => n.closedAt && n.closedAt > doneSince && onPhone(n)).map((n) => noteTile(n, here)),
   ].sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
   const hiddenToDo = allNotes.filter((n) => n.needsAction && !onPhone(n)).length;
   const toDo = open.filter((t) => !t.info).length + hiddenToDo;

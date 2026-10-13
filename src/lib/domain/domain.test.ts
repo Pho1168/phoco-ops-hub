@@ -339,14 +339,17 @@ describe("kitchen prep", () => {
     expect(plan.missed.map((e) => e.itemId).sort()).toEqual(["kp-040", "kp-063"]);
     expect(plan.stockedCount).toBe(60); // 63 minus rice, peanuts and lemonade
   });
-  it("a carried item stays with whoever it was for; picked again, the new pick decides if it names anyone", () => {
+  it("a carried item stays with whoever it was for, also if it was picked again (done, then put back)", () => {
     const given = { assignedTo: "anh", assignedBy: "minh", assignedAt: 5 };
     const old = [entry("kp-063", { id: "o63", handoverId: "old", ...given }), entry("kp-040", { id: "o40", handoverId: "old", ...given }), entry("kp-001", { id: "o1", handoverId: "old", ...given })];
     const draft = [entry("kp-040", { id: "d40", handoverId: "new", assignedTo: "binh", assignedBy: "linh", assignedAt: 9 }), entry("kp-001", { id: "d1", handoverId: "new" })];
     const plan = planSubmit(draft, old, items.map((i) => i.id));
     expect(plan.carryIn).toEqual([{ itemId: "kp-063", from: "o63", urgent: false, note: undefined, ...given }]);
-    expect(plan.merge.find((m) => m.entryId === "d40")).toMatchObject({ assignedTo: "binh", assignedBy: "linh", assignedAt: 9 });
+    // The review step shows (and changes) the waiting item, so that's what counts, not a pick it hides.
+    expect(plan.merge.find((m) => m.entryId === "d40")).toMatchObject(given);
     expect(plan.merge.find((m) => m.entryId === "d1")).toMatchObject(given);
+    const none = planSubmit([entry("kp-040", { id: "d40", assignedTo: "binh", assignedBy: "linh", assignedAt: 9 })], [entry("kp-040", { id: "o40" })], ["kp-040"]);
+    expect(none.merge[0].assignedBy).toBeUndefined();
     // Taken off someone (by, no one named): stays for nobody.
     const off = planSubmit([], [entry("kp-002", { id: "o2", assignedBy: "minh", assignedAt: 7 })], ["kp-002"]);
     expect(off.carryIn[0]).toMatchObject({ assignedBy: "minh", assignedAt: 7 });

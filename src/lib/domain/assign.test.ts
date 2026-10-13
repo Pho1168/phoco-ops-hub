@@ -53,6 +53,11 @@ describe("the shift a handover is for", () => {
       .toEqual({ label: "Working this evening", people: [{ id: "eve", name: "Eve", times: "14:30–22:15" }] });
     // An early start just before 05:00 works the morning, not the evening before.
     expect(targetPeriod("next", at(TUE, "22:30"), [s(WED, "04:30", "12:00")])).toEqual({ date: WED, part: "am" });
+    // A 45-minute early clean doesn't count, and doesn't push the next shift past the morning crew.
+    const wed = [s(WED, "06:00", "06:45", "clean"), s(WED, "09:00", "15:00", "am"), s(WED, "17:00", "23:00", "pm")];
+    expect(targetPeriod("next", at(TUE, "22:30"), wed)).toEqual({ date: WED, part: "am" });
+    expect(targetPeriod("next", at(TUE, "22:30"), [s(WED, "10:30", "11:15"), s(WED, "11:30", "14:00"), s(WED, "17:00", "23:00", "pm")])).toEqual({ date: WED, part: "am" });
+    expect(targetPeriod("next", at(TUE, "22:30"), [s(WED, "06:00", "06:45")])).toEqual({ date: WED, part: "am" }); // nothing worked: the shift after this one
   });
 
   it("an earlier handover's record names the date only when the rota can't change it", () => {

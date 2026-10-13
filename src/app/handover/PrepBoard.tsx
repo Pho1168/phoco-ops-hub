@@ -56,7 +56,7 @@ export function PrepBoard(p: Props) {
     finally { setSaving((n) => n - 1); }
   };
   const toggle = (id: string) => {
-    if (p.carried[id]) return; // carries over by itself; who it's for is set on the review step
+    if (p.carried[id] && !picks[id]) return; // carries over by itself; who it's for is set on the review step
     const was = picks[id];
     setPicks((cur) => { const n = { ...cur }; if (was) delete n[id]; else n[id] = { urgent: false }; return n; });
     save({ itemId: id, needed: !was }, () => setPicks((cur) => { const n = { ...cur }; if (was) n[id] = was; else delete n[id]; return n; }));
@@ -221,8 +221,8 @@ export function PrepBoard(p: Props) {
           {shown.map((i) => {
             const head = i.category !== lastCat ? <h2 key={`h-${i.category}`} className="h-sec prep-cat">{categoryLabel(i.category)}</h2> : null;
             lastCat = i.category;
-            const carried = !!p.carried[i.id];
-            const on = !carried && !!picks[i.id];
+            const on = !!picks[i.id]; // picked while it was done, then put back: it can be taken off again here
+            const carried = !on && !!p.carried[i.id];
             return [head, (
               <button key={i.id} type="button" className={`prep-item${on ? " on" : ""}${carried ? " carried" : ""}`} aria-pressed={on || carried}
                 aria-disabled={carried || undefined} onClick={() => toggle(i.id)}>

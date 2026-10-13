@@ -164,8 +164,8 @@ export function planSubmit(draft: PrepEntry[], outstanding: PrepEntry[], activeI
     if (seen.has(old.itemId)) continue; // already carried from a newer handover
     seen.add(old.itemId);
     const mine = byItem.get(old.itemId);
-    // Picked again: the new pick says who it's for if it says anything, otherwise it stays with whoever it was for.
-    if (mine) plan.merge.push({ entryId: mine.id, from: old.id, urgent: mine.urgent || old.urgent, note: mine.note || old.note, ...(mine.assignedBy ? forOf(mine) : forOf(old)) });
+    // Picked again (it was done, then put back): it stays with whoever the waiting item is for, as the review step shows.
+    if (mine) plan.merge.push({ entryId: mine.id, from: old.id, urgent: mine.urgent || old.urgent, note: mine.note || old.note, ...forOf(old) });
     else plan.carryIn.push({ itemId: old.itemId, from: old.id, urgent: old.urgent, note: old.note, ...forOf(old) });
   }
   const needed = new Set([...draft.map((e) => e.itemId), ...Array.from(seen)]);

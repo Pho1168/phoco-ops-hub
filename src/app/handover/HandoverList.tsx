@@ -14,8 +14,11 @@ export interface Tile {
   completedAt?: number; completedByName?: string;
   /** Can be given to someone: a prep item still to do, or a note that needs doing. */
   assignable?: boolean;
-  /** Who it's for, and "by Minh, Tue 22:31". `forAt`: when that last changed (also when it was taken off someone). */
-  forId?: string; forName?: string; forBy?: string; forAt?: number;
+  /**
+   * Who it's for, and "by Minh, Tue 22:31". `forAt`: when that last changed (also when it was taken off someone).
+   * `forGone`: they've left the site or are frozen, so it counts as for anyone.
+   */
+  forId?: string; forName?: string; forBy?: string; forAt?: number; forGone?: boolean;
 }
 
 const hm = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -91,7 +94,7 @@ export function HandoverList({ handoverId, open, done, canAct, pick, empty }: {
                           {t.forBy && !picked && <span className="by">{t.forBy}</span>}
                         </div>
                       )
-                      : t.forName && <div className="prep-for">For <b>{t.forName}</b>{t.forBy && <span className="muted"> · {t.forBy}</span>}</div>}
+                      : t.forName && <div className="prep-for">For <b>{t.forName}</b>{t.forGone ? " (not here now)" : ""}{t.forBy && <span className="muted"> · {t.forBy}</span>}</div>}
                   </div>
                   {canAct && !t.info && <button type="button" className="btn small" onClick={() => set(t, true)} aria-label={`Mark ${t.title} done`}>Done</button>}
                 </li>

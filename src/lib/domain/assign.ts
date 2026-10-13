@@ -55,18 +55,22 @@ export function worksIn(s: ShiftTimes, p: Period): boolean {
 
 /**
  * The shift a prep handover is for, from when it was written (`from`) and the site's published rota. "Next shift" is
- * the first one the next person on the rota works (so days the site is shut are skipped, and someone starting at
- * 14:30 works the evening). "Tomorrow" is the day after the one it was written on (after midnight, that's still the
- * evening before).
+ * the first one someone starting after then works (so days the site is shut are skipped, someone starting at 14:30
+ * works the evening, and a 45-minute early clean doesn't count). "Tomorrow" is the day after the one it was written
+ * on (after midnight, that's still the evening before).
  */
 export function targetPeriod(shift: PrepShift, from: number, rota: ShiftTimes[]): Period {
   const cur = periodAt(from);
   if (shift === "tomorrow_am" || shift === "tomorrow_pm") return { date: addDays(cur.date, 1), part: shift === "tomorrow_am" ? "am" : "pm" };
   const until = from + NEXT_SHIFT_DAYS * 86_400_000;
-  const [first] = rota.filter((s) => shiftStart(s) > from && shiftStart(s) < until).sort((a, b) => shiftStart(a) - shiftStart(b));
-  if (!first) return nextPeriod(cur);
-  const p = periodAt(shiftStart(first));
-  return worksIn(first, p) ? p : nextPeriod(p);
+  // Each shift still to start counts in the first period it works (its own, or the next one); a shift too short to
+  // work either doesn't count. The earliest of those is the next shift.
+  const worked = rota.filter((s) => shiftStart(s) > from && shiftStart(s) < until).flatMap((s) => {
+    const p = periodAt(shiftStart(s));
+    return worksIn(s, p) ? [p] : worksIn(s, nextPeriod(p)) ? [nextPeriod(p)] : [];
+  });
+  worked.sort((a, b) => periodBounds(a)[0] - periodBounds(b)[0]);
+  return worked[0] ?? nextPeriod(cur);
 }
 
 /**
