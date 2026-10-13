@@ -129,6 +129,8 @@ export interface PrepEntry {
   id: string; handoverId: string; siteId: string; itemId: string; status: PrepStatus;
   urgent: boolean; note?: string; carriedFrom?: string;
   createdBy: string; createdAt: number; completedBy?: string; completedAt?: number;
+  /** Who it's for (rules in assign.ts), and who last changed that and when. Carried into a newer handover, it's for nobody in particular. */
+  assignedTo?: string; assignedBy?: string; assignedAt?: number;
 }
 
 export interface SubmitPlan {

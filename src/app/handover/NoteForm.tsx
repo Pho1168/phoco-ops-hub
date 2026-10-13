@@ -3,14 +3,20 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addNote } from "@/app/actions";
+import type { PickGroup } from "@/lib/domain/assign";
 import { NOTE_CATEGORIES, type NoteCategory } from "@/lib/domain/handover";
+import { ForSelect } from "./ForSelect";
 
-/** Add a note for the next shift. It shows straight away and goes on the next handover report. */
-export function NoteForm() {
+/**
+ * Add a note for the next shift. It shows straight away and goes on the next handover report. A note that needs
+ * doing can be for someone (`pick`: who can be picked).
+ */
+export function NoteForm({ pick }: { pick?: PickGroup[] }) {
   const router = useRouter();
   const [body, setBody] = useState("");
   const [category, setCategory] = useState<NoteCategory>("Equipment");
   const [needsAction, setNeedsAction] = useState(true);
+  const [assignee, setAssignee] = useState<string | null>(null);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [pending, start] = useTransition();
@@ -19,9 +25,12 @@ export function NoteForm() {
   const submit = () => start(async () => {
     setErr(""); setMsg("");
     if (!body.trim()) { setErr("Write the note first"); box.current?.focus(); return; }
-    const r = await addNote({ category, body, needsAction });
+    const to = needsAction ? assignee : null;
+    const r = await addNote({ category, body, needsAction, assignee: to });
     if (!r.ok) { setErr(r.error); return; }
-    setBody(""); setMsg(needsAction ? "Added. It stays on the list until someone ticks it done." : "Added for info.");
+    const name = to ? pick?.flatMap((g) => g.people).find((p) => p.id === to)?.name : undefined;
+    setBody(""); setAssignee(null);
+    setMsg(needsAction ? `Added${name ? ` for ${name}` : ""}. It stays on the list until someone ticks it done.` : "Added for info.");
     router.refresh();
   });
 
@@ -40,6 +49,12 @@ export function NoteForm() {
           <button type="button" aria-pressed={!needsAction} onClick={() => setNeedsAction(false)}>For info</button>
         </div>
       </div>
+      {needsAction && pick && (
+        <div className="for-pick" style={{ marginTop: 0 }}>
+          <span>For</span>
+          <ForSelect id="note-for" value={assignee ?? ""} pick={pick} label="Who the note is for" onChange={setAssignee} />
+        </div>
+      )}
       <div className="muted">{needsAction ? "Stays on the list until someone ticks it done." : "Shows for this shift and the next, then drops off. Nothing to tick."}</div>
       {err && <div className="err" role="alert">{err}</div>}
       {msg && <div className="alert good" role="status"><div className="strong" style={{ fontSize: 14 }}>{msg}</div></div>}

@@ -181,12 +181,12 @@ export async function queueWeeklyReport(now = Date.now(), db: Store = store()): 
   return queued;
 }
 
-/** What's waiting at a site, for its shift reminders: open handover notes that need action, and prep still to do. */
+/** What's waiting at a site, for its shift reminders: open handover notes that need action, and prep still to do, with who each is for. */
 export async function waitingAt(siteId: SiteId, db: Store = store()): Promise<Waiting> {
   const [notes, prepOn] = await Promise.all([db.handover(siteId), db.prepEnabledSites().then((s) => s.includes(siteId))]);
   const prep = prepOn ? await db.prepOutstanding(siteId) : [];
   const names = new Map(prep.length ? (await db.prepItems()).map((i) => [i.id, i.name]) : []);
-  return waitingFrom(notes, prep.map((e) => ({ name: names.get(e.itemId) ?? "Prep item", urgent: e.urgent })));
+  return waitingFrom(notes, prep.map((e) => ({ name: names.get(e.itemId) ?? "Prep item", urgent: e.urgent, assignedTo: e.assignedTo })));
 }
 
 /**

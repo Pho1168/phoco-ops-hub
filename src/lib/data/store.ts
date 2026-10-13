@@ -26,10 +26,21 @@ export interface RotaResult { at: number; rows: number; shifts: number; added: n
 export interface RotaSource { siteId: SiteId; createdAt: number; lastImportAt?: number; lastResult?: RotaResult }
 export interface Run { listId: string; date: string; answers: Answer[]; signedBy?: string; signedAt?: number }
 export interface Alert { id: string; siteId: SiteId; level: "warning" | "critical"; title: string; detail: string; dedupeKey: string; createdAt: number; resolvedAt?: number; resolvedBy?: string; resolutionNote?: string }
-/** createdBy/closedBy are person ids; createdByName is filled in by the store for display. */
-export interface HandoverItem { id: string; siteId: SiteId; category: string; body: string; needsAction: boolean; createdBy: string; createdByName: string; createdAt: number; closedAt?: number; closedBy?: string; closedByName?: string }
+/**
+ * createdBy/closedBy are person ids; the names are filled in by the store for display. assignedTo: who it's for
+ * (undefined: nobody in particular); assignedBy/assignedAt: who last changed that, and when.
+ */
+export interface HandoverItem {
+  id: string; siteId: SiteId; category: string; body: string; needsAction: boolean; createdBy: string; createdByName: string; createdAt: number;
+  closedAt?: number; closedBy?: string; closedByName?: string;
+  assignedTo?: string; assignedToName?: string; assignedBy?: string; assignedByName?: string; assignedAt?: number;
+}
+/** A new note. `assignedTo`: who it's for, given by whoever writes it. */
+export type NewHandoverItem = Pick<HandoverItem, "siteId" | "category" | "body" | "needsAction" | "createdBy" | "assignedTo">;
 /** A prep entry with display names filled in by the store. */
-export interface PrepEntryView extends PrepEntry { createdByName: string; completedByName?: string }
+export interface PrepEntryView extends PrepEntry { createdByName: string; completedByName?: string; assignedToName?: string; assignedByName?: string }
+/** A sent prep item or a note, to give to someone. */
+export interface HandoverTarget { kind: "prep" | "note"; id: string }
 export interface PrepHandover {
   id: string; siteId: SiteId; shift: PrepShift; status: "draft" | "submitted";
   createdBy: string; createdByName: string; createdAt: number; updatedAt: number;
@@ -105,19 +116,28 @@ export interface Store {
   recordsData(siteId: SiteId, from: string, to: string): Promise<RecordsData>;
 
   handover(siteId: SiteId, createdSince?: number): Promise<HandoverItem[]>;
-  addHandover(h: Omit<HandoverItem, "id" | "createdAt" | "createdByName">): Promise<void>;
+  addHandover(h: NewHandoverItem): Promise<void>;
   /** Ticks a note done. Returns false if it isn't at that site or is already done. */
   closeHandover(id: string, siteId: SiteId, personId: string): Promise<boolean>;
   /** Puts a done note back (for a mis-tap). Returns false if it isn't at that site or isn't done. */
   reopenHandover(id: string, siteId: SiteId): Promise<boolean>;
+  /**
+   * Gives a note that needs action, or an item on a sent prep handover, to someone (`to`: null for nobody in
+   * particular), recording who did it and when. Only while it's still to do, only to someone active at the site, and
+   * only if it changes something: otherwise returns false.
+   */
+  assignHandover(target: HandoverTarget, siteId: SiteId, to: string | null, byId: string): Promise<boolean>;
 
   // Kitchen prep (one master list for every restaurant; handovers per site)
   prepItems(): Promise<PrepItem[]>;
   prepEnabledSites(): Promise<SiteId[]>;
   /** The site's draft, if someone has started one. */
   prepDraft(siteId: SiteId): Promise<PrepHandover | undefined>;
-  /** Starts the site's draft if there isn't one, then sets the shift and/or marks an item needed or not. */
-  prepEditDraft(siteId: SiteId, personId: string, change: { shift?: PrepShift; itemId?: string; needed?: boolean; urgent?: boolean; note?: string | null }): Promise<void>;
+  /**
+   * Starts the site's draft if there isn't one, then sets the shift and/or marks an item needed or not. `assignee`
+   * (with an item): who it's for, null for nobody in particular; ignored unless they're active at the site.
+   */
+  prepEditDraft(siteId: SiteId, personId: string, change: { shift?: PrepShift; itemId?: string; needed?: boolean; urgent?: boolean; note?: string | null; assignee?: string | null }): Promise<void>;
   /** Outstanding entries in the site's submitted handovers. */
   prepOutstanding(siteId: SiteId): Promise<PrepEntryView[]>;
   /**
@@ -316,8 +336,8 @@ export interface Store {
   shiftsForPerson(personId: string, fromDate: string, toDate: string): Promise<ShiftView[]>;
   /** The site's shifts in one week (Monday, YYYY-MM-DD), not cancelled, with names. Published or not: the caller decides. */
   teamShifts(siteId: SiteId, week: string): Promise<TeamShift[]>;
-  /** Published, not-cancelled shifts on a London date, with the person's staff ID. */
-  shiftsOnDate(date: string): Promise<(ShiftView & { personId: string; staffCode: string })[]>;
+  /** Published, not-cancelled shifts starting on a London date (or from `date` to `until`, inclusive), with the person's staff ID. */
+  shiftsOnDate(date: string, until?: string): Promise<(ShiftView & { personId: string; staffCode: string })[]>;
   /** One shift by id, published or not, cancelled or not. */
   shift(id: string): Promise<(ShiftView & { personId: string; staffCode: string }) | undefined>;
 
