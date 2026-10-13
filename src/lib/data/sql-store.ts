@@ -14,6 +14,7 @@ import type { PrepCategory, PrepEntry, PrepItem, PrepShift } from "@/lib/domain/
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
 import type { Device } from "@/lib/domain/devices";
+import { trainingSections, type Pathway, type Question, type Skill, type TrainingEvent } from "@/lib/domain/training";
 
 /**
  * Postgres implementation of Store, used when DATABASE_URL is set (Supabase in production).
@@ -265,6 +266,61 @@ async function prepHandoversWhere(where: postgres.PendingQuery<postgres.Row[]>, 
   }));
 }
 
+// ---------- training ----------
+interface SkillRow {
+  id: string; section: Area; grp: string; position: number; title: string; about: string; hands_on: boolean; induction: boolean; links: string[] | null;
+  video_url: string | null; refresher_months: number | null; pass_mark: number; created_at: Date; updated_at: Date; added_at: Date; induction_from: Date | null;
+  refresher_from: Date | null; refresher_was: number | null; link_since: Record<string, number> | null; rev: number; retired_at: Date | null;
+}
+const toSkill = (r: SkillRow): Skill => ({
+  id: r.id, section: r.section, group: r.grp, position: r.position, title: r.title, about: r.about, handsOn: r.hands_on, induction: r.induction,
+  links: r.links ?? [], videoUrl: opt(r.video_url), refresherMonths: opt(r.refresher_months), passMark: r.pass_mark,
+  createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), addedAt: r.added_at.getTime(), inductionFrom: ms(r.induction_from),
+  refresherFrom: ms(r.refresher_from), refresherWas: opt(r.refresher_was), linkedAt: Object.fromEntries(Object.entries(r.link_since ?? {}).map(([k, v]) => [k, Number(v)])),
+  rev: r.rev, retiredAt: ms(r.retired_at),
+});
+interface QuestionRow { id: string; skill_id: string; position: number; text: string; options: string[]; answer: number; approved_at: Date | null; created_at: Date; updated_at: Date }
+const toQuestion = (r: QuestionRow): Question => ({
+  id: r.id, skillId: r.skill_id, position: r.position, text: r.text, options: r.options, answer: r.answer, approved: !!r.approved_at,
+  approvedAt: ms(r.approved_at), createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(),
+});
+interface TrainingEventRow { id: string; person_id: string; skill_id: string; kind: TrainingEvent["kind"]; at: Date; by_id: string; by_name: string | null; score: number | null; passed: boolean | null; note: string | null }
+const toTrainingEvent = (r: TrainingEventRow): TrainingEvent => ({
+  id: r.id, personId: r.person_id, skillId: r.skill_id, kind: r.kind, at: r.at.getTime(), byId: r.by_id, byName: r.by_name ?? "",
+  score: opt(r.score), passed: opt(r.passed), note: opt(r.note),
+});
+/** One position change at a time in the skill list (adding, moving, bringing back). */
+const lockSkillOrder = (tx: postgres.ReservedSql) => tx`select pg_advisory_xact_lock(hashtext('training_skills.position'))`;
+/**
+ * The sections someone trains in now (the rule is trainingSections), read inside a transaction. A freeze on its own
+ * (not a site closure) doesn't stop training, so unfreezing doesn't start it again.
+ */
+async function traineeSections(tx: postgres.ReservedSql, personId: string): Promise<Area[]> {
+  const [p] = await tx<{ status: Person["status"] }[]>`select status from people where id = ${personId}`;
+  if (!p) return [];
+  const access = await tx<{ site_id: SiteId; role: Role; sections: Area[] }[]>`select site_id, role, sections from person_sites where person_id = ${personId}`;
+  const sites = await tx<{ id: SiteId; status: Site["status"] }[]>`select id, status from sites`;
+  const status = p.status === "frozen" ? "active" : p.status;
+  return trainingSections({ status, access: access.map((a) => ({ siteId: a.site_id, role: a.role, sections: a.sections })) }, sites);
+}
+/**
+ * Makes a change to people, their access or a site, then starts training today in each section someone trains in now
+ * that they didn't before: given a new section, back from leaving, or their site reopened.
+ */
+async function withStarts<T>(tx: postgres.ReservedSql, personIds: string[], change: () => Promise<T>): Promise<T> {
+  const before = new Map<string, Area[]>();
+  for (const id of personIds) before.set(id, await traineeSections(tx, id));
+  const out = await change();
+  for (const id of personIds) {
+    const fresh = (await traineeSections(tx, id)).filter((sec) => !before.get(id)!.includes(sec));
+    if (fresh.length) {
+      await tx`insert into training_starts (person_id, section, started_on)
+        select ${id}, s, (now() at time zone 'Europe/London')::date from unnest(${fresh}::text[]) as s on conflict do nothing`;
+    }
+  }
+  return out;
+}
+
 export const sqlStore: Store = {
   async sites() {
     const q = sql();
@@ -277,9 +333,13 @@ export const sqlStore: Store = {
     return r ? toSite(r as Parameters<typeof toSite>[0]) : undefined;
   },
   async setSiteStatus(id, status, reason) {
-    const q = sql();
-    if (status === "closed") await q`update sites set status = 'closed', closed_reason = ${reason ?? null}, closed_at = now() where id = ${id}`;
-    else await q`update sites set status = 'open', closed_reason = null, closed_at = null, closed_by = null where id = ${id}`;
+    await withTx(async (tx) => {
+      const people = (await tx<{ person_id: string }[]>`select distinct person_id from person_sites where site_id = ${id}`).map((r) => r.person_id);
+      await withStarts(tx, people, async () => {
+        if (status === "closed") await tx`update sites set status = 'closed', closed_reason = ${reason ?? null}, closed_at = now() where id = ${id}`;
+        else await tx`update sites set status = 'open', closed_reason = null, closed_at = null, closed_by = null where id = ${id}`;
+      });
+    });
   },
 
   async people() { return selectPeople(null); },
@@ -301,8 +361,10 @@ export const sqlStore: Store = {
     if ("pinLockedUntil" in patch) cols.pin_locked_until = patch.pinLockedUntil ? new Date(patch.pinLockedUntil) : null;
     const keys = Object.keys(cols);
     if (!keys.length) return;
-    const q = sql();
-    await q`update people set ${q(cols as Record<string, postgres.ParameterOrJSON<never>>, ...keys)} where id = ${id}`;
+    const set = (q: postgres.Sql | postgres.ReservedSql) => q`update people set ${q(cols as Record<string, postgres.ParameterOrJSON<never>>, ...keys)} where id = ${id}`;
+    // Back from leaving or a freeze: training starts again in their sections.
+    if ("status" in patch) await withTx((tx) => withStarts(tx, [id], async () => { await set(tx); }));
+    else await set(sql());
   },
 
   async createPerson({ staffCode, name, pinHash, pinMustChange, access }) {
@@ -310,20 +372,22 @@ export const sqlStore: Store = {
       const [p] = await tx<{ id: string }[]>`
         insert into people (staff_code, display_name, pin_hash, pin_must_change)
         values (${staffCode}, ${name}, ${pinHash}, ${pinMustChange}) returning id`;
-      for (const a of access) {
-        await tx`insert into person_sites (person_id, site_id, role, sections) values (${p.id}, ${a.siteId}, ${a.role}, ${a.sections})`;
-      }
+      await withStarts(tx, [p.id], async () => {
+        for (const a of access) {
+          await tx`insert into person_sites (person_id, site_id, role, sections) values (${p.id}, ${a.siteId}, ${a.role}, ${a.sections})`;
+        }
+      });
       return p.id;
     });
   },
   async setAccess(personId, access) {
     if (!isUuid(personId)) return;
-    await withTx(async (tx) => {
+    await withTx((tx) => withStarts(tx, [personId], async () => {
       await tx`delete from person_sites where person_id = ${personId}`;
       for (const a of access) {
         await tx`insert into person_sites (person_id, site_id, role, sections) values (${personId}, ${a.siteId}, ${a.role}, ${a.sections})`;
       }
-    });
+    }));
   },
 
   async createSession(personId, siteId, ttlMs, deviceId, scope = "full") {
@@ -1184,6 +1248,199 @@ export const sqlStore: Store = {
     const r = await q`delete from media m where m.created_at < ${new Date(before)}
       and not exists (select 1 from library_versions v where v.status <> 'discarded' and strpos(v.body::text, m.id::text) > 0)`;
     return r.count;
+  },
+
+  // ---------- training ----------
+  async trainingSkills() {
+    const q = sql();
+    return (await q<SkillRow[]>`
+      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, added_at,
+        induction_from, refresher_from, refresher_was, link_since, rev, retired_at
+      from training_skills order by case section when 'FOH' then 1 when 'BOH' then 2 else 3 end, position, title`).map(toSkill);
+  },
+  async trainingSkill(id) {
+    if (!isUuid(id)) return undefined;
+    const q = sql();
+    const [r] = await q<SkillRow[]>`
+      select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, added_at,
+        induction_from, refresher_from, refresher_was, link_since, rev, retired_at
+      from training_skills where id = ${id}`;
+    return r ? toSkill(r) : undefined;
+  },
+  async createTrainingSkill(s, by) {
+    return withTx(async (tx) => {
+      await lockSkillOrder(tx);
+      const [r] = await tx<{ id: string }[]>`
+        insert into training_skills (section, grp, position, title, about, hands_on, induction, links, link_since, video_url, refresher_months, pass_mark, created_by)
+        values (${s.section}, ${s.group}, (select coalesce(max(position), 0) + 1 from training_skills where section = ${s.section}), ${s.title}, ${s.about},
+          ${s.handsOn}, ${s.induction}, ${s.links}::uuid[],
+          (select coalesce(jsonb_object_agg(l::text, (extract(epoch from now()) * 1000)::bigint), '{}'::jsonb) from unnest(${s.links}::uuid[]) as l),
+          ${s.videoUrl ?? null}, ${s.refresherMonths ?? null}, ${s.passMark}, ${by})
+        returning id`;
+      return r.id;
+    });
+  },
+  async saveTrainingSkill(id, rev, s) {
+    if (!isUuid(id)) return undefined;
+    return withTx(async (tx) => {
+      await lockSkillOrder(tx);
+      // In SET, every column on the right is the value before the update. A new pathway puts it last there and counts as
+      // joining it; becoming part of induction and a changed refresher are dated (with the refresher it had); a newly
+      // linked document is dated, the others keep their dates.
+      const refresher = s.refresherMonths ?? null;
+      const [r] = await tx<{ rev: number }[]>`
+        update training_skills set grp = ${s.group}, title = ${s.title}, about = ${s.about}, hands_on = ${s.handsOn}, induction = ${s.induction},
+          links = ${s.links}::uuid[], video_url = ${s.videoUrl ?? null}, refresher_months = ${refresher}, pass_mark = ${s.passMark},
+          position = case when section = ${s.section} then position
+            else (select coalesce(max(o.position), 0) + 1 from training_skills o where o.section = ${s.section}) end,
+          added_at = case when section = ${s.section} then added_at else now() end,
+          induction_from = case when not induction and ${s.induction} then now() else induction_from end,
+          refresher_from = case when refresher_months is distinct from ${refresher}::integer then now() else refresher_from end,
+          refresher_was = case when refresher_months is distinct from ${refresher}::integer then refresher_months else refresher_was end,
+          link_since = (select coalesce(jsonb_object_agg(l::text, coalesce(link_since -> (l::text), to_jsonb((extract(epoch from now()) * 1000)::bigint))), '{}'::jsonb)
+            from unnest(${s.links}::uuid[]) as l),
+          section = ${s.section}, updated_at = now(), rev = rev + 1
+        where id = ${id} and rev = ${rev} and retired_at is null returning rev`;
+      return r?.rev;
+    });
+  },
+  async moveTrainingSkill(id, dir) {
+    if (!isUuid(id)) return false;
+    return withTx(async (tx) => {
+      await lockSkillOrder(tx);
+      const [me] = await tx<{ section: Area; position: number }[]>`select section, position from training_skills where id = ${id} and retired_at is null`;
+      if (!me) return false;
+      const [other] = await tx<{ id: string; position: number }[]>`
+        select id, position from training_skills where section = ${me.section} and retired_at is null and id <> ${id}
+          and ${dir < 0 ? tx`position < ${me.position}` : tx`position > ${me.position}`}
+        order by ${dir < 0 ? tx`position desc` : tx`position asc`} limit 1`;
+      if (!other) return false;
+      await tx`update training_skills set position = ${other.position} where id = ${id}`;
+      await tx`update training_skills set position = ${me.position} where id = ${other.id}`;
+      return true;
+    });
+  },
+  async retireTrainingSkill(id, by) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update training_skills set retired_at = now(), retired_by = ${by}, rev = rev + 1 where id = ${id} and retired_at is null`).count === 1;
+  },
+  async reinstateTrainingSkill(id) {
+    if (!isUuid(id)) return false;
+    return withTx(async (tx) => {
+      await lockSkillOrder(tx);
+      // Back in everyone's training: it joins its pathway again now (deadlines run from then at the earliest).
+      const r = await tx`update training_skills k set retired_at = null, retired_by = null, added_at = now(), rev = rev + 1,
+          position = (select coalesce(max(o.position), 0) + 1 from training_skills o where o.section = k.section and o.retired_at is null)
+        where k.id = ${id} and k.retired_at is not null`;
+      return r.count === 1;
+    });
+  },
+  async trainingQuestions(skillIds) {
+    const q = sql();
+    const ids = skillIds?.filter(isUuid);
+    if (ids && !ids.length) return [];
+    const rows = await q<QuestionRow[]>`
+      select id, skill_id, position, text, options, answer, approved_at, created_at, updated_at from training_questions
+      where retired_at is null ${ids ? q`and skill_id = any(${ids}::uuid[])` : q``}
+      order by skill_id, position, created_at`;
+    return rows.map(toQuestion);
+  },
+  async saveTrainingQuestion(x, by, approve) {
+    if (!isUuid(x.skillId) || (x.id !== undefined && !isUuid(x.id))) return undefined;
+    return withTx(async (tx) => {
+      // The skill's row is locked so two new questions can't take the same place.
+      const [skill] = await tx`select id from training_skills where id = ${x.skillId} and retired_at is null for update`;
+      if (!skill) return undefined;
+      const options = tx.json(x.options as unknown as postgres.JSONValue);
+      if (x.id) {
+        const [r] = await tx<{ id: string }[]>`update training_questions set text = ${x.text}, options = ${options}, answer = ${x.answer}, updated_at = now()
+          where id = ${x.id} and skill_id = ${x.skillId} and retired_at is null returning id`;
+        return r?.id;
+      }
+      const [r] = await tx<{ id: string }[]>`
+        insert into training_questions (skill_id, position, text, options, answer, approved_by, approved_at, created_by)
+        values (${x.skillId}, (select coalesce(max(position), 0) + 1 from training_questions where skill_id = ${x.skillId}), ${x.text}, ${options}, ${x.answer},
+          ${approve ? by : null}, ${approve ? tx`now()` : null}, ${by})
+        returning id`;
+      return r.id;
+    });
+  },
+  async approveTrainingQuestions(skillId, by) {
+    if (!isUuid(skillId)) return 0;
+    const q = sql();
+    return (await q`update training_questions set approved_by = ${by}, approved_at = now()
+      where skill_id = ${skillId} and approved_at is null and retired_at is null`).count;
+  },
+  async retireTrainingQuestion(id, by) {
+    if (!isUuid(id)) return false;
+    const q = sql();
+    return (await q`update training_questions set retired_at = now(), retired_by = ${by} where id = ${id} and retired_at is null`).count === 1;
+  },
+  async trainingPathways() {
+    const q = sql();
+    const rows = await q<{ section: Area; induction_days: number; all_days: number; changed_at: Date | null; induction_was: number | null; all_was: number | null }[]>`
+      select section, induction_days, all_days, changed_at, induction_was, all_was from training_pathways`;
+    return rows.map((r): Pathway => ({
+      section: r.section, inductionDays: r.induction_days, allDays: r.all_days, changedAt: ms(r.changed_at), inductionWas: opt(r.induction_was), allWas: opt(r.all_was),
+    }));
+  },
+  async saveTrainingPathway(p, by) {
+    const q = sql();
+    // A change is dated, with the days it had before (training_pathways.* in DO UPDATE are the values before it).
+    await q`insert into training_pathways (section, induction_days, all_days, updated_by, updated_at) values (${p.section}, ${p.inductionDays}, ${p.allDays}, ${by}, now())
+      on conflict (section) do update set
+        changed_at = case when (training_pathways.induction_days, training_pathways.all_days) <> (excluded.induction_days, excluded.all_days) then now() else training_pathways.changed_at end,
+        induction_was = case when (training_pathways.induction_days, training_pathways.all_days) <> (excluded.induction_days, excluded.all_days) then training_pathways.induction_days else training_pathways.induction_was end,
+        all_was = case when (training_pathways.induction_days, training_pathways.all_days) <> (excluded.induction_days, excluded.all_days) then training_pathways.all_days else training_pathways.all_was end,
+        induction_days = excluded.induction_days, all_days = excluded.all_days, updated_by = excluded.updated_by, updated_at = now()`;
+  },
+  async trainingStarts(personIds) {
+    const q = sql();
+    const ids = personIds?.filter(isUuid);
+    if (ids && !ids.length) return [];
+    // The latest start in each section counts.
+    const rows = await q<{ person_id: string; section: Area; started_on: string }[]>`
+      select distinct on (person_id, section) person_id, section, started_on::text as started_on from training_starts
+      ${ids ? q`where person_id = any(${ids}::uuid[])` : q``} order by person_id, section, started_on desc`;
+    return rows.map((r) => ({ personId: r.person_id, section: r.section, startedOn: r.started_on }));
+  },
+  async addTrainingStarts(starts) {
+    const rows = starts.filter((x) => isUuid(x.personId));
+    if (!rows.length) return 0;
+    const q = sql();
+    return (await q`insert into training_starts (person_id, section, started_on)
+      select * from unnest(${rows.map((x) => x.personId)}::uuid[], ${rows.map((x) => x.section)}::text[], ${rows.map((x) => x.startedOn)}::date[])
+      on conflict do nothing`).count;
+  },
+  async trainingEvents(f) {
+    const q = sql();
+    const people = f.personIds?.filter(isUuid), skills = f.skillIds?.filter(isUuid);
+    if ((people && !people.length) || (skills && !skills.length)) return [];
+    const rows = await q<TrainingEventRow[]>`
+      select e.id, e.person_id, e.skill_id, e.kind, e.at, e.by_id, b.display_name as by_name, e.score, e.passed, e.note
+      from training_events e join people b on b.id = e.by_id
+      where true ${people ? q`and e.person_id = any(${people}::uuid[])` : q``} ${skills ? q`and e.skill_id = any(${skills}::uuid[])` : q``}
+      order by e.at, e.id`;
+    return rows.map(toTrainingEvent);
+  },
+  async addTrainingEvent(e) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`
+      insert into training_events (person_id, skill_id, kind, by_id, score, passed, detail, note)
+      values (${e.personId}, ${e.skillId}, ${e.kind}, ${e.byId}, ${e.score ?? null}, ${e.passed ?? null},
+        ${e.detail === undefined ? null : q.json(e.detail as postgres.JSONValue)}, ${e.note ?? null})
+      returning id`;
+    return r.id;
+  },
+  async libraryMajorChanges(docIds) {
+    const ids = docIds.filter(isUuid);
+    if (!ids.length) return new Map();
+    const q = sql();
+    const rows = await q<{ doc_id: string; at: Date }[]>`
+      select doc_id, max(published_at) as at from library_versions
+      where doc_id = any(${ids}::uuid[]) and change = 'major' and status in ('published', 'superseded') group by doc_id`;
+    return new Map(rows.map((r) => [r.doc_id, r.at.getTime()]));
   },
 
   // ---------- shift cover ----------

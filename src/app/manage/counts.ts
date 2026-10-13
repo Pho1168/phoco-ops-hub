@@ -8,6 +8,8 @@ import { londonDate } from "@/lib/domain/time";
 import { managedSites } from "@/lib/domain/access";
 import { canDecide } from "@/lib/domain/timeoff";
 import { libraryToDo } from "@/lib/domain/library";
+import { trainingToDo } from "@/lib/domain/training";
+import { trainingData } from "@/lib/training-service";
 import type { Person } from "@/lib/domain/types";
 import type { ManageCounts } from "./ManageTiles";
 
@@ -16,9 +18,9 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
   const db = store();
   const today = londonDate(Date.now());
   const managed = managedSites(actor);
-  const [notices, pending, people, certs, sites, sops, preps, dishes] = await Promise.all([
+  const [notices, pending, people, certs, sites, sops, preps, dishes, training] = await Promise.all([
     db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(),
-    db.libraryDocs("sop", { light: true }), db.libraryDocs("prep", { light: true }), db.libraryDocs("dish", { light: true }),
+    db.libraryDocs("sop", { light: true }), db.libraryDocs("prep", { light: true }), db.libraryDocs("dish", { light: true }), trainingData(db),
   ]);
   const openManaged = sites.filter((s) => s.status === "open" && managed.includes(s.id)).map((s) => s.id);
   let equipmentIssues = 0;
@@ -46,5 +48,7 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
     coverToDo,
     libraryToDo: libraryToDo(actor, sops, sites),
     recipesToDo: libraryToDo(actor, [...preps, ...dishes], sites),
+    // Training: hands-on skills they can confirm now, people (in their care) with something overdue, quizzes to approve.
+    trainingToDo: (({ ready, overdue, toApprove }) => ready + overdue + toApprove)(trainingToDo(actor, peopleInCare(actor, people), sites, training, today)),
   };
 }

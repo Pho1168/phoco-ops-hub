@@ -12,13 +12,14 @@ import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
 import type { CoverRequest } from "@/lib/domain/cover";
 import type { BodyOf, ChangeKind, LibraryBody, LibraryDoc, LibraryKind, LibraryVersion } from "@/lib/domain/library";
+import type { EventKind, Pathway, Question, Skill, SkillFields, TrainingEvent, TrainingStart } from "@/lib/domain/training";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
 /** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
-export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply" | "gas" | "ready" | "daily" | "cover";
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply" | "gas" | "ready" | "daily" | "cover" | "training";
 export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number; url?: string }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
@@ -59,14 +60,19 @@ export type LibraryMove = "submit" | "withdraw" | "send_back" | "discard";
 export interface Store {
   sites(): Promise<Site[]>;
   site(id: SiteId): Promise<Site | undefined>;
+  /** Opens or closes a site. Reopening starts training again for the people who train there (see createPerson). */
   setSiteStatus(id: SiteId, status: Site["status"], reason?: string): Promise<void>;
 
   people(): Promise<Person[]>;
   person(id: string): Promise<Person | undefined>;
+  /** Changes a person. Back from leaving, their training starts again today (not after a freeze on its own). */
   updatePerson(id: string, patch: Partial<Person>): Promise<void>;
-  /** Creates a person with their site access; returns the new id. */
+  /**
+   * Creates a person with their site access; returns the new id. Their training starts today in each section they
+   * train in (trainingSections: staff or a manager at an open site, not an owner or operations manager).
+   */
   createPerson(p: { staffCode: string; name: string; pinHash: string; pinMustChange: boolean; access: Person["access"] }): Promise<string>;
-  /** Replaces a person's site access. */
+  /** Replaces a person's site access. A section they now train in that they didn't before starts its training today. */
   setAccess(personId: string, access: Person["access"]): Promise<void>;
 
   createSession(personId: string, siteId: SiteId, ttlMs: number, deviceId?: string, scope?: SessionScope): Promise<Session>;
@@ -232,6 +238,51 @@ export interface Store {
   eraseMedia(id: string, personId: string): Promise<boolean>;
   /** Deletes photos older than `before` that no library version uses (discarded drafts don't count). Returns how many. */
   deleteUnusedMedia(before: number): Promise<number>;
+
+  // Training: skills in pathways, their quiz questions and deadlines (retired, never deleted), when each person started
+  // in a section, and an append-only record of what people did.
+  /** Every skill, retired ones too, in pathway order. */
+  trainingSkills(): Promise<Skill[]>;
+  trainingSkill(id: string): Promise<Skill | undefined>;
+  /** A new skill, last in its pathway. */
+  createTrainingSkill(s: SkillFields, by: string): Promise<string>;
+  /**
+   * Saves a live skill if it's still at revision `rev`. A new pathway puts it last there and dates `addedAt`; becoming
+   * part of induction dates `inductionFrom`; a changed refresher dates `refresherFrom` (keeping `refresherWas`); a newly
+   * linked document is dated in `linkedAt`. The new revision, or undefined (changed meanwhile, or retired).
+   */
+  saveTrainingSkill(id: string, rev: number, s: SkillFields): Promise<number | undefined>;
+  /** Swaps a live skill with the live one before (-1) or after (1) it in its pathway. False if there's none. */
+  moveTrainingSkill(id: string, dir: -1 | 1): Promise<boolean>;
+  /** Retires a skill (a new revision, so an open form can't save over it). */
+  retireTrainingSkill(id: string, by: string): Promise<boolean>;
+  /** Brings a retired skill back, last in its pathway (it joins it again now: `addedAt`). */
+  reinstateTrainingSkill(id: string): Promise<boolean>;
+  /** Questions not retired, approved or drafted, in order. */
+  trainingQuestions(skillIds?: string[]): Promise<Question[]>;
+  /**
+   * Adds a question (last in its quiz; approved at once if `approve`) or changes one, which keeps its approval.
+   * Undefined if the question or skill isn't there (or is retired).
+   */
+  saveTrainingQuestion(q: { id?: string; skillId: string; text: string; options: string[]; answer: number }, by: string, approve: boolean): Promise<string | undefined>;
+  /** Approves a skill's drafted questions; returns how many. */
+  approveTrainingQuestions(skillId: string, by: string): Promise<number>;
+  retireTrainingQuestion(id: string, by: string): Promise<boolean>;
+  trainingPathways(): Promise<Pathway[]>;
+  saveTrainingPathway(p: Pathway, by: string): Promise<void>;
+  /**
+   * When people last started training in each section: recorded when they're given it, come back from leaving, or
+   * their site reopens (createPerson, setAccess, updatePerson, setSiteStatus). The latest per section.
+   */
+  trainingStarts(personIds?: string[]): Promise<TrainingStart[]>;
+  /** Records starts (ignoring any already there for that day). For people training with no start yet: the scheduler. */
+  addTrainingStarts(starts: TrainingStart[]): Promise<number>;
+  /** Oldest first. */
+  trainingEvents(filter: { personIds?: string[]; skillIds?: string[] }): Promise<TrainingEvent[]>;
+  /** Records what someone did. A quiz keeps the questions as asked and the answers given (`detail`). */
+  addTrainingEvent(e: { personId: string; skillId: string; kind: EventKind; byId: string; score?: number; passed?: boolean; detail?: unknown; note?: string }): Promise<string>;
+  /** For each of these documents that has had one: when its latest major change was published. */
+  libraryMajorChanges(docIds: string[]): Promise<Map<string, number>>;
 
   // Shift cover (requests are withdrawn or decided, offers withdrawn; nothing is deleted)
   /**

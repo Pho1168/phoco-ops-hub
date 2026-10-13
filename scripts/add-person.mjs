@@ -58,6 +58,18 @@ try {
       returning id`;
     await tx`delete from person_sites where person_id = ${p.id}`;
     for (const a of access) await tx`insert into person_sites (person_id, site_id, role, sections) values (${p.id}, ${a.site}, ${a.role}, ${a.secs})`;
+    // Training starts today in each section they'll train in and haven't started yet (as the app does: staff or a
+    // manager at an open site, not an owner or operations manager; see trainingSections in src/lib/domain/training.ts).
+    await tx`insert into training_starts (person_id, section, started_on)
+      select distinct ps.person_id, s.section, (now() at time zone 'Europe/London')::date
+      from person_sites ps
+      join people pp on pp.id = ps.person_id and pp.status = 'active'
+      join sites st on st.id = ps.site_id and st.status = 'open'
+      cross join lateral unnest(ps.sections) as s(section)
+      where ps.person_id = ${p.id} and ps.role in ('staff', 'manager')
+        and not exists (select 1 from person_sites x where x.person_id = ps.person_id and x.role in ('owner', 'ops'))
+        and not exists (select 1 from training_starts t where t.person_id = ps.person_id and t.section = s.section)
+      on conflict do nothing`;
     await tx`insert into audit_log (actor_id, action, entity, entity_id, detail) values (${p.id}, 'person.setup', 'person', ${p.id}, ${tx.json({ text: `Account set up from the command line (${values.code})` })})`;
   });
   console.log(`Saved ${values.code} with access ${access.map((a) => `${a.site} ${a.role}`).join(", ")}.`);

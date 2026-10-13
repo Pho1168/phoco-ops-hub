@@ -29,6 +29,9 @@ import { canCoverNow, coverCandidates } from "@/lib/cover-service";
 import { canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw as canTakeBack, changeFor, CHANGE_TEXT, cleanSop, codePrefix, docReach,
   dropPhotos, isKind, photoIds, readsAny, readyForReview, validReviewBy, type LibraryBody, type LibraryKind, type SopBody } from "@/lib/domain/library";
 import { alertedAt, allergenAlert, cleanRecipe, recipeReady, type DishBody, type PrepBody } from "@/lib/domain/recipes";
+import { canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, cleanPathway, cleanQuestion, cleanSkill, gradeQuiz, managesTraining, passport, PATHWAY_TEXT,
+  quizOf, quizVersion, TRAINING_LIMITS, type PassportRow } from "@/lib/domain/training";
+import { trainingData } from "@/lib/training-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
@@ -1593,5 +1596,270 @@ export async function ackVersion(versionId: string): Promise<ActionResult> {
   }
   if (doc.kind === "dish") await db.audit({ actorId: ctx.person.id, action: "library.allergens_seen", detail: `Confirmed the allergen change in ${doc.code}: ${v.title}` });
   revalidatePath(`/library/${doc.id}`); revalidatePath(`/library/allergens/${doc.id}`); revalidatePath("/library"); revalidatePath("/today"); revalidatePath("/me");
+  return { ok: true };
+}
+
+// ---------- training ----------
+const SkillZ = z.object({
+  section: z.string().max(8), group: z.string().max(200), title: z.string().max(500), about: z.string().max(3000), handsOn: z.boolean(), induction: z.boolean(),
+  links: z.array(z.string().max(64)).max(20), videoUrl: z.string().max(1000), refresherMonths: z.number().int().nullable(), passMark: z.number().int(),
+});
+// The right answer is -1 until one is ticked: cleanQuestion asks for it.
+const QuestionZ = z.object({ text: z.string().max(1000), options: z.array(z.string().max(500)).max(10), answer: z.number().int().min(-1).max(9) });
+const QuizZ = z.object({ version: z.string().max(4000), answers: z.record(z.string(), z.number().int().min(0).max(9)) });
+const TakeBackZ = z.string().trim().min(3, "Say why it has to be done again").max(300, "Keep it under 300 characters");
+const TRAINING_PATHS = ["/library/training", "/manage/training", "/me", "/today"];
+const revalidateTraining = (...more: string[]) => { for (const p of [...TRAINING_PATHS, ...more]) revalidatePath(p); };
+
+/** Signed in on any device (the shop tablet or their own phone), with their own PIN chosen. */
+async function signedIn(): Promise<{ ok: true; ctx: Ctx } | { ok: false; error: string }> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  return { ok: true, ctx };
+}
+
+/** The owner or an operations manager on the full app: they set the skills, quizzes and deadlines. */
+async function trainingEditor(): Promise<{ ok: true; ctx: Ctx } | { ok: false; error: string }> {
+  const who = await signedIn();
+  if (!who.ok) return who;
+  if (who.ctx.scope !== "full" || !canEditTraining(who.ctx.person)) return { ok: false, error: "Only the owner or an operations manager changes training" };
+  return who;
+}
+
+/** Someone's row for a skill in their passport, or why there isn't one. */
+async function passportRow(person: Person, skillId: string): Promise<{ ok: true; row: PassportRow; questions: Awaited<ReturnType<typeof trainingData>>["questions"] } | { ok: false; error: string }> {
+  const id = UuidZ.safeParse(skillId);
+  if (!id.success) return { ok: false, error: "That skill isn't there any more" };
+  const db = store();
+  const [sites, d] = await Promise.all([db.sites(), trainingData(db, [person.id])]);
+  const row = passport(person, sites, d, londonDate(Date.now())).find((r) => r.skill.id === id.data);
+  if (!row) return { ok: false, error: "That skill isn't part of this training any more" };
+  return { ok: true, row, questions: d.questions };
+}
+
+/** After a quiz: the skill is done, waiting for a manager's check, or it was already done and this was practice. */
+export type QuizNext = "done" | "ready" | "practice" | "again";
+export interface QuizOutcome { score: number; passed: boolean; total: number; correct: number; wrong: string[]; passMark: number; next: QuizNext }
+
+/**
+ * Marks a quiz. `version` is the version of the quiz they were shown (if it changed meanwhile, they start again); the
+ * answers are option indexes as stored. The attempt is kept with what was asked and answered. Passing completes a
+ * knowledge skill, or makes a hands-on one ready for a manager to confirm.
+ */
+export async function submitQuiz(skillId: string, input: unknown): Promise<ActionResult & { restart?: boolean; result?: QuizOutcome }> {
+  const who = await signedIn();
+  if (!who.ok) return who;
+  const x = QuizZ.safeParse(input);
+  if (!x.success) return { ok: false, error: "Answer every question" };
+  const mine = await passportRow(who.ctx.person, skillId);
+  if (!mine.ok) return mine;
+  const { skill } = mine.row;
+  const qs = quizOf(skill.id, mine.questions);
+  if (!qs.length || x.data.version !== quizVersion(qs)) return { ok: false, error: "The quiz changed while you were doing it. Start it again", restart: true };
+  const g = gradeQuiz(qs, x.data.answers, skill.passMark);
+  if (!g.ok) return g;
+  await store().addTrainingEvent({
+    personId: who.ctx.person.id, skillId: skill.id, kind: "quiz", byId: who.ctx.person.id, score: g.value.score, passed: g.value.passed,
+    detail: { passMark: skill.passMark, asked: qs.map((q) => ({ id: q.id, text: q.text, options: q.options, answer: q.answer, given: x.data.answers[q.id] })) },
+  });
+  revalidateTraining(`/library/training/${skill.id}`);
+  // Where that leaves them, for the message: done, waiting for a manager, or (already done) practice.
+  const after = await passportRow(who.ctx.person, skill.id);
+  const p = after.ok ? after.row.progress : mine.row.progress;
+  const next: QuizNext = p.readyAt ? "ready" : p.state === "done" ? (skill.handsOn ? "practice" : "done") : "again";
+  return { ok: true, result: { ...g.value, passMark: skill.passMark, next } };
+}
+
+/** With no quiz: a knowledge skill is marked done; a hands-on one is marked ready for a manager to check. */
+export async function markSkillDone(skillId: string): Promise<ActionResult> {
+  const who = await signedIn();
+  if (!who.ok) return who;
+  const mine = await passportRow(who.ctx.person, skillId);
+  if (!mine.ok) return mine;
+  const { skill, progress: p, hasQuiz, drafted } = mine.row;
+  const can = canMarkDone(skill, p, { asked: hasQuiz, drafted });
+  if (!can.ok) return can;
+  await store().addTrainingEvent({ personId: who.ctx.person.id, skillId: skill.id, kind: "done", byId: who.ctx.person.id });
+  revalidateTraining(`/library/training/${skill.id}`);
+  return { ok: true };
+}
+
+async function managedRow(ctx: Ctx, personId: string, skillId: string): Promise<{ ok: true; target: Person; row: PassportRow } | { ok: false; error: string }> {
+  const pid = z.string().min(1).max(64).safeParse(personId);
+  const db = store();
+  const target = pid.success ? await db.person(pid.data) : undefined;
+  if (!target) return { ok: false, error: "That person isn't there any more" };
+  const row = await passportRow(target, skillId);
+  if (!row.ok) return row;
+  const can = managesTraining(ctx.person, target, row.row.skill.section, await db.sites());
+  if (!can.ok) return can;
+  return { ok: true, target, row: row.row };
+}
+
+/** A manager confirms a hands-on skill after watching them do it (once the quiz is passed, if it has one). */
+export async function confirmSkill(personId: string, skillId: string): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const m = await managedRow(ctx, personId, skillId);
+  if (!m.ok) return m;
+  const { skill, progress: p, hasQuiz } = m.row;
+  const now = canConfirmNow(skill, p, hasQuiz);
+  if (!now.ok) return now;
+  const db = store();
+  await db.addTrainingEvent({ personId: m.target.id, skillId: skill.id, kind: "confirmed", byId: ctx.person.id });
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "training.confirm", detail: `Confirmed ${m.target.name} on ${skill.title}` });
+  revalidateTraining(`/manage/training/${m.target.id}`, `/library/training/${skill.id}`);
+  return { ok: true };
+}
+
+/** A manager takes back a skill that was done (or ready to be checked): it has to be done again, and why is kept. */
+export async function takeBackSkill(personId: string, skillId: string, note: unknown): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  const why = TakeBackZ.safeParse(note);
+  if (!why.success) return { ok: false, error: why.error.issues[0]?.message ?? "Say why it has to be done again" };
+  const m = await managedRow(ctx, personId, skillId);
+  if (!m.ok) return m;
+  const now = canTakeBackNow(m.row.progress);
+  if (!now.ok) return now;
+  const db = store();
+  await db.addTrainingEvent({ personId: m.target.id, skillId: m.row.skill.id, kind: "reset", byId: ctx.person.id, note: why.data });
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "training.take_back", detail: `Asked ${m.target.name} to do ${m.row.skill.title} again: ${why.data}` });
+  revalidateTraining(`/manage/training/${m.target.id}`, `/library/training/${m.row.skill.id}`);
+  return { ok: true };
+}
+
+/** The skill as cleaned, with every link checked: an SOP, prep recipe or dish that isn't retired. */
+async function skillFrom(input: unknown) {
+  const x = SkillZ.safeParse(input);
+  if (!x.success) return { ok: false as const, error: "Some details are missing" };
+  const c = cleanSkill(x.data);
+  if (!c.ok) return c;
+  const db = store();
+  for (const id of c.value.links) {
+    const doc = await db.libraryDoc(id);
+    if (!doc) return { ok: false as const, error: "One of the linked SOPs or recipes isn't there any more" };
+    if (doc.retiredAt) return { ok: false as const, error: `${doc.published?.title ?? doc.code} has been retired: take its link off` };
+  }
+  return c;
+}
+
+export async function createSkill(input: unknown): Promise<ActionResult & { id?: string }> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const c = await skillFrom(input);
+  if (!c.ok) return c;
+  const db = store();
+  const id = await db.createTrainingSkill(c.value, who.ctx.person.id);
+  await db.audit({ actorId: who.ctx.person.id, action: "training.skill", detail: `Added ${c.value.title} to ${PATHWAY_TEXT[c.value.section]} training` });
+  revalidateTraining("/manage/training/skills");
+  return { ok: true, id };
+}
+
+export async function saveSkill(skillId: string, rev: number, input: unknown): Promise<ActionResult & { rev?: number }> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const id = UuidZ.safeParse(skillId);
+  if (!id.success || !Number.isInteger(rev)) return { ok: false, error: "That skill isn't there any more" };
+  const c = await skillFrom(input);
+  if (!c.ok) return c;
+  const db = store();
+  const was = await db.trainingSkill(id.data);
+  if (!was) return { ok: false, error: "That skill isn't there any more" };
+  if (was.retiredAt) return { ok: false, error: "This skill is retired: bring it back before changing it" };
+  const next = await db.saveTrainingSkill(id.data, rev, c.value);
+  if (!next) return { ok: false, error: "Someone else changed this skill meanwhile. Reload the page to see their changes" };
+  await db.audit({ actorId: who.ctx.person.id, action: "training.skill", detail: `Changed the skill ${c.value.title}` });
+  revalidateTraining("/manage/training/skills", `/manage/training/skills/${id.data}`, `/library/training/${id.data}`);
+  return { ok: true, rev: next };
+}
+
+export async function moveSkill(skillId: string, dir: number): Promise<ActionResult> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const id = UuidZ.safeParse(skillId);
+  if (!id.success || (dir !== -1 && dir !== 1)) return { ok: false, error: "That skill isn't there any more" };
+  if (!(await store().moveTrainingSkill(id.data, dir))) return { ok: false, error: dir < 0 ? "It's already first" : "It's already last" };
+  revalidateTraining("/manage/training/skills");
+  return { ok: true };
+}
+
+/** Retiring takes it out of everyone's training (their records are kept); bringing it back puts it last in its pathway. */
+export async function retireSkill(skillId: string, retire: boolean): Promise<ActionResult> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const id = UuidZ.safeParse(skillId);
+  const db = store();
+  const skill = id.success ? await db.trainingSkill(id.data) : undefined;
+  if (!skill) return { ok: false, error: "That skill isn't there any more" };
+  const done = retire ? await db.retireTrainingSkill(skill.id, who.ctx.person.id) : await db.reinstateTrainingSkill(skill.id);
+  if (!done) return { ok: false, error: retire ? "It's already retired" : "It isn't retired" };
+  await db.audit({ actorId: who.ctx.person.id, action: retire ? "training.retire" : "training.reinstate", detail: `${retire ? "Retired" : "Brought back"} the skill ${skill.title}` });
+  revalidateTraining("/manage/training/skills", `/manage/training/skills/${skill.id}`, `/library/training/${skill.id}`);
+  return { ok: true };
+}
+
+/** Adds a question to a skill's quiz (approved, as the owner or an operations manager wrote it) or changes one (keeping its approval). */
+export async function saveQuestion(skillId: string, questionId: string | null, input: unknown): Promise<ActionResult & { id?: string }> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const sid = UuidZ.safeParse(skillId), qid = questionId === null ? undefined : UuidZ.safeParse(questionId);
+  if (!sid.success || (qid && !qid.success)) return { ok: false, error: "That question isn't there any more" };
+  const x = QuestionZ.safeParse(input);
+  if (!x.success) return { ok: false, error: "Some details are missing" };
+  const c = cleanQuestion(x.data);
+  if (!c.ok) return c;
+  const db = store();
+  const skill = await db.trainingSkill(sid.data);
+  if (!skill || skill.retiredAt) return { ok: false, error: "That skill isn't there any more" };
+  if (!qid && (await db.trainingQuestions([skill.id])).length >= TRAINING_LIMITS.questions) return { ok: false, error: `A quiz has at most ${TRAINING_LIMITS.questions} questions` };
+  const id = await db.saveTrainingQuestion({ id: qid?.data, skillId: skill.id, ...c.value }, who.ctx.person.id, true);
+  if (!id) return { ok: false, error: "That question isn't there any more" };
+  await db.audit({ actorId: who.ctx.person.id, action: "training.question", detail: `${qid ? "Changed a question in" : "Added a question to"} the quiz for ${skill.title}` });
+  revalidateTraining("/manage/training/skills", `/manage/training/skills/${skill.id}`);
+  return { ok: true, id };
+}
+
+export async function retireQuestion(skillId: string, questionId: string): Promise<ActionResult> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const sid = UuidZ.safeParse(skillId), qid = UuidZ.safeParse(questionId);
+  if (!sid.success || !qid.success) return { ok: false, error: "That question isn't there any more" };
+  const db = store();
+  const skill = await db.trainingSkill(sid.data);
+  if (!skill || !(await db.trainingQuestions([skill.id])).some((q) => q.id === qid.data)) return { ok: false, error: "That question isn't there any more" };
+  if (skill.retiredAt) return { ok: false, error: "This skill is retired: bring it back before changing its quiz" };
+  await db.retireTrainingQuestion(qid.data, who.ctx.person.id);
+  await db.audit({ actorId: who.ctx.person.id, action: "training.question", detail: `Took a question off the quiz for ${skill.title}` });
+  revalidateTraining("/manage/training/skills", `/manage/training/skills/${skill.id}`);
+  return { ok: true };
+}
+
+/** Approves a skill's drafted questions, so the quiz asks them. */
+export async function approveQuestions(skillId: string): Promise<ActionResult> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const sid = UuidZ.safeParse(skillId);
+  const db = store();
+  const skill = sid.success ? await db.trainingSkill(sid.data) : undefined;
+  if (!skill || skill.retiredAt) return { ok: false, error: "That skill isn't there any more" };
+  const n = await db.approveTrainingQuestions(skill.id, who.ctx.person.id);
+  if (!n) return { ok: false, error: "There's nothing waiting for approval" };
+  await db.audit({ actorId: who.ctx.person.id, action: "training.approve", detail: `Approved ${n} question${n === 1 ? "" : "s"} for ${skill.title}` });
+  revalidateTraining("/manage/training/skills", `/manage/training/skills/${skill.id}`, `/library/training/${skill.id}`);
+  return { ok: true };
+}
+
+/** A pathway's deadlines, in days from the day someone started in the section. */
+export async function savePathway(section: string, inductionDays: number, allDays: number): Promise<ActionResult> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const sec = z.enum(["FOH", "BOH", "PROD"]).safeParse(section);
+  if (!sec.success) return { ok: false, error: "Choose the pathway" };
+  const c = cleanPathway({ inductionDays, allDays });
+  if (!c.ok) return c;
+  const db = store();
+  await db.saveTrainingPathway({ section: sec.data, ...c.value }, who.ctx.person.id);
+  await db.audit({ actorId: who.ctx.person.id, action: "training.deadlines", detail: `${PATHWAY_TEXT[sec.data]} training: induction within ${c.value.inductionDays} days, everything within ${c.value.allDays}` });
+  revalidateTraining("/manage/training/skills");
   return { ok: true };
 }

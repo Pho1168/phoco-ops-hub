@@ -19,6 +19,7 @@ import { ALLERGEN_KEYS } from "@/lib/domain/recipes";
 import { shiftEnd, shiftStart } from "@/lib/domain/reminders";
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
+import { bySkillOrder, trainingSections, type Pathway, type Question, type Skill, type TrainingEvent, type TrainingStart } from "@/lib/domain/training";
 
 /** Demo-only people. Real staff come from the database, never from the code. */
 export const DEMO_PINS = { owner: "4826", staff: "1357" } as const;
@@ -92,6 +93,11 @@ interface State {
   libVersions: Omit<LibraryVersion, "authorName" | "reviewedByName" | "approvedByName">[];
   libAcks: Omit<LibraryAck, "docId">[];
   media: Map<string, { mime: string; bytes: Uint8Array; width: number; height: number; createdBy: string; createdAt: number; erasedAt?: number; erasedBy?: string }>;
+  trainingSkills: (Skill & { createdBy: string; retiredBy?: string })[];
+  trainingQuestions: (Question & { createdBy: string; approvedBy?: string; retiredAt?: number; retiredBy?: string })[];
+  trainingPathways: Pathway[];
+  trainingStarts: TrainingStart[];
+  trainingEvents: (Omit<TrainingEvent, "byName"> & { detail?: unknown })[];
 }
 
 const DEMO_FREE = Object.fromEntries(ALLERGEN_KEYS.map((k) => [k, "free" as const]));
@@ -143,6 +149,58 @@ function demoLibrary(): Pick<State, "libDocs" | "libVersions" | "libAcks" | "med
     }],
     libAcks: [{ versionId: "00000000-0000-4000-8000-0000000000b1", personId: "DEMO-OWN", at }],
     media: new Map(),
+  };
+}
+
+/**
+ * Sample skills, quizzes and progress so the training screens have something to show in demo mode: a knowledge skill
+ * passed, a hands-on one waiting for a manager, and a drafted question waiting for approval.
+ */
+function demoTraining(): Pick<State, "trainingSkills" | "trainingQuestions" | "trainingPathways" | "trainingStarts" | "trainingEvents"> {
+  const at = Date.now() - 10 * 86_400_000;
+  const started = londonDate(at);
+  const id = (n: number) => `00000000-0000-4000-8000-0000000000c${n}`;
+  const sk = (n: number, s: Partial<Skill> & Pick<Skill, "section" | "group" | "position" | "title">): State["trainingSkills"][number] =>
+    ({ id: id(n), about: "", handsOn: false, induction: false, links: [], passMark: 80, createdAt: at, updatedAt: at, addedAt: at, rev: 1, createdBy: "DEMO-OWN",
+      ...s, linkedAt: Object.fromEntries((s.links ?? []).map((l) => [l, at])) });
+  const qn = (skill: number, position: number, text: string, options: string[], answer: number, approved = true): State["trainingQuestions"][number] =>
+    ({ id: `00000000-0000-4000-8000-00000000d${skill}${position}0`.slice(0, 36), skillId: id(skill), position, text, options, answer, approved,
+      approvedAt: approved ? at : undefined, approvedBy: approved ? "DEMO-OWN" : undefined, createdBy: "DEMO-OWN", createdAt: at, updatedAt: at });
+  const SOP = "00000000-0000-4000-8000-0000000000a1", PREP = "00000000-0000-4000-8000-0000000000a2", DISH = "00000000-0000-4000-8000-0000000000a3";
+  return {
+    trainingSkills: [
+      sk(1, { section: "FOH", group: "Operations", position: 1, title: "The 14 allergens (demo)", induction: true, refresherMonths: 12,
+        about: "Which allergens the law names, how to use the allergen matrix, and what to do when a guest tells you about an allergy.", links: [DISH] }),
+      sk(2, { section: "FOH", group: "Hygiene & Cleaning", position: 2, title: "Hand washing (demo)", induction: true, links: [SOP] }),
+      sk(3, { section: "FOH", group: "Service", position: 3, title: "Taking an order on the handheld (demo)", handsOn: true }),
+      sk(4, { section: "BOH", group: "Operations", position: 1, title: "Temperature checks (demo)", induction: true, refresherMonths: 12,
+        about: "Fridge, freezer and cooking temperatures: when to check, what's in range, and what to do if it isn't." }),
+      sk(5, { section: "BOH", group: "Service", position: 2, title: "Pho station (demo)", handsOn: true, links: [DISH, PREP],
+        about: "Building every pho on the menu to spec, at speed, with the broth at a rolling boil." }),
+      sk(6, { section: "PROD", group: "Production", position: 1, title: "Cooling broth (demo)", links: [PREP], about: "Getting cooked broth below 8°C safely and on time." }),
+    ],
+    trainingQuestions: [
+      qn(1, 1, "How many allergens must UK food businesses tell guests about?", ["8", "12", "14", "20"], 2),
+      qn(1, 2, "A guest says they're allergic to peanuts. What do you do first?", ["Tell the kitchen and check the allergen matrix", "Suggest a dish that looks safe", "Ask them to choose something plain"], 0),
+      qn(1, 3, "Which of these is one of the 14 allergens?", ["Garlic", "Sesame", "Chilli"], 1),
+      qn(2, 1, "How long do you rub your hands with soap?", ["5 seconds", "At least 20 seconds", "2 minutes"], 1),
+      qn(2, 2, "What do you dry your hands with?", ["Your apron", "A tea towel", "A clean paper towel"], 2),
+      qn(4, 1, "Fridges should run at:", ["0–5°C", "8–10°C", "Room temperature"], 0),
+      qn(4, 2, "When are the fridge temperatures recorded?", ["In the opening and closing checks", "Once a week", "Only when it looks warm"], 0, false),
+      qn(5, 1, "How hot must the broth be when it's poured?", ["At a rolling boil", "Just warm", "Room temperature"], 0),
+      qn(5, 2, "What goes in the bowl first?", ["The broth", "The noodles", "The herbs"], 1),
+      qn(6, 1, "Cooked broth is cooled to below 8°C within:", ["90 minutes", "4 hours", "Overnight"], 0),
+    ],
+    trainingPathways: [{ section: "FOH", inductionDays: 7, allDays: 42 }, { section: "BOH", inductionDays: 7, allDays: 42 }, { section: "PROD", inductionDays: 7, allDays: 42 }],
+    trainingStarts: [
+      { personId: "DEMO-FOH", section: "FOH", startedOn: started }, { personId: "DEMO-BOH", section: "BOH", startedOn: started },
+      { personId: "DEMO-MGR", section: "FOH", startedOn: started }, { personId: "DEMO-MGR", section: "BOH", startedOn: started },
+      { personId: "DEMO-PRD", section: "PROD", startedOn: started }, { personId: "DEMO-FLT", section: "BOH", startedOn: started }, { personId: "DEMO-FLT", section: "PROD", startedOn: started },
+    ],
+    trainingEvents: [
+      { id: "00000000-0000-4000-8000-0000000000e1", personId: "DEMO-FOH", skillId: id(2), kind: "quiz", at: at + 86_400_000, byId: "DEMO-FOH", score: 100, passed: true },
+      { id: "00000000-0000-4000-8000-0000000000e2", personId: "DEMO-BOH", skillId: id(5), kind: "quiz", at: at + 2 * 86_400_000, byId: "DEMO-BOH", score: 100, passed: true },
+    ],
   };
 }
 
@@ -225,7 +283,7 @@ function seed(): State {
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
     rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
-    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [], cover: [], coverOffers: [], ...demoLibrary(),
+    prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [], cover: [], coverOffers: [], ...demoLibrary(), ...demoTraining(),
   };
 }
 
@@ -280,6 +338,39 @@ function libDocView(d: State["libDocs"][number], light = false): LibraryDoc {
     published: published && libVersionView(published, light), open: open && libVersionView(open, light) };
 }
 
+/**
+ * Makes a change to people, their access or a site, then starts training today in each section someone trains in now
+ * that they didn't before (the rule is trainingSections): given a new section, back from leaving, or their site
+ * reopened. A freeze on its own doesn't stop training, so unfreezing doesn't start it again.
+ */
+function withStarts(personIds: string[], change: () => void) {
+  const now = (id: string) => {
+    const p = S().people.find((x) => x.id === id);
+    return p ? trainingSections({ access: p.access, status: p.status === "frozen" ? "active" : p.status }, S().sites) : [];
+  };
+  const before = new Map(personIds.map((id) => [id, now(id)]));
+  change();
+  const today = londonDate(Date.now());
+  for (const id of personIds) {
+    for (const section of now(id)) {
+      if (before.get(id)!.includes(section) || S().trainingStarts.some((s) => s.personId === id && s.section === section && s.startedOn === today)) continue;
+      S().trainingStarts.push({ personId: id, section, startedOn: today });
+    }
+  }
+}
+const questionView = (q: State["trainingQuestions"][number]): Question => ({
+  id: q.id, skillId: q.skillId, position: q.position, text: q.text, options: [...q.options], answer: q.answer, approved: q.approved,
+  approvedAt: q.approvedAt, createdAt: q.createdAt, updatedAt: q.updatedAt,
+});
+const skillView = (k: State["trainingSkills"][number]): Skill => ({
+  id: k.id, section: k.section, group: k.group, position: k.position, title: k.title, about: k.about, handsOn: k.handsOn, induction: k.induction,
+  links: [...k.links], videoUrl: k.videoUrl, refresherMonths: k.refresherMonths, passMark: k.passMark, createdAt: k.createdAt, updatedAt: k.updatedAt,
+  addedAt: k.addedAt, inductionFrom: k.inductionFrom, refresherFrom: k.refresherFrom, refresherWas: k.refresherWas, linkedAt: { ...k.linkedAt },
+  rev: k.rev, retiredAt: k.retiredAt,
+});
+const lastPosition = (section: Skill["section"], liveOnly = false) =>
+  Math.max(0, ...S().trainingSkills.filter((k) => k.section === section && (!liveOnly || !k.retiredAt)).map((k) => k.position));
+
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
 
@@ -290,18 +381,25 @@ export const demoStore: Store = {
   async site(id) { return S().sites.find((s) => s.id === id); },
   async setSiteStatus(id, status, reason) {
     const s = S().sites.find((x) => x.id === id);
-    if (s) { s.status = status; s.closedReason = status === "closed" ? reason : undefined; }
+    if (!s) return;
+    withStarts(S().people.filter((p) => p.access.some((a) => a.siteId === id)).map((p) => p.id), () => {
+      s.status = status; s.closedReason = status === "closed" ? reason : undefined;
+    });
   },
 
   async people() { return S().people; },
   async person(id) { return S().people.find((p) => p.id === id); },
-  async updatePerson(id, patch) { const p = S().people.find((x) => x.id === id); if (p) Object.assign(p, patch); },
+  async updatePerson(id, patch) { const p = S().people.find((x) => x.id === id); if (p) withStarts([id], () => Object.assign(p, patch)); },
   async createPerson({ staffCode, name, pinHash, pinMustChange, access }) {
     const id = randomUUID();
-    S().people.push({ id, staffCode, name, status: "active", pinHash, pinMustChange, pinFailed: 0, access });
+    S().people.push({ id, staffCode, name, status: "active", pinHash, pinMustChange, pinFailed: 0, access: [] });
+    withStarts([id], () => { S().people.find((x) => x.id === id)!.access = access; });
     return id;
   },
-  async setAccess(personId, access) { const p = S().people.find((x) => x.id === personId); if (p) p.access = access; },
+  async setAccess(personId, access) {
+    const p = S().people.find((x) => x.id === personId);
+    if (p) withStarts([personId], () => { p.access = access; });
+  },
 
   async createSession(personId, siteId, ttlMs, deviceId, scope = "full") {
     const s: Session = { id: randomUUID(), personId, siteId, deviceId, scope, startedAt: Date.now(), expiresAt: Date.now() + ttlMs };
@@ -759,6 +857,129 @@ export const demoStore: Store = {
     let n = 0;
     for (const [id, m] of Array.from(S().media.entries())) if (m.createdAt < before && !used.includes(id)) { S().media.delete(id); n++; }
     return n;
+  },
+
+  async trainingSkills() { return S().trainingSkills.map(skillView).sort(bySkillOrder); },
+  async trainingSkill(id) { const k = S().trainingSkills.find((x) => x.id === id); return k && skillView(k); },
+  async createTrainingSkill(s, by) {
+    const id = randomUUID(), now = Date.now();
+    S().trainingSkills.push({ ...structuredClone(s), id, position: lastPosition(s.section) + 1, createdAt: now, updatedAt: now, addedAt: now,
+      linkedAt: Object.fromEntries(s.links.map((l) => [l, now])), rev: 1, createdBy: by });
+    return id;
+  },
+  async saveTrainingSkill(id, rev, s) {
+    const k = S().trainingSkills.find((x) => x.id === id);
+    if (!k || k.rev !== rev || k.retiredAt) return undefined;
+    const now = Date.now();
+    const position = k.section === s.section ? k.position : lastPosition(s.section) + 1;
+    // As the SQL store: a new pathway counts as joining it; induction and refresher changes are dated; new links too.
+    const dates = {
+      addedAt: k.section === s.section ? k.addedAt : now,
+      inductionFrom: !k.induction && s.induction ? now : k.inductionFrom,
+      ...(k.refresherMonths !== s.refresherMonths ? { refresherFrom: now, refresherWas: k.refresherMonths } : {}),
+      linkedAt: Object.fromEntries(s.links.map((l) => [l, k.linkedAt[l] ?? now])),
+    };
+    Object.assign(k, { group: s.group, title: s.title, about: s.about, handsOn: s.handsOn, induction: s.induction, links: [...s.links], videoUrl: s.videoUrl,
+      refresherMonths: s.refresherMonths, passMark: s.passMark, section: s.section, position, updatedAt: now, rev: k.rev + 1, ...dates });
+    return k.rev;
+  },
+  async moveTrainingSkill(id, dir) {
+    const me = S().trainingSkills.find((x) => x.id === id && !x.retiredAt);
+    if (!me) return false;
+    const live = S().trainingSkills.filter((x) => x.section === me.section && !x.retiredAt && x.id !== me.id);
+    const other = dir < 0 ? live.filter((x) => x.position < me.position).sort((a, b) => b.position - a.position)[0]
+      : live.filter((x) => x.position > me.position).sort((a, b) => a.position - b.position)[0];
+    if (!other) return false;
+    [me.position, other.position] = [other.position, me.position];
+    return true;
+  },
+  async retireTrainingSkill(id, by) {
+    const k = S().trainingSkills.find((x) => x.id === id && !x.retiredAt);
+    if (!k) return false;
+    Object.assign(k, { retiredAt: Date.now(), retiredBy: by, rev: k.rev + 1 });
+    return true;
+  },
+  async reinstateTrainingSkill(id) {
+    const k = S().trainingSkills.find((x) => x.id === id && x.retiredAt);
+    if (!k) return false;
+    Object.assign(k, { position: lastPosition(k.section, true) + 1, retiredAt: undefined, retiredBy: undefined, addedAt: Date.now(), rev: k.rev + 1 });
+    return true;
+  },
+  async trainingQuestions(skillIds) {
+    return S().trainingQuestions.filter((q) => !q.retiredAt && (!skillIds || skillIds.includes(q.skillId)))
+      .sort((a, b) => a.skillId.localeCompare(b.skillId) || a.position - b.position || a.createdAt - b.createdAt).map(questionView);
+  },
+  async saveTrainingQuestion(x, by, approve) {
+    if (!S().trainingSkills.some((k) => k.id === x.skillId && !k.retiredAt)) return undefined;
+    const now = Date.now();
+    if (x.id) {
+      const q = S().trainingQuestions.find((k) => k.id === x.id && k.skillId === x.skillId && !k.retiredAt);
+      if (!q) return undefined;
+      Object.assign(q, { text: x.text, options: [...x.options], answer: x.answer, updatedAt: now });
+      return q.id;
+    }
+    const id = randomUUID();
+    const position = Math.max(0, ...S().trainingQuestions.filter((k) => k.skillId === x.skillId).map((k) => k.position)) + 1;
+    S().trainingQuestions.push({ id, skillId: x.skillId, position, text: x.text, options: [...x.options], answer: x.answer, approved: approve,
+      approvedAt: approve ? now : undefined, approvedBy: approve ? by : undefined, createdBy: by, createdAt: now, updatedAt: now });
+    return id;
+  },
+  async approveTrainingQuestions(skillId, by) {
+    let n = 0;
+    for (const q of S().trainingQuestions) {
+      if (q.skillId === skillId && !q.approved && !q.retiredAt) { Object.assign(q, { approved: true, approvedAt: Date.now(), approvedBy: by }); n++; }
+    }
+    return n;
+  },
+  async retireTrainingQuestion(id, by) {
+    const q = S().trainingQuestions.find((x) => x.id === id && !x.retiredAt);
+    if (!q) return false;
+    Object.assign(q, { retiredAt: Date.now(), retiredBy: by });
+    return true;
+  },
+  async trainingPathways() { return S().trainingPathways.map((p) => ({ ...p })); },
+  async saveTrainingPathway(p) {
+    const x = S().trainingPathways.find((y) => y.section === p.section);
+    if (!x) { S().trainingPathways.push({ section: p.section, inductionDays: p.inductionDays, allDays: p.allDays }); return; }
+    // As the SQL store: a change is dated, with the days it had before.
+    if (x.inductionDays !== p.inductionDays || x.allDays !== p.allDays) Object.assign(x, { changedAt: Date.now(), inductionWas: x.inductionDays, allWas: x.allDays });
+    Object.assign(x, { inductionDays: p.inductionDays, allDays: p.allDays });
+  },
+  async trainingStarts(personIds) {
+    // The latest start in each section counts.
+    const latest = new Map<string, TrainingStart>();
+    for (const s of S().trainingStarts) {
+      if (personIds && !personIds.includes(s.personId)) continue;
+      const k = `${s.personId}|${s.section}`, was = latest.get(k);
+      if (!was || s.startedOn > was.startedOn) latest.set(k, { ...s });
+    }
+    return Array.from(latest.values());
+  },
+  async addTrainingStarts(starts) {
+    let n = 0;
+    for (const x of starts) {
+      if (S().trainingStarts.some((s) => s.personId === x.personId && s.section === x.section && s.startedOn === x.startedOn)) continue;
+      S().trainingStarts.push({ ...x }); n++;
+    }
+    return n;
+  },
+  async trainingEvents(f) {
+    return S().trainingEvents.filter((e) => (!f.personIds || f.personIds.includes(e.personId)) && (!f.skillIds || f.skillIds.includes(e.skillId)))
+      .sort((a, b) => a.at - b.at)
+      .map((e) => ({ id: e.id, personId: e.personId, skillId: e.skillId, kind: e.kind, at: e.at, byId: e.byId, byName: nameOf(e.byId) ?? "", score: e.score, passed: e.passed, note: e.note }));
+  },
+  async addTrainingEvent(e) {
+    const id = randomUUID();
+    S().trainingEvents.push({ id, personId: e.personId, skillId: e.skillId, kind: e.kind, at: Date.now(), byId: e.byId, score: e.score, passed: e.passed, detail: e.detail, note: e.note });
+    return id;
+  },
+  async libraryMajorChanges(docIds) {
+    const out = new Map<string, number>();
+    for (const v of S().libVersions) {
+      if (docIds.includes(v.docId) && v.change === "major" && (v.status === "published" || v.status === "superseded") && v.publishedAt)
+        out.set(v.docId, Math.max(out.get(v.docId) ?? 0, v.publishedAt));
+    }
+    return out;
   },
 
   async coverRequests(f) {

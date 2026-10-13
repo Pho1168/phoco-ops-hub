@@ -400,3 +400,16 @@ table.matrix thead th:first-child { position: sticky; left: 0; z-index: 2; backg
   .allergen-matrix tr { break-inside: avoid; }
   .allergen-matrix tr.fit-no td, .allergen-matrix tr.fit-no th.dish { opacity: 1; }
 }
+
+/* Training */
+.chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.train-bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.train-bar > i { display: block; height: 100%; background: var(--brand); border-radius: 999px; }
+.quiz-q { border: 0; margin: 0; min-width: 0; }
+.quiz-q legend { float: left; width: 100%; padding: 0; margin-bottom: 4px; font-size: 16px; }
+.quiz-option { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 12px; border-radius: 12px; background: var(--surface-2); cursor: pointer; }
+.quiz-option input { width: 20px; height: 20px; flex-shrink: 0; }
+.quiz-option:has(input:checked) { background: var(--sage); color: var(--sage-ink); font-weight: 600; }
+table.training-matrix thead th a { color: var(--brand); text-decoration: none; }
+table.training-matrix td { text-align: center; }
+.skill-form .txt { width: 100%; max-width: none; }
