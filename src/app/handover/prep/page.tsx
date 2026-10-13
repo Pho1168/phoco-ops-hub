@@ -10,6 +10,8 @@ import { handoverPage } from "../load";
 
 export const dynamic = "force-dynamic";
 
+const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+
 export default async function HandoverPrep() {
   const { ctx, prepOn, sites } = await handoverPage();
   if (!prepOn) redirect("/handover");
@@ -22,8 +24,11 @@ export default async function HandoverPrep() {
   ]);
   const toPicks = (list: { itemId: string; urgent: boolean; note?: string; assignedTo?: string; assignedToName?: string }[]) =>
     Object.fromEntries(list.map((e) => [e.itemId, { urgent: e.urgent, note: e.note, assignee: e.assignedTo, assigneeName: e.assignedToName } satisfies Pick]));
-  // Still to do from the last handover: they carry over by themselves, for nobody in particular (who they were for is shown).
-  const carried = Object.fromEntries(outstanding.map((e) => [e.itemId, { urgent: e.urgent, note: e.note, wasFor: e.assignedToName }]));
+  // Still to do from the last handover: they carry over by themselves, staying with whoever they're for.
+  const carried = Object.fromEntries(outstanding.map((e) => [e.itemId, {
+    entryId: e.id, urgent: e.urgent, note: e.note, assignee: e.assignedTo, assigneeName: e.assignedToName,
+    forBy: e.assignedAt ? `by ${e.assignedByName || "someone"}, ${when(e.assignedAt)}` : undefined,
+  }]));
   // Notes written since the last handover go on the one being sent; needs-action notes still open stay on it too.
   const since = history[0]?.submittedAt ?? 0;
   const going = currentNotes(notes, history.map((h) => h.submittedAt!), now).filter((n) => n.needsAction || n.createdAt > since);

@@ -29,7 +29,7 @@ import { TrainingDue } from "@/components/TrainingDue";
 import { myTraining } from "@/lib/training-service";
 import { allergenChangesToConfirm, sopsToRead } from "@/lib/library-service";
 import { forYouAt } from "@/lib/handover-service";
-import { canManage } from "@/lib/domain/access";
+import { phoneHandoverSites } from "@/lib/domain/handover";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -89,7 +89,7 @@ export default async function MyShifts() {
     sopsToRead(ctx.person, db), allergenChangesToConfirm(ctx.person, db), myTraining(ctx.person, allSites, db), forYouAt(ctx.person, allSites, db),
   ]);
   // Managers on their own phone can read the handover (read-only) at the open sites they manage.
-  const readsHandover = ctx.scope === "shifts" && allSites.some((s) => s.status === "open" && canManage(ctx.person, s.id) && ctx.person.access.some((a) => a.siteId === s.id));
+  const readsHandover = ctx.scope === "shifts" && phoneHandoverSites(ctx.person, allSites).length > 0;
 
   const days = new Map<string, typeof shifts>();
   for (const s of shifts) days.set(s.date, [...(days.get(s.date) ?? []), s]);

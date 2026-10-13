@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { canBeGiven, forLabel, nextPeriod, periodAt, periodBounds, periodLabel, pickList, pickPeriod, targetPeriod, worksIn } from "./assign";
+import { canBeGiven, entryCanBeFor, forLabel, nextPeriod, noteCanBeFor, periodAt, periodBounds, periodLabel, pickList, pickPeriod, sentForLabel, stillFor, targetPeriod, worksIn } from "./assign";
+import { phoneHandoverSites } from "./handover";
 import { londonToUtc } from "./time";
 import type { Person } from "./types";
 
@@ -41,6 +42,22 @@ describe("the shift a handover is for", () => {
     // No rota: the shift after this one.
     expect(targetPeriod("next", at(TUE, "22:30"), [])).toEqual({ date: WED, part: "am" });
     expect(targetPeriod("next", at(TUE, "22:30"), [s("2026-10-23", "11:00", "22:15")])).toEqual({ date: WED, part: "am" });
+  });
+
+  it("next shift: the first one the next starter works, so the header and the pick list agree", () => {
+    // Lunch 10:30–15:00 is already on; the evening crew starts at 14:30, mostly in the evening.
+    const rota = [s(TUE, "10:30", "15:00", "lunch"), s(TUE, "14:30", "22:15", "eve")];
+    const p = targetPeriod("next", at(TUE, "14:00"), rota);
+    expect(p).toEqual({ date: TUE, part: "pm" });
+    expect(pickList([{ id: "lunch", name: "Lunch" }, { id: "eve", name: "Eve" }], rota, p, "Eastcote", at(TUE, "14:00"))[0])
+      .toEqual({ label: "Working this evening", people: [{ id: "eve", name: "Eve", times: "14:30–22:15" }] });
+    // An early start just before 05:00 works the morning, not the evening before.
+    expect(targetPeriod("next", at(TUE, "22:30"), [s(WED, "04:30", "12:00")])).toEqual({ date: WED, part: "am" });
+  });
+
+  it("an earlier handover's record names the date only when the rota can't change it", () => {
+    expect(sentForLabel("tomorrow_pm", at(TUE, "22:30"))).toBe("Tomorrow evening · Wed 14 Oct");
+    expect(sentForLabel("next", at(TUE, "22:30"))).toBe("Next shift");
   });
 
   it("tomorrow is the day after the one it was written on, even after midnight", () => {
@@ -101,5 +118,22 @@ describe("the pick list", () => {
     expect(canBeGiven(p("frozen", "EAS"), "EAS")).toBe(false);
     expect(canBeGiven(p("left", "EAS"), "EAS")).toBe(false);
     expect(canBeGiven(undefined, "EAS")).toBe(false);
+  });
+
+  it("only things still to do are for someone; someone who's gone no longer counts", () => {
+    expect([noteCanBeFor({ needsAction: true }), noteCanBeFor({ needsAction: false }), noteCanBeFor({ needsAction: true, closedAt: 1 })]).toEqual([true, false, false]);
+    expect([entryCanBeFor({ status: "outstanding" }), entryCanBeFor({ status: "completed" }), entryCanBeFor({ status: "carried" })]).toEqual([true, false, false]);
+    const here = new Set(["a"]);
+    expect([stillFor("a", here), stillFor("gone", here), stillFor(undefined, here)]).toEqual(["a", undefined, undefined]);
+  });
+});
+
+describe("the handover on a phone", () => {
+  const sites = [{ id: "EAS" as const, status: "open" as const }, { id: "WEM" as const, status: "open" as const }, { id: "SYD" as const, status: "closed" as const }];
+  const who = (access: Person["access"]) => ({ access });
+  it("managers read it at the open sites they manage; staff don't", () => {
+    expect(phoneHandoverSites(who([{ siteId: "EAS", role: "manager", sections: ["BOH"] }, { siteId: "WEM", role: "staff", sections: ["PROD"] }]), sites).map((x) => x.id)).toEqual(["EAS"]);
+    expect(phoneHandoverSites(who([{ siteId: "EAS", role: "staff", sections: ["FOH"] }]), sites)).toEqual([]);
+    expect(phoneHandoverSites(who([{ siteId: "SYD", role: "manager", sections: [] }, { siteId: "WEM", role: "ops", sections: [] }]), sites).map((x) => x.id)).toEqual(["WEM"]);
   });
 });

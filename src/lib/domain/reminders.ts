@@ -101,6 +101,9 @@ export function phoneNote(n: { category: string; body: string }): { text: string
   return { text: n.category === "Staff note" ? "A staff note" : "A note", onTablet: true };
 }
 
+/** Whether a note can be read on a phone at all (a manager's read-only Handover page): otherwise it's only counted there. */
+export const phoneShows = (n: { category: string; body: string }) => !phoneNote(n).onTablet;
+
 export interface ForYouItem { kind: "prep" | "note"; text: string; urgent: boolean; onTablet: boolean }
 
 /**

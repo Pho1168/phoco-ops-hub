@@ -716,12 +716,18 @@ export const sqlStore: Store = {
         where e.site_id = ${siteId} and e.status = 'outstanding' and ph.status = 'submitted' for update of e`).map(toPrepEntry);
       const active = (await tx<{ id: string }[]>`select id from prep_items where active`).map((r) => r.id);
       const plan = makePlan(draft, outstanding, active);
+      // A carried item stays with whoever it was for, keeping who said so and when.
+      const forOf = (x: { assignedTo?: string; assignedBy?: string; assignedAt?: number }) =>
+        [x.assignedBy ? x.assignedTo ?? null : null, x.assignedBy ?? null, x.assignedBy && x.assignedAt ? new Date(x.assignedAt) : null] as const;
       for (const c of plan.carryIn) {
-        await tx`insert into prep_entries (handover_id, site_id, item_id, urgent, note, carried_from, created_by)
-                 values (${h.id}, ${siteId}, ${c.itemId}, ${c.urgent}, ${c.note ?? null}, ${c.from}, ${personId})`;
+        const [to, by, at] = forOf(c);
+        await tx`insert into prep_entries (handover_id, site_id, item_id, urgent, note, carried_from, created_by, assigned_to, assigned_by, assigned_at)
+                 values (${h.id}, ${siteId}, ${c.itemId}, ${c.urgent}, ${c.note ?? null}, ${c.from}, ${personId}, ${to}, ${by}, ${at})`;
       }
       for (const m of plan.merge) {
-        await tx`update prep_entries set carried_from = ${m.from}, urgent = ${m.urgent}, note = ${m.note ?? null} where id = ${m.entryId}`;
+        const [to, by, at] = forOf(m);
+        await tx`update prep_entries set carried_from = ${m.from}, urgent = ${m.urgent}, note = ${m.note ?? null},
+                   assigned_to = ${to}, assigned_by = ${by}, assigned_at = ${at} where id = ${m.entryId}`;
       }
       if (plan.markCarried.length) await tx`update prep_entries set status = 'carried' where id = any(${plan.markCarried}::uuid[]) and status = 'outstanding'`;
       await tx`update prep_handovers set status = 'submitted', submitted_by = ${personId}, submitted_at = now(), updated_at = now(),

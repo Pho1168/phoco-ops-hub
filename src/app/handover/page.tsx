@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { store } from "@/lib/data";
 import type { HandoverItem } from "@/lib/data/store";
-import { forLabel, pickPeriod, targetPeriod } from "@/lib/domain/assign";
+import { forLabel, NEXT_SHIFT_DAYS, pickPeriod, targetPeriod } from "@/lib/domain/assign";
 import { currentNotes, noteOrder } from "@/lib/domain/handover";
 import { reportOrder, shiftLabel } from "@/lib/domain/prep";
-import { phoneNote } from "@/lib/domain/reminders";
+import { phoneShows } from "@/lib/domain/reminders";
 import { faultsOf, sinceText, SEVERITY_LABEL } from "@/lib/domain/equipment";
 import { pickFor, rotaAround } from "@/lib/handover-service";
 import { BottomNav, PhoneTopBar, TopBar } from "@/components/Chrome";
@@ -40,13 +40,14 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
   const kitFaults = faultsOf(kitOpen).filter((f) => kitName.has(f.fault.equipmentId))
     .sort((a, b) => (a.fault.severity === b.fault.severity ? a.fault.createdAt - b.fault.createdAt : a.fault.severity === "down" ? -1 : 1));
   const latest = history[0];
-  const rota = await rotaAround(site.id, Math.min(now, latest?.submittedAt ?? now), now, db);
+  // The rota from the last prep handover (to say which shift it's for), but no further back than a next shift can be.
+  const rota = await rotaAround(site.id, Math.max(Math.min(now, latest?.submittedAt ?? now), now - (NEXT_SHIFT_DAYS + 1) * 86_400_000), now, db);
   const byId = new Map(items.map((i) => [i.id, i]));
   const sentTimes = history.map((h) => h.submittedAt!);
   // Anyone on the tablet can give something to someone: the people working the shift it's about come first.
   const pick = readOnly ? undefined : pickFor(site, pickPeriod(latest && { shift: latest.shift, submittedAt: latest.submittedAt! }, now, rota), rota, people, now);
   // On a phone, staff notes and complaints are only counted: they're read on the tablet.
-  const onPhone = (n: HandoverItem) => !readOnly || !phoneNote(n).onTablet;
+  const onPhone = (n: HandoverItem) => !readOnly || phoneShows(n);
 
   const prepOpen = latest ? reportOrder(latest.entries.filter((e) => e.status === "outstanding"), items) : [];
   const allNotes = noteOrder(currentNotes(notes, sentTimes, now));
@@ -63,7 +64,8 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
     ...(latest?.entries.filter((e) => e.status === "completed").map((e) => prepTile(e, byId)) ?? []),
     ...notes.filter((n) => n.closedAt && n.closedAt > doneSince && onPhone(n)).map(noteTile),
   ].sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
-  const toDo = open.filter((t) => !t.info).length + allNotes.filter((n) => n.needsAction && !onPhone(n)).length;
+  const hiddenToDo = allNotes.filter((n) => n.needsAction && !onPhone(n)).length;
+  const toDo = open.filter((t) => !t.info).length + hiddenToDo;
   const picked = draft?.entries.length ?? 0;
 
   return (
@@ -105,7 +107,8 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
           </div>
         )}
 
-        <HandoverList handoverId={latest?.id} open={open} done={done} canAct={!readOnly} pick={pick} />
+        <HandoverList handoverId={latest?.id} open={open} done={done} canAct={!readOnly} pick={pick}
+          empty={hiddenToDo ? <div className="alert"><div className="strong">{hiddenToDo} note{hiddenToDo > 1 ? "s" : ""} to do, to read on the tablet</div></div> : undefined} />
 
         {!readOnly && <NoteForm pick={pick} />}
 

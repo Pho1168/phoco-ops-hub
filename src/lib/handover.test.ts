@@ -9,7 +9,7 @@ import { londonToUtc } from "@/lib/domain/time";
 
 // Runs against the in-memory demo store only (passed in), never a real database.
 describe("who handover items are for", () => {
-  it("a pick keeps who it's for when the handover is sent; anyone can change it; carried on, it's for nobody in particular", async () => {
+  it("a pick keeps who it's for when the handover is sent; anyone can change it; carried on, it stays with them", async () => {
     resetDemo();
     await demoStore.prepEditDraft("EAS", "DEMO-FOH", { itemId: "kp-007", needed: true, assignee: "DEMO-BOH" });
     await demoStore.prepEditDraft("EAS", "DEMO-FOH", { itemId: "kp-018", needed: true, assignee: "DEMO-PRD" }); // works at Wembley only: not given
@@ -26,15 +26,30 @@ describe("who handover items are for", () => {
     expect(await demoStore.assignHandover({ kind: "prep", id: rice.id }, "EAS", "DEMO-PRD", "DEMO-BOH")).toBe(false); // not someone at the site
     expect((await demoStore.prepOutstanding("EAS")).find((e) => e.id === rice.id)).toMatchObject({ assignedTo: "DEMO-FOH", assignedBy: "DEMO-BOH", assignedByName: "BOH staff (demo)" });
 
-    // Not done before the next handover: it carries on, for nobody in particular.
+    // Not done before the next handover: it carries on, still for them, with who said so and when.
     await demoStore.prepEditDraft("EAS", "DEMO-BOH", {});
     const next = (await demoStore.prepSubmit("EAS", "DEMO-BOH", planSubmit))!;
     const carried = (await demoStore.prepHandover(next.handoverId))!.entries.find((e) => e.itemId === "kp-007")!;
     expect(carried.carriedFrom).toBe(rice.id);
-    expect(carried.assignedTo).toBeUndefined();
+    expect(carried).toMatchObject({ assignedTo: "DEMO-FOH", assignedBy: "DEMO-BOH", assignedToName: "FOH staff (demo)" });
     // Done: nothing left to give.
     await demoStore.prepSetDone(carried.id, "EAS", "DEMO-BOH", true);
     expect(await demoStore.assignHandover({ kind: "prep", id: carried.id }, "EAS", "DEMO-BOH", "DEMO-MGR")).toBe(false);
+    resetDemo();
+  });
+
+  it("a waiting item given to someone, then done before the next handover is sent, isn't asked for again", async () => {
+    resetDemo();
+    await demoStore.prepEditDraft("EAS", "DEMO-MGR", { itemId: "kp-007", needed: true });
+    const first = (await demoStore.prepSubmit("EAS", "DEMO-MGR", planSubmit))!;
+    const rice = (await demoStore.prepHandover(first.handoverId))!.entries[0];
+    // The closer gives it to someone on the review step: that changes the item that's waiting, not the new draft.
+    expect(await demoStore.assignHandover({ kind: "prep", id: rice.id }, "EAS", "DEMO-BOH", "DEMO-MGR")).toBe(true);
+    await demoStore.prepEditDraft("EAS", "DEMO-MGR", { itemId: "kp-018", needed: true });
+    await demoStore.prepSetDone(rice.id, "EAS", "DEMO-FOH", true);
+    const sent = (await demoStore.prepSubmit("EAS", "DEMO-MGR", planSubmit))!;
+    expect((await demoStore.prepHandover(sent.handoverId))!.entries.map((e) => e.itemId)).toEqual(["kp-018"]);
+    expect(sent.plan.stockedCount).toBe(62);
     resetDemo();
   });
 
@@ -87,6 +102,20 @@ describe("who handover items are for", () => {
     expect(pick[0].people).toEqual([{ id: "DEMO-FOH", name: "FOH staff (demo)", times: "11:00–22:15" }]);
     expect(pick[1].people.map((x) => x.id)).not.toContain("DEMO-PRD"); // Wembley only
     expect(pick[1].people.map((x) => x.id)).toContain("DEMO-BOH");
+    resetDemo();
+  });
+
+  it("something given to someone who's since been frozen goes back to being for anyone in reminders", async () => {
+    resetDemo();
+    const day = "2026-11-04", week = weekStartOf(day);
+    await demoStore.applyShiftSync("EAS", { added: [{ sourceKey: `EAS|${week}|DEMO-FOH|FOH|2`, staffCode: "DEMO-FOH", section: "FOH", week, date: day, start: "11:00", end: "22:15", endsNextDay: false }], changed: [], cancelled: [] },
+      new Map([["DEMO-FOH", "DEMO-FOH"]]));
+    await demoStore.setWeekStatuses("EAS", new Map([[week, "published"]]));
+    await demoStore.addHandover({ siteId: "EAS", category: "Food safety", body: "Chiller at 9°C, check it", needsAction: true, createdBy: "DEMO-MGR", assignedTo: "DEMO-BOH" });
+    await demoStore.updatePerson("DEMO-BOH", { status: "frozen" });
+    expect(await queueShiftReminders(londonToUtc(day, "09:00"), demoStore)).toEqual(["DEMO-FOH"]);
+    const [m] = (await demoStore.notices("DEMO-FOH", 10)).filter((n) => n.kind === "shift");
+    expect(m.body).toContain("• Food safety: Chiller at 9°C, check it");
     resetDemo();
   });
 });

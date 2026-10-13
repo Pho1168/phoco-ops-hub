@@ -12,6 +12,7 @@ import { weekStartOf } from "@/lib/domain/rota";
 import { loadSiteReport } from "@/lib/report-service";
 import { normalizeStaffCode } from "@/lib/domain/staff";
 import { dueReminders, reminderKey, shiftReminderMessage, startingLaterToday, waitingFrom, type Waiting } from "@/lib/domain/reminders";
+import { canBeGiven, stillFor } from "@/lib/domain/assign";
 import { dailyDigest, gasConfirmedMessages, gasMessages, notReadyMessages, DAILY_DIGEST_FROM, DAILY_DIGEST_UNTIL, READY_ALERT_WINDOW_MIN, type DayFacts } from "@/lib/domain/daily";
 import { dayFacts, gasFor, readyFor, shiftsAround } from "@/lib/daily-service";
 import { PHOTO_KEEP_UNUSED_DAYS } from "@/lib/domain/library";
@@ -181,12 +182,17 @@ export async function queueWeeklyReport(now = Date.now(), db: Store = store()): 
   return queued;
 }
 
-/** What's waiting at a site, for its shift reminders: open handover notes that need action, and prep still to do, with who each is for. */
+/**
+ * What's waiting at a site, for its shift reminders: open handover notes that need action, and prep still to do, with
+ * who each is for (nobody in particular once that person has left the site or is frozen, so it isn't lost).
+ */
 export async function waitingAt(siteId: SiteId, db: Store = store()): Promise<Waiting> {
-  const [notes, prepOn] = await Promise.all([db.handover(siteId), db.prepEnabledSites().then((s) => s.includes(siteId))]);
+  const [notes, prepOn, people] = await Promise.all([db.handover(siteId), db.prepEnabledSites().then((s) => s.includes(siteId)), db.people()]);
   const prep = prepOn ? await db.prepOutstanding(siteId) : [];
   const names = new Map(prep.length ? (await db.prepItems()).map((i) => [i.id, i.name]) : []);
-  return waitingFrom(notes, prep.map((e) => ({ name: names.get(e.itemId) ?? "Prep item", urgent: e.urgent, assignedTo: e.assignedTo })));
+  const givable = new Set(people.filter((p) => canBeGiven(p, siteId)).map((p) => p.id));
+  return waitingFrom(notes.map((n) => ({ ...n, assignedTo: stillFor(n.assignedTo, givable) })),
+    prep.map((e) => ({ name: names.get(e.itemId) ?? "Prep item", urgent: e.urgent, assignedTo: stillFor(e.assignedTo, givable) })));
 }
 
 /**

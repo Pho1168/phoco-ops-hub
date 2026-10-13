@@ -1,8 +1,8 @@
 -- Who each handover item is for. Anyone on a site tablet can give a prep item, or a note that needs doing, to
 -- someone who works at the site, or change who it's for, at any time; anyone can still tick it done. assigned_by and
 -- assigned_at say who last changed it and when (every change is also in the activity log). assigned_to is null when
--- it's for nobody in particular: never given, taken off someone, or carried into a newer handover.
--- Rules in src/lib/domain/assign.ts.
+-- it's for nobody in particular: never given, or taken off someone. An item carried into a newer handover keeps all
+-- three. Rules in src/lib/domain/assign.ts.
 
 alter table prep_entries
   add column if not exists assigned_to uuid references people(id),

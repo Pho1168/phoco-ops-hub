@@ -3,8 +3,7 @@ import { notFound } from "next/navigation";
 import { store } from "@/lib/data";
 import { noteOrder, notesForHandover } from "@/lib/domain/handover";
 import { reportOrder } from "@/lib/domain/prep";
-import { forLabel, targetPeriod } from "@/lib/domain/assign";
-import { rotaAround } from "@/lib/handover-service";
+import { sentForLabel } from "@/lib/domain/assign";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { HandoverList } from "../HandoverList";
 import { handoverPage } from "../load";
@@ -24,7 +23,7 @@ export default async function HandoverReport(props: { searchParams: Promise<{ id
   const history = await db.prepHandovers(ctx.site.id, 50);
   const i = history.findIndex((x) => x.id === h.id);
   const prevSentAt = i >= 0 ? history[i + 1]?.submittedAt : undefined;
-  const [items, notes, rota] = await Promise.all([db.prepItems(), db.handover(ctx.site.id, prevSentAt ?? h.submittedAt! - 14 * 86_400_000), rotaAround(ctx.site.id, h.submittedAt!, h.submittedAt!, db)]);
+  const [items, notes] = await Promise.all([db.prepItems(), db.handover(ctx.site.id, prevSentAt ?? h.submittedAt! - 14 * 86_400_000)]);
   const byId = new Map(items.map((x) => [x.id, x]));
   const theirs = noteOrder(notesForHandover(notes, h.submittedAt!, prevSentAt));
   const prep = reportOrder(h.entries, items).map((e) => ({ e, t: prepTile(e, byId) }));
@@ -42,7 +41,7 @@ export default async function HandoverReport(props: { searchParams: Promise<{ id
               <h1 className="h-display">{ctx.site.name}</h1>
               <dl className="prep-meta">
                 <div><dt>Sent</dt><dd>{when(h.submittedAt!)}</dd></div>
-                <div><dt>For</dt><dd>{forLabel(h.shift, targetPeriod(h.shift, h.submittedAt!, rota))}</dd></div>
+                <div><dt>For</dt><dd>{sentForLabel(h.shift, h.submittedAt!)}</dd></div>
                 <div><dt>From</dt><dd>{h.submittedByName}</dd></div>
                 <div><dt>Stocked</dt><dd>{h.stockedCount} items confirmed</dd></div>
               </dl>

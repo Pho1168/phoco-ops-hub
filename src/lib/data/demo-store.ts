@@ -6,7 +6,7 @@ import type { Alert, AuditEntry, HandoverItem, LibraryAck, NoticeRow, PrepEntryV
 import { latestAnswers } from "@/lib/domain/checklist";
 import { londonDate, londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
 import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
-import { canBeGiven } from "@/lib/domain/assign";
+import { canBeGiven, entryCanBeFor, noteCanBeFor } from "@/lib/domain/assign";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff } from "@/lib/domain/timeoff";
 import type { Certificate } from "@/lib/domain/certificates";
@@ -501,7 +501,7 @@ export const demoStore: Store = {
   },
   async addHandover(h) {
     const now = Date.now();
-    const to = h.needsAction ? h.assignedTo : undefined;
+    const to = noteCanBeFor(h) ? h.assignedTo : undefined;
     S().handover.unshift({
       siteId: h.siteId, category: h.category, body: h.body, needsAction: h.needsAction, createdBy: h.createdBy,
       createdByName: S().people.find((p) => p.id === h.createdBy)?.name ?? "", id: randomUUID(), createdAt: now,
@@ -511,8 +511,8 @@ export const demoStore: Store = {
   async assignHandover(target, siteId, to, byId) {
     if (to !== null && !givable(to, siteId)) return false;
     const item = target.kind === "prep"
-      ? S().prepEntries.find((e) => e.id === target.id && e.siteId === siteId && e.status === "outstanding" && S().prepHandovers.find((h) => h.id === e.handoverId)?.status === "submitted")
-      : S().handover.find((n) => n.id === target.id && n.siteId === siteId && !n.closedAt && n.needsAction);
+      ? S().prepEntries.find((e) => e.id === target.id && e.siteId === siteId && entryCanBeFor(e) && S().prepHandovers.find((h) => h.id === e.handoverId)?.status === "submitted")
+      : S().handover.find((n) => n.id === target.id && n.siteId === siteId && noteCanBeFor(n));
     if (!item || (item.assignedTo ?? null) === to) return false;
     Object.assign(item, { assignedTo: to ?? undefined, assignedBy: byId, assignedAt: Date.now() });
     return true;
@@ -554,8 +554,11 @@ export const demoStore: Store = {
     const draft = S().prepEntries.filter((e) => e.handoverId === h.id);
     const plan = makePlan(draft, prepOpen(siteId), S().prepItems.filter((i) => i.active).map((i) => i.id));
     const now = Date.now();
-    for (const c of plan.carryIn) S().prepEntries.push({ id: randomUUID(), handoverId: h.id, siteId, itemId: c.itemId, status: "outstanding", urgent: c.urgent, note: c.note, carriedFrom: c.from, createdBy: personId, createdAt: now });
-    for (const m of plan.merge) { const e = S().prepEntries.find((x) => x.id === m.entryId); if (e) { e.carriedFrom = m.from; e.urgent = m.urgent; e.note = m.note; } }
+    // A carried item stays with whoever it was for, keeping who said so and when.
+    const forOf = (x: Pick<PrepEntry, "assignedTo" | "assignedBy" | "assignedAt">) =>
+      ({ assignedTo: x.assignedBy ? x.assignedTo : undefined, assignedBy: x.assignedBy, assignedAt: x.assignedBy ? x.assignedAt : undefined });
+    for (const c of plan.carryIn) S().prepEntries.push({ id: randomUUID(), handoverId: h.id, siteId, itemId: c.itemId, status: "outstanding", urgent: c.urgent, note: c.note, carriedFrom: c.from, createdBy: personId, createdAt: now, ...forOf(c) });
+    for (const m of plan.merge) { const e = S().prepEntries.find((x) => x.id === m.entryId); if (e) Object.assign(e, { carriedFrom: m.from, urgent: m.urgent, note: m.note, ...forOf(m) }); }
     for (const id of plan.markCarried) { const e = S().prepEntries.find((x) => x.id === id); if (e) e.status = "carried"; }
     Object.assign(h, { status: "submitted", submittedBy: personId, submittedAt: now, updatedAt: now, stockedCount: plan.stockedCount });
     return { handoverId: h.id, plan };
@@ -743,7 +746,10 @@ export const demoStore: Store = {
   },
   async shiftsOnDate(date, until = date) {
     const names = new Map(S().sites.map((s) => [s.id, s.name]));
-    return S().shifts.filter((s) => s.date >= date && s.date <= until && !s.cancelled && S().weeks.get(`${s.siteId}|${s.week}`) === "published")
+    // As in the database: only active people at open sites.
+    const active = new Set(S().people.filter((p) => p.status === "active").map((p) => p.id));
+    const open = new Set(S().sites.filter((s) => s.status === "open").map((s) => s.id));
+    return S().shifts.filter((s) => s.date >= date && s.date <= until && !s.cancelled && S().weeks.get(`${s.siteId}|${s.week}`) === "published" && active.has(s.personId) && open.has(s.siteId))
       .map((s) => ({ id: s.id, siteId: s.siteId, siteName: names.get(s.siteId) ?? s.siteId, section: s.section, week: s.week, date: s.date, start: s.start, end: s.end,
         published: true, cancelled: false, personId: s.personId, staffCode: s.staffCode }));
   },

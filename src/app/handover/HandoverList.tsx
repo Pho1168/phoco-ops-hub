@@ -14,8 +14,8 @@ export interface Tile {
   completedAt?: number; completedByName?: string;
   /** Can be given to someone: a prep item still to do, or a note that needs doing. */
   assignable?: boolean;
-  /** Who it's for, and "by Minh, Tue 22:31". */
-  forId?: string; forName?: string; forBy?: string;
+  /** Who it's for, and "by Minh, Tue 22:31". `forAt`: when that last changed (also when it was taken off someone). */
+  forId?: string; forName?: string; forBy?: string; forAt?: number;
 }
 
 const hm = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -25,25 +25,32 @@ const hm = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-dig
  * and when). For-info notes have nothing to tick. Undo is possible for a few minutes after a tap. With `pick`, each
  * thing to do can be given to someone, or changed (anyone on the tablet); without it, who it's for is just shown.
  */
-export function HandoverList({ handoverId, open, done, canAct, pick }: { handoverId?: string; open: Tile[]; done: Tile[]; canAct: boolean; pick?: PickGroup[] }) {
+export function HandoverList({ handoverId, open, done, canAct, pick, empty }: {
+  handoverId?: string; open: Tile[]; done: Tile[]; canAct: boolean; pick?: PickGroup[];
+  /** Shown instead of "All clear" when nothing is listed (on a phone, when what's left is only on the tablet). */
+  empty?: React.ReactNode;
+}) {
   const router = useRouter();
   const [hidden, setHidden] = useState<Set<string>>(new Set());
-  // Who was just picked, until the page has caught up. Keyed with who it was for, so a newer change from elsewhere shows.
+  // Who was just picked, until the page has caught up. Keyed with when it last changed, so once the page shows a newer
+  // change (from here or another tablet) the pick no longer applies.
   const [given, setGiven] = useState<Record<string, string | null>>({});
   const [err, setErr] = useState("");
   const [, start] = useTransition();
   const now = Date.now();
 
+  const unhide = (id: string) => setHidden((h) => { const n = new Set(h); n.delete(id); return n; });
   const set = (t: Tile, isDone: boolean) => {
     setErr("");
     if (isDone) setHidden((h) => new Set(h).add(t.id));
+    else unhide(t.id); // undone: it comes back to the list
     start(async () => {
       const r = t.kind === "prep" ? await prepSetDone(handoverId ?? "", t.id, isDone) : await setNoteDone(t.id, isDone);
-      if (!r.ok) { setErr(r.error); setHidden((h) => { const n = new Set(h); n.delete(t.id); return n; }); }
+      if (!r.ok) { setErr(r.error); if (isDone) unhide(t.id); }
       router.refresh();
     });
   };
-  const key = (t: Tile) => `${t.id}|${t.forId ?? ""}`;
+  const key = (t: Tile) => `${t.id}|${t.forAt ?? 0}`;
   const give = (t: Tile, to: string | null) => {
     setErr("");
     setGiven((g) => ({ ...g, [key(t)]: to }));
@@ -59,7 +66,7 @@ export function HandoverList({ handoverId, open, done, canAct, pick }: { handove
     <>
       {err && <div className="err" role="alert">{err}</div>}
       {shown.length === 0
-        ? <div className="alert good"><div className="strong">All clear. Nothing outstanding.</div></div>
+        ? empty ?? <div className="alert good"><div className="strong">All clear. Nothing outstanding.</div></div>
         : (
           <ul className="prep-report" aria-label="Outstanding">
             {shown.map((t) => {

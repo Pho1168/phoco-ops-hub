@@ -8,7 +8,18 @@
  * A sent handover's report includes the notes written since the handover before it.
  */
 
+import { canManage } from "./access";
+import type { Person, Site } from "./types";
+
 export const NOTE_CATEGORIES = ["Equipment", "Stock shortage", "Food safety", "Customer complaint", "Staff note", "Other"] as const;
+
+/**
+ * Where someone can read the Handover tab on their own phone (read-only): the open sites they manage. Staff see only
+ * what's for them, on My shifts; ticking off, notes and the prep handover are on the tablet.
+ */
+export function phoneHandoverSites<S extends Pick<Site, "id" | "status">>(person: Pick<Person, "access">, sites: S[]): S[] {
+  return sites.filter((s) => s.status === "open" && canManage(person, s.id) && person.access.some((a) => a.siteId === s.id));
+}
 export type NoteCategory = (typeof NOTE_CATEGORIES)[number];
 
 export const INFO_NOTE_MAX_HOURS = 48;

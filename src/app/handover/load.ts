@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { store } from "@/lib/data";
-import { canManage } from "@/lib/domain/access";
+import { phoneHandoverSites } from "@/lib/domain/handover";
 import { canUsePrep } from "@/lib/domain/prep";
 import type { Site } from "@/lib/domain/types";
 import { current, requireCtx, type Ctx } from "@/lib/session";
@@ -26,7 +26,7 @@ export async function handoverView(siteParam?: string): Promise<{ ctx: Ctx; site
     const { prepOn, sites } = await handoverPage();
     return { ctx, site: ctx.site, prepOn, readOnly: false, sites };
   }
-  const sites = (await store().sites()).filter((s) => s.status === "open" && canManage(ctx.person, s.id) && ctx.person.access.some((a) => a.siteId === s.id));
+  const sites = phoneHandoverSites(ctx.person, await store().sites());
   if (!sites.length) redirect("/me");
   const site = sites.find((s) => s.id === siteParam) ?? sites.find((s) => s.id === ctx.site.id) ?? sites[0];
   return { ctx, site, prepOn: (await store().prepEnabledSites()).includes(site.id), readOnly: true, sites };

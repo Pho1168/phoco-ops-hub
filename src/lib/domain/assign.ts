@@ -8,8 +8,9 @@ import type { Person, SiteId } from "./types";
  *
  * Anyone signed in on a site tablet can give a prep item, or a note that needs doing, to someone who works at the
  * site, or change who it's for, at any time. Each change keeps who made it and when (and goes in the activity log).
- * It locks nothing: anyone can still tick the item done. An item carried into a newer handover starts out for
- * nobody in particular, as that's a new shift (the review step shows who it was for).
+ * It locks nothing: anyone can still tick the item done. An item stays with whoever it's for until it's done or
+ * someone changes it, also when it carries into a newer handover (the review step shows who, to change it there).
+ * Someone who has since left the site, or is frozen, no longer counts: the item is for anyone again (stillFor).
  *
  * The pick list puts the people working the shift the handover is for first, with their times, then everyone else
  * at the site, as the rota changes. A shift here is a morning (05:00 to 15:00) or an evening (15:00 to 05:00 the
@@ -54,15 +55,26 @@ export function worksIn(s: ShiftTimes, p: Period): boolean {
 
 /**
  * The shift a prep handover is for, from when it was written (`from`) and the site's published rota. "Next shift" is
- * the one in which the next person on the rota starts, so days the site is shut are skipped. "Tomorrow" is the day
- * after the one it was written on (after midnight, that's still the evening before).
+ * the first one the next person on the rota works (so days the site is shut are skipped, and someone starting at
+ * 14:30 works the evening). "Tomorrow" is the day after the one it was written on (after midnight, that's still the
+ * evening before).
  */
 export function targetPeriod(shift: PrepShift, from: number, rota: ShiftTimes[]): Period {
   const cur = periodAt(from);
   if (shift === "tomorrow_am" || shift === "tomorrow_pm") return { date: addDays(cur.date, 1), part: shift === "tomorrow_am" ? "am" : "pm" };
   const until = from + NEXT_SHIFT_DAYS * 86_400_000;
-  const starts = rota.map(shiftStart).filter((t) => t > from && t < until).sort((a, b) => a - b);
-  return starts.length ? periodAt(starts[0]) : nextPeriod(cur);
+  const [first] = rota.filter((s) => shiftStart(s) > from && shiftStart(s) < until).sort((a, b) => shiftStart(a) - shiftStart(b));
+  if (!first) return nextPeriod(cur);
+  const p = periodAt(shiftStart(first));
+  return worksIn(first, p) ? p : nextPeriod(p);
+}
+
+/**
+ * What a sent handover was for, as a record: with the date when that can't change ("Tomorrow morning · Wed 14 Oct");
+ * "Next shift" alone, as which shift that was depends on the rota, which can change after.
+ */
+export function sentForLabel(shift: PrepShift, submittedAt: number): string {
+  return shift === "next" ? shiftLabel(shift) : forLabel(shift, targetPeriod(shift, submittedAt, []));
 }
 
 /**
@@ -121,3 +133,10 @@ export function pickList(people: { id: string; name: string }[], rota: (ShiftTim
 export function canBeGiven(p: Pick<Person, "status" | "access"> | undefined, siteId: SiteId): boolean {
   return !!p && p.status === "active" && p.access.some((a) => a.siteId === siteId);
 }
+
+/** Only things still to do can be for someone: a note that needs action and isn't done, a prep item still outstanding. */
+export const noteCanBeFor = (n: { needsAction: boolean; closedAt?: number }) => n.needsAction && !n.closedAt;
+export const entryCanBeFor = (e: { status: string }) => e.status === "outstanding";
+
+/** Who an item counts as being for: nobody in particular once they've left the site or are frozen (`givable`: canBeGiven at the site). */
+export const stillFor = (assignedTo: string | undefined, givable: Set<string>) => (assignedTo && givable.has(assignedTo) ? assignedTo : undefined);

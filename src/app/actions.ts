@@ -36,7 +36,7 @@ import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canUndo, canUsePrep, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
-import { canBeGiven } from "@/lib/domain/assign";
+import { canBeGiven, noteCanBeFor } from "@/lib/domain/assign";
 import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
 import type { Person, Role, SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, requireLead, SESSION_COOKIE, SESSION_TTL_MS, type Ctx } from "@/lib/session";
@@ -232,7 +232,7 @@ export async function addNote(input: unknown): Promise<ActionResult> {
   const n = NoteZ.safeParse(input);
   if (!n.success) return { ok: false, error: n.error.issues[0]?.message ?? "That note couldn't be saved" };
   const { assignee, ...note } = n.data;
-  if (assignee && !note.needsAction) return { ok: false, error: "A note for info isn't for anyone in particular" };
+  if (assignee && !noteCanBeFor(note)) return { ok: false, error: "A note for info isn't for anyone in particular" };
   const to = await assigneeAt(ctx.site.id, assignee);
   if (!to.ok) return to;
   await store().addHandover({ siteId: ctx.site.id, createdBy: ctx.person.id, ...note, assignedTo: to.person?.id });
@@ -264,7 +264,7 @@ export async function assignHandover(input: unknown): Promise<ActionResult> {
     was = { id: entry.assignedTo, name: entry.assignedToName };
   } else {
     const note = (await db.handover(ctx.site.id)).find((n) => n.id === id);
-    if (!note || note.closedAt || !note.needsAction) return { ok: false, error: "That note isn't waiting any more. It may have just been done" };
+    if (!note || !noteCanBeFor(note)) return { ok: false, error: "That note isn't waiting any more. It may have just been done" };
     what = `${note.category}: ${note.body.slice(0, 80)}`;
     was = { id: note.assignedTo, name: note.assignedToName };
   }
