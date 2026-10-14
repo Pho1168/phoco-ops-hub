@@ -56,7 +56,7 @@ export function TopBar(props: BarProps) {
       <form className="who" action={signOut}>
         <Avatar name={ctx.person.name} tone={toneOf(ctx.person, ctx.site.id)} />
         <span className="who-name">{firstName(ctx.person.name)}</span>
-        <button className="pill-btn" type="submit">Switch user</button>
+        <button className="pill-btn" type="submit" aria-label="Switch user"><span className="sw-text">Switch user</span><Icon name="switch" /></button>
       </form>
     </header>
   );
@@ -74,7 +74,7 @@ export function PhoneTopBar(props: BarProps) {
         <Avatar name={ctx.person.name} tone={toneOf(ctx.person, ctx.site.id)} />
         <span className="who-name">{firstName(ctx.person.name)}</span>
         <Link className="pill-btn" href="/me">My shifts</Link>
-        <button className="pill-btn" type="submit">Sign out</button>
+        <button className="pill-btn" type="submit" aria-label="Sign out"><span className="sw-text">Sign out</span><Icon name="switch" /></button>
       </form>
     </header>
   );

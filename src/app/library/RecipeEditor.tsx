@@ -299,7 +299,7 @@ export function RecipeEditor({ kind, mode, docId, versionId, rev, published, ini
                   <span className="strong">Checks</span>
                   {s.standards.map((t, i) => (
                     <div key={t.key} className="row" style={{ gap: 6 }}>
-                      <span className="tick" aria-hidden="true">✓</span>
+                      <span className="rc-tick small" aria-hidden="true">✓</span>
                       <input className="txt grow" aria-label={`Check ${i + 1}`} maxLength={RECIPE_LIMITS.standard} placeholder={i === 0 ? "e.g. NOT over-burnt" : "e.g. Full, neat and consistent every time"}
                         value={t.text} onChange={(e) => { const text = e.target.value; set((x) => ({ ...x, standards: x.standards.map((y) => (y.key === t.key ? { ...y, text } : y)) })); }} />
                       <button type="button" className="btn ghost small" aria-label={`Remove check ${i + 1}`}

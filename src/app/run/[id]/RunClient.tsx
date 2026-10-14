@@ -49,24 +49,18 @@ export function RunClient(p: Props) {
 
   return (
     <>
-      <main>
-        <section className="run-head">
-          <div className="row">
-            <Link className="pill-btn" href="/today" aria-label="Back to today"><Icon name="back" /></Link>
-            <span style={{ fontSize: 13, opacity: 0.85 }}>{p.siteName} · {p.when}{p.due ? ` · due ${p.due}` : ""}</span>
-          </div>
-          <h1 className="h-display">{p.name}</h1>
-          <div className="row">
-            <div className="bar grow"><i style={{ width: `${pct}%` }} /></div>
-            <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p.answered} of {p.total}</strong>
-          </div>
-          {p.suggested && <div style={{ fontSize: 13, opacity: 0.85 }}>Suggested checklist, not in your current files.</div>}
-        </section>
-
+      <main className="wide run-page">
+        <div className="run-top card" style={{ padding: "10px 14px" }}>
+          <div className="bar grow"><i style={{ width: `${pct}%` }} /></div>
+          <strong style={{ fontVariantNumeric: "tabular-nums" }}>{p.answered} of {p.total}</strong>
+        </div>
+        {p.suggested && <div className="muted">Suggested checklist, not in your current files.</div>}
         {p.signed && (
           <div className="alert good"><Icon name="check" /><div><div className="strong">Signed off by {p.signed.by} at {p.signed.at}</div><div style={{ fontSize: 13 }}>Records are locked. Corrections are added as new entries by a manager.</div></div></div>
         )}
 
+        <div className="cols two">
+        <div className="stack" style={{ gap: 14 }}>
         {sections.map((s) => (
           <section key={s.name} className="stack" style={{ gap: 8 }}>
             <h2 className="h-sec">{s.name}</h2>
@@ -121,10 +115,37 @@ export function RunClient(p: Props) {
             </div>
           </section>
         ))}
+        </div>
+
+        <aside className="aside panel run-aside">
+          <div className="card stack" style={{ alignItems: "center", gap: 8, padding: "20px 16px" }}>
+            <span className={`ring big ${ready || locked ? "ok" : ""}`}>{p.answered}/{p.total}</span>
+            <div className="strong">{locked ? "Signed off" : ready ? "Ready to sign off" : `${p.total - p.answered} check${p.total - p.answered === 1 ? "" : "s"} left`}</div>
+            <div className="muted" style={{ textAlign: "center" }}>{p.when}{p.due ? ` · due ${p.due}` : ""}</div>
+            <div className="bar" style={{ width: "100%" }}><i style={{ width: `${pct}%` }} /></div>
+          </div>
+          {!locked && (
+            <div className="card stack" style={{ gap: 6 }}>
+              <div className="eyebrow" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Before you can sign off</div>
+              {p.needsAction > 0 && <div className="row" style={{ gap: 8, fontSize: 14 }}><span className="light red" aria-hidden /><span>{p.needsAction} reading{p.needsAction > 1 ? "s need" : " needs"} a corrective action.</span></div>}
+              {p.total - p.answered > 0 && <div className="row" style={{ gap: 8, fontSize: 14 }}><span className="light" aria-hidden style={{ background: "var(--ink-2)" }} /><span>{p.total - p.answered} check{p.total - p.answered === 1 ? "" : "s"} still to do.</span></div>}
+              {ready && <div className="row" style={{ gap: 8, fontSize: 14 }}><span className="light green" aria-hidden /><span>Everything&apos;s done. Sign with your PIN.</span></div>}
+            </div>
+          )}
+          <div className="card" style={{ background: "color-mix(in srgb, var(--teal-tint) 55%, var(--surface))", fontSize: 13 }}>
+            This is a food-safety record. Nothing is edited after sign-off: a mistake is corrected by a new entry.
+          </div>
+          {!locked && (
+            <button type="button" className={`btn sign ${ready ? "accent" : ""}`} disabled={!ready || pending} onClick={() => { setSigning(true); setSignErr(""); }}>
+              {ready ? "Sign off · enter PIN" : p.needsAction ? `${p.needsAction} reading${p.needsAction > 1 ? "s need" : " needs"} action` : `Sign off · ${p.total - p.answered} left`}
+            </button>
+          )}
+        </aside>
+        </div>
       </main>
 
       {!locked && (
-        <div className="sticky-foot"><div className="inner">
+        <div className="sticky-foot run-foot"><div className="inner">
           <Link className="btn ghost" href="/handover">Report issue</Link>
           <button type="button" className={`btn grow ${ready ? "accent" : ""}`} disabled={!ready || pending} onClick={() => { setSigning(true); setSignErr(""); }}>
             {ready ? "Sign off · enter PIN" : p.needsAction ? `${p.needsAction} reading${p.needsAction > 1 ? "s need" : " needs"} action` : `${p.total - p.answered} checks left`}

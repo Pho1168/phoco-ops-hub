@@ -8,6 +8,7 @@ import { phoneShows } from "@/lib/domain/reminders";
 import { faultsOf, sinceText, SEVERITY_LABEL } from "@/lib/domain/equipment";
 import { givablePeople, pickFor, rotaAround } from "@/lib/handover-service";
 import { BottomNav, PhoneTopBar, TopBar } from "@/components/Chrome";
+import { Icon } from "@/components/Icon";
 import { HandoverList } from "./HandoverList";
 import { NoteForm } from "./NoteForm";
 import { handoverView } from "./load";
@@ -18,9 +19,10 @@ export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 
 /**
- * The Handover tab: everything outstanding for this shift (prep items from the last handover and notes) in one list,
- * who each one is for, a box to add a note at any time, and the way into the closing prep handover. Managers can
- * read it on their own phone: no ticking, notes or prep there, and staff notes and complaint details stay on the tablet.
+ * The Handover tab: notes for this shift and the next (with a box to add one), the prep still to do from the last
+ * handover with who each item is for, kit problems and the recent handovers, side by side on a tablet. The way into
+ * the closing prep handover sits under the prep. Managers can read it on their own phone: no ticking, notes or prep
+ * there, and staff notes and complaint details stay on the tablet.
  */
 export default async function Handover(props: { searchParams: Promise<{ sent?: string; site?: string }> }) {
   const searchParams = await props.searchParams;
@@ -55,45 +57,30 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
   const allNotes = noteOrder(currentNotes(notes, sentTimes, now));
   const notesOpen = allNotes.filter(onPhone);
   const notesHidden = allNotes.length - notesOpen.length;
-  const open = [
+  // Food-safety notes first, then the rest; urgent prep first, then the rest.
+  const noteTiles = [
     ...notesOpen.filter((n) => n.category === "Food safety" && n.needsAction).map((n) => noteTile(n, here)),
-    ...prepOpen.filter((e) => e.urgent).map((e) => prepTile(e, byId, here)),
     ...notesOpen.filter((n) => !(n.category === "Food safety" && n.needsAction)).map((n) => noteTile(n, here)),
-    ...prepOpen.filter((e) => !e.urgent).map((e) => prepTile(e, byId, here)),
   ];
+  const prepTiles = [...prepOpen.filter((e) => e.urgent), ...prepOpen.filter((e) => !e.urgent)].map((e) => prepTile(e, byId, here));
   const doneSince = latest?.submittedAt ?? now - 24 * 3_600_000;
-  const done = [
-    ...(latest?.entries.filter((e) => e.status === "completed").map((e) => prepTile(e, byId, here)) ?? []),
-    ...notes.filter((n) => n.closedAt && n.closedAt > doneSince && onPhone(n)).map((n) => noteTile(n, here)),
-  ].sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
+  const byDone = (a: { completedAt?: number }, b: { completedAt?: number }) => (b.completedAt ?? 0) - (a.completedAt ?? 0);
+  const doneNotes = notes.filter((n) => n.closedAt && n.closedAt > doneSince && onPhone(n)).map((n) => noteTile(n, here)).sort(byDone);
+  const donePrep = (latest?.entries.filter((e) => e.status === "completed").map((e) => prepTile(e, byId, here)) ?? []).sort(byDone);
   const hiddenToDo = allNotes.filter((n) => n.needsAction && !onPhone(n)).length;
-  const toDo = open.filter((t) => !t.info).length + hiddenToDo;
+  const notesToDo = noteTiles.filter((t) => !t.info).length + hiddenToDo;
+  const toDo = notesToDo + prepTiles.length;
   const picked = draft?.entries.length ?? 0;
+  const Bar = readOnly ? PhoneTopBar : TopBar;
 
   return (
     <>
-      {readOnly ? <PhoneTopBar ctx={ctx} /> : <TopBar ctx={ctx} />}
+      <Bar ctx={ctx} title="Handover" eyebrow={`${site.name} · shift handover${readOnly ? " · read-only" : ""}`}>
+        {toDo > 0 && <span className="chip warn">{toDo} to do</span>}
+        {latest && <span className="muted hide-narrow" style={{ color: "inherit", opacity: .8 }}>Last sent {when(latest.submittedAt!)} by {latest.submittedByName}</span>}
+      </Bar>
       <main className="wide">
         {searchParams.sent && !readOnly && <div className="alert good" role="status"><div className="strong">Handover sent. The next shift sees it here.</div></div>}
-        <header className="prep-head">
-          <div className="eyebrow">PHO &amp; CO · Shift handover{readOnly ? " · read-only" : ""}</div>
-          <div className="prep-head-row">
-            <div className="grow">
-              <h1 className="h-display">{site.name}</h1>
-              {latest
-                ? (
-                  <dl className="prep-meta">
-                    <div><dt>Last handover</dt><dd>{when(latest.submittedAt!)}</dd></div>
-                    <div><dt>For</dt><dd>{forLabel(latest.shift, targetPeriod(latest.shift, latest.submittedAt!, rota))}</dd></div>
-                    <div><dt>From</dt><dd>{latest.submittedByName}</dd></div>
-                    <div><dt>Stocked</dt><dd>{latest.stockedCount} items confirmed</dd></div>
-                  </dl>
-                )
-                : <div className="prep-meta" style={{ display: "block" }}>{prepOn ? "No prep handover sent yet." : "Notes for the next shift."}</div>}
-            </div>
-            <div className="prep-big"><b>{toDo}</b><span>to do</span></div>
-          </div>
-        </header>
 
         {readOnly && (
           <div className="card stack" style={{ gap: 6 }}>
@@ -109,49 +96,76 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
           </div>
         )}
 
-        <HandoverList handoverId={latest?.id} open={open} done={done} canAct={!readOnly} pick={pick}
-          empty={hiddenToDo ? <div className="alert"><div className="strong">{hiddenToDo} note{hiddenToDo > 1 ? "s" : ""} to do, to read on the tablet</div></div> : undefined} />
-
-        {!readOnly && <NoteForm pick={pick} />}
-
-        <section className="stack" aria-label="Equipment problems">
-          <div className="row"><h2 className="h-sec grow">Equipment</h2>{!readOnly && <Link className="btn ghost small" href="/equipment">Report a problem</Link>}</div>
-          {kitFaults.length === 0
-            ? <div className="muted">No equipment problems open.</div>
-            : kitFaults.map((f) => (
-              <Link key={f.fault.id} href={`/equipment/${f.fault.equipmentId}`} className="list-btn">
-                <span className="grow">
-                  <span className="strong" style={{ display: "block" }}>{kitName.get(f.fault.equipmentId)}: {f.fault.body}</span>
-                  <span className="muted">{f.fault.createdByName} · {sinceText(f.fault.createdAt, now)} ago{f.updates.length ? ` · ${f.updates[f.updates.length - 1].body}` : ""}</span>
-                </span>
-                <span className={`chip ${f.fault.severity === "down" ? "bad" : "warn"}`}>{SEVERITY_LABEL[f.fault.severity!]}</span>
-              </Link>
-            ))}
-        </section>
-
-        {prepOn && !readOnly && (
-          <Link href="/handover/prep" className="list-btn" style={{ textDecoration: "none" }}>
-            <span className="ring">{picked || "→"}</span>
-            <span className="grow">
-              <span className="strong" style={{ display: "block" }}>{picked ? "Continue the prep handover" : "Closing up? Start the prep handover"}</span>
-              <span className="muted">{picked ? `${picked} item${picked > 1 ? "s" : ""} picked so far${draft?.createdByName ? ` (started by ${draft.createdByName})` : ""}` : "Tap only what the next shift needs to prep, then send"}</span>
-            </span>
-          </Link>
-        )}
-
-        {history.length > 1 && !readOnly && (
-          <section className="stack">
-            <h2 className="h-sec">Earlier handovers</h2>
-            <div className="card log">
-              {history.slice(1).map((x) => (
-                <div key={x.id}>
-                  <Link href={`/handover/report?id=${x.id}`} className="grow">{when(x.submittedAt!)} · {shiftLabel(x.shift)} · {x.submittedByName}</Link>
-                  <span className="muted">{x.entries.length} prep</span>
-                </div>
-              ))}
-            </div>
+        <div className="cols three">
+          <section className="stack" aria-label="Notes" style={{ gap: 10 }}>
+            <h2 className="grp-h">Notes <span>for this shift and the next</span></h2>
+            {!readOnly && <NoteForm pick={pick} />}
+            <HandoverList handoverId={latest?.id} open={noteTiles} done={doneNotes} canAct={!readOnly} pick={pick}
+              empty={hiddenToDo
+                ? <div className="alert"><div className="strong">{hiddenToDo} note{hiddenToDo > 1 ? "s" : ""} to do, to read on the tablet</div></div>
+                : <div className="card muted">No notes waiting.</div>} />
           </section>
-        )}
+
+          <section className="stack" aria-label="Prep to do" style={{ gap: 10 }}>
+            <h2 className="grp-h">Prep to do <span>{prepOn ? (latest ? `from the ${shiftLabel(latest.shift).toLowerCase()} handover` : "no handover sent yet") : "not used at this site"}</span></h2>
+            {prepOn && (
+              <HandoverList handoverId={latest?.id} open={prepTiles} done={donePrep} canAct={!readOnly} pick={pick}
+                empty={<div className="card muted">{latest ? "All the prep from the last handover is done." : "Nothing carried over yet."}</div>} />
+            )}
+            {prepOn && !readOnly && pick && (
+              <div className="card" style={{ background: "color-mix(in srgb, var(--teal-tint) 55%, var(--surface))", fontSize: 13 }}>
+                Each item keeps who it&apos;s for. Change &ldquo;For&rdquo; to pass it on; the person sees it on their shift screen and phone.
+              </div>
+            )}
+            {prepOn && !readOnly && (
+              <Link href="/handover/prep" className="cta-dark">
+                <Icon name="handover" />
+                <span className="grow">
+                  <span className="strong" style={{ display: "block" }}>{picked ? "Continue the prep handover" : "Closing up? Start the prep handover"}</span>
+                  <span style={{ fontSize: 13, opacity: .85 }}>{picked ? `${picked} item${picked > 1 ? "s" : ""} picked so far${draft?.createdByName ? ` (started by ${draft.createdByName})` : ""}` : "Tick what the next shift needs to prep, review, send"}</span>
+                </span>
+                <span className="pill-btn" style={{ background: "var(--amber)", color: "var(--amber-ink)" }}>{picked ? "Continue" : "Start"}</span>
+              </Link>
+            )}
+          </section>
+
+          <aside className="aside panel">
+            <section className="stack" aria-label="Equipment problems" style={{ gap: 8 }}>
+              <h2 className="grp-h">Kit <span>{kitFaults.length ? `${kitFaults.length} open` : "all working"}</span></h2>
+              {kitFaults.map((f) => (
+                <Link key={f.fault.id} href={`/equipment/${f.fault.equipmentId}`} className={`alert ${f.fault.severity === "down" ? "bad" : ""}`} style={{ textDecoration: "none", padding: "10px 12px" }}>
+                  <Icon name="wrench" />
+                  <span className="grow">
+                    <span className="strong" style={{ display: "block", fontSize: 14 }}>{kitName.get(f.fault.equipmentId)} · {f.fault.body}</span>
+                    <span style={{ fontSize: 12 }}>{SEVERITY_LABEL[f.fault.severity!]} · {f.fault.createdByName} · {sinceText(f.fault.createdAt, now)} ago{f.updates.length ? ` · ${f.updates[f.updates.length - 1].body}` : ""}</span>
+                  </span>
+                </Link>
+              ))}
+              {!readOnly && <Link className="btn ghost small" href="/equipment" style={{ justifyContent: "flex-start" }}><Icon name="wrench" />Report a problem with kit</Link>}
+            </section>
+
+            {prepOn && (
+              <section className="stack" aria-label="Recent handovers" style={{ gap: 8 }}>
+                <h2 className="grp-h">Recent handovers</h2>
+                {latest
+                  ? (
+                    <div className="card hist">
+                      {history.slice(0, 4).map((x, i) => (
+                        <div key={x.id}>
+                          <Link href={`/handover/report?id=${x.id}`} className="strong grow" style={{ fontSize: 14 }}>{when(x.submittedAt!)} · {shiftLabel(x.shift)}</Link>
+                          <span className="muted">{x.submittedByName}</span>
+                          <span className="muted" style={{ flexBasis: "100%" }}>
+                            {i === 0 ? `For ${forLabel(x.shift, targetPeriod(x.shift, x.submittedAt!, rota))} · ` : ""}{x.entries.length} prep · {x.stockedCount} stocked
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                  : <div className="card muted">No prep handover sent yet.</div>}
+              </section>
+            )}
+          </aside>
+        </div>
       </main>
       {readOnly ? null : <BottomNav ctx={ctx} current="handover" />}
     </>

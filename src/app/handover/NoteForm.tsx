@@ -35,8 +35,7 @@ export function NoteForm({ pick }: { pick?: PickGroup[] }) {
   });
 
   return (
-    <form className="card stack" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-      <h2 className="h-sec">Add a note</h2>
+    <form className="composer" aria-label="Add a note" onSubmit={(e) => { e.preventDefault(); submit(); }}>
       <textarea ref={box} id="note-body" aria-label="Note for the next shift" maxLength={1000} value={body}
         onChange={(e) => { setErr(""); setMsg(""); setBody(e.target.value); }}
         placeholder="e.g. Fridge 3 door not closing properly, engineer booked for Monday" />
@@ -55,10 +54,12 @@ export function NoteForm({ pick }: { pick?: PickGroup[] }) {
           <ForSelect id="note-for" value={assignee ?? ""} pick={pick} label="Who the note is for" onChange={setAssignee} />
         </div>
       )}
-      <div className="muted">{needsAction ? "Stays on the list until someone ticks it done." : "Shows for this shift and the next, then drops off. Nothing to tick."}</div>
       {err && <div className="err" role="alert">{err}</div>}
       {msg && <div className="alert good" role="status"><div className="strong" style={{ fontSize: 14 }}>{msg}</div></div>}
-      <button className="btn accent" type="submit" disabled={pending}>{pending ? "Adding…" : "Add note"}</button>
+      <div className="row wrap" style={{ gap: 10 }}>
+        <span className="muted grow" style={{ fontSize: 12 }}>{needsAction ? "Stays on the list until someone ticks it done." : "Shows for this shift and the next, then drops off. Nothing to tick."}</span>
+        <button className="btn accent small" type="submit" disabled={pending}>{pending ? "Adding…" : "Add note"}</button>
+      </div>
     </form>
   );
 }

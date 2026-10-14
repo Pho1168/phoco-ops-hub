@@ -35,19 +35,22 @@ a { color: inherit; }
 .top-site { font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: .5px; line-height: 1; white-space: nowrap; }
 .logo { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: 1px; line-height: 1; white-space: nowrap; }
 .top-back { min-width: 44px; padding: 0 10px; }
-.top-ttl { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.top-ttl { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
 .top-eyebrow { font-family: var(--display); font-weight: 600; font-size: 12px; letter-spacing: 1.4px; text-transform: uppercase; color: color-mix(in srgb, var(--brand-ink) 72%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.top-h1 { font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1; letter-spacing: .3px; color: var(--brand-ink); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-h1 { font-family: var(--display); font-weight: 700; font-size: 22px; line-height: 1; letter-spacing: .3px; color: var(--brand-ink); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .top-clock { font-family: var(--display); font-weight: 600; font-size: 22px; letter-spacing: .5px; font-variant-numeric: tabular-nums; line-height: 1; display: none; }
 .who { display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px; border-radius: 999px; background: color-mix(in srgb, var(--brand-ink) 10%, transparent); font-size: 13px; font-weight: 500; min-width: 0; flex-shrink: 0; }
 .who .avatar { width: 32px; height: 32px; font-size: 12px; }
 .top .avatar.tone-lead { background: var(--brand-ink); color: var(--brand); }
 .who-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: none; }
 .pill-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: color-mix(in srgb, var(--brand-ink) 16%, transparent); color: var(--brand-ink); font-weight: 600; font-size: 13px; cursor: pointer; min-height: 40px; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; }
+@media (max-width: 699px) { .top { overflow: hidden; gap: 8px; } .top .top-extra { display: none; } .top-ttl { min-width: 38%; } .who { flex-shrink: 1; } .who .pill-btn { padding: 0 10px; font-size: 12px; white-space: nowrap; } .who .sw-text { display: none; } }
+.who .pill-btn .ico { width: 18px; height: 18px; }
+@media (min-width: 700px) { .who .pill-btn .ico { display: none; } }
 @media (min-width: 700px) {
   .top { min-height: 78px; padding: 0 24px; gap: 16px; }
   .top-logo { height: 34px; }
-  .top-h1 { font-size: 32px; }
+  .top-h1 { font-size: 32px; white-space: nowrap; display: block; }
   .top-clock { display: block; }
   .who-name { display: inline; padding-right: 2px; }
 }
@@ -69,7 +72,7 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
 .chip.warn { background: var(--warn-soft); color: var(--warn-ink); }
 .chip.bad { background: var(--bad-soft); color: var(--bad-ink); }
 
-.btn { border: 0; border-radius: 14px; min-height: 52px; padding: 0 20px; font-weight: 600; cursor: pointer; background: var(--brand); color: var(--brand-ink); text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.btn { border: 0; border-radius: 14px; min-height: 52px; padding: 0 20px; font-weight: 600; cursor: pointer; background: var(--brand); color: var(--brand-ink); text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .btn.accent { background: var(--accent); color: var(--accent-ink); }
 .btn.ghost { background: transparent; border: 2px solid var(--brand); color: var(--brand); }
 .btn.bad { background: var(--bad); color: var(--bad-ink-on); }
@@ -228,7 +231,7 @@ table.people-table td, table.people-table th { padding: 10px 6px; border-bottom:
 .script-box { width: 100%; height: 180px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; border-radius: 12px; border: 1px solid var(--line); padding: 10px; background: var(--bg); color: var(--ink); }
 
 /* Kitchen prep */
-main.wide { max-width: 1100px; }
+main.wide { max-width: 1240px; }
 .prep-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 10px; }
 .prep-tools .txt { width: 100%; max-width: none; height: 46px; }
 @media (max-width: 420px) { .prep-tools { grid-template-columns: 1fr; } }
@@ -702,7 +705,7 @@ main.recipe-page > .rc-back { max-width: none; }
 .pin { position: absolute; transform: translate(-50%, -50%); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 14px;
   display: grid; place-items: center; box-shadow: 0 0 0 3px #fff; }
 .pin.static { position: static; transform: none; flex-shrink: 0; }
-.tick { width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid; place-items: center; font-weight: 800; flex-shrink: 0; }
+.rc-tick.small { width: 26px; height: 26px; }
 
 /* Shift Mode (/shift): your role + your shift = your screen. Amber is the brand's golden highlight (the logo's colour). */
 :root { --amber: #FCBA63; --amber-ink: #1F2A22; --amber-soft: #FFE9C4; }
@@ -761,3 +764,42 @@ main.recipe-page > .rc-back { max-width: none; }
 .sm-kpi.warn .stat { color: var(--warn-ink); }
 .sm-kpi-of { font-size: 20px; color: var(--ink-2); }
 .sm-kpi-lanes { grid-column: 1 / -1; justify-self: start; }
+
+/* Rebuild: wide screens are columns on a tablet, one column on a phone. */
+.cols { display: grid; gap: 16px; align-items: start; }
+@media (min-width: 900px) {
+  .cols.two { grid-template-columns: minmax(0, 1fr) 340px; }
+  .cols.three { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) 300px; }
+  .cols.areas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cols.areas.one { grid-template-columns: minmax(0, 1fr); }
+  .cols .prep-report { grid-template-columns: 1fr; }
+}
+@media (min-width: 900px) and (max-width: 1099px) { .cols.three { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .cols.three > .panel { grid-column: 1 / -1; } }
+.aside { display: flex; flex-direction: column; gap: 12px; }
+.aside .grp-h { font-size: 15px; }
+.sm-kpi .light { margin-right: 6px; }
+.sm-item .ring { width: 44px; height: 44px; font-size: 12px; }
+.kpi-dot { display: inline-flex; align-items: center; gap: 8px; }
+.sm-item.sm-row { min-height: 60px; padding: 10px 12px; }
+.sm-item .chip.warn { margin-left: 6px; }
+.hide-narrow { display: none; }
+@media (min-width: 900px) { .hide-narrow { display: inline; } }
+/* Checklist runner: the list beside a progress panel on a tablet; the sign-off bar only on a phone. */
+.run-top { display: flex; align-items: center; gap: 12px; }
+.ring.big { width: 96px; height: 96px; font-size: 26px; font-family: var(--display); }
+.ring.big.ok { background: var(--teal-tint); color: var(--teal-ink); }
+.run-aside .btn.sign { width: 100%; min-height: 56px; font-size: 16px; }
+@media (min-width: 900px) { .sticky-foot.run-foot { display: none; } .run-top { display: none; } main.run-page { padding-bottom: 40px; } }
+@media (max-width: 899px) { .run-aside .btn.sign { display: none; } }
+.fix .choice { background: var(--surface); }
+.composer { background: color-mix(in srgb, var(--teal-tint) 55%, var(--surface)); border: 1px solid var(--teal-tint); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.composer textarea { min-height: 56px; background: var(--surface); }
+.composer .seg { padding: 4px; }
+.composer .seg button { min-height: 40px; }
+.composer select { min-height: 40px; font-size: 14px; }
+.composer .btn { min-height: 44px; }
+.hist { display: flex; flex-direction: column; gap: 8px; }
+.hist > div { display: flex; flex-wrap: wrap; gap: 4px 10px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 13px; }
+.hist > div:first-child { border-top: 0; padding-top: 0; }
+.cta-dark { display: flex; align-items: center; gap: 12px; background: var(--brand); color: var(--brand-ink); border-radius: 16px; padding: 14px 16px; text-decoration: none; }
+.cta-dark .ico { color: var(--amber); flex-shrink: 0; }
