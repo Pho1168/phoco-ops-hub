@@ -77,7 +77,7 @@ describe("certificate reminders on the scheduler", () => {
     expect(await queueShiftReminders(at("09:00"), demoStore)).toEqual(["DEMO-FOH"]);
     expect(await queueShiftReminders(at("09:10"), demoStore)).toEqual([]); // already sent
     const [m] = (await demoStore.notices("DEMO-FOH", 10)).filter((n) => n.kind === "shift");
-    expect(m).toMatchObject({ title: "Shift at 11:00 today · Eastcote", url: "/me", sendAfter: at("09:00") });
+    expect(m).toMatchObject({ title: "Shift at 11:00 today · Eastcote", url: "/shift", sendAfter: at("09:00") });
     expect(m.body).toContain("Fridge 2 door seal loose");
     expect(m.body).not.toContain("Sam");
 

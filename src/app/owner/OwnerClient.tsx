@@ -22,7 +22,7 @@ export interface PersonRow { id: string; name: string; code: string; status: str
 type Modal = { type: "close"; site: SiteSummary } | { type: "resolve"; id: string } | null;
 
 /** The overview. `lead`: an owner (every site, closing and reopening) or an operations manager (the sites they run). */
-export function OwnerClient({ lead, tools, reminders, sites, people, log, currentSite, devices, rota }: { lead: "owner" | "ops"; tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
+export function OwnerClient({ lead, rightNow, tools, reminders, sites, people, log, currentSite, devices, rota }: { lead: "owner" | "ops"; rightNow: React.ReactNode; tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [modal, setModal] = useState<Modal>(null);
@@ -40,8 +40,10 @@ export function OwnerClient({ lead, tools, reminders, sites, people, log, curren
 
   return (
     <main>
-      <div><div className="eyebrow">{lead === "owner" ? "All sites · owner control" : `${sites.map((s) => s.name).join(" · ")} · operations`}</div><h1 className="h-display">Group overview</h1></div>
+      <div><div className="eyebrow">{lead === "owner" ? "All sites · owner control" : `${sites.map((s) => s.name).join(" · ")} · operations`}</div><h1 className="h-display">Right now</h1></div>
       {msg && <div className="alert good" role="status"><Icon name="check" /><div className="grow">{msg}</div></div>}
+
+      {rightNow}
 
       {reminders}
 

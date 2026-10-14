@@ -18,7 +18,7 @@ import type { CoverRequest, CoverStatus } from "@/lib/domain/cover";
 import { nextCode, type BodyOf, type LibraryDoc, type LibraryVersion } from "@/lib/domain/library";
 import { ALLERGEN_KEYS } from "@/lib/domain/recipes";
 import { shiftEnd, shiftStart } from "@/lib/domain/reminders";
-import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
+import { weekStartOf, type StoredShift, type WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
 import { bySkillOrder, trainingSections, type Pathway, type Question, type Skill, type TrainingEvent, type TrainingStart } from "@/lib/domain/training";
 
@@ -259,6 +259,32 @@ function demoTasks(): Task[] {
   ];
 }
 
+/**
+ * A published rota for this week at Eastcote and Wembley, so Shift Mode (/shift) has shifts to show in demo mode.
+ * Not under vitest: the tests build the rotas they need and count on an empty one.
+ */
+function demoRota(): Pick<State, "shifts" | "weeks"> {
+  if (process.env.VITEST) return { shifts: [], weeks: new Map() };
+  const today = londonDate(Date.now());
+  const week = weekStartOf(today);
+  const weeks = new Map<string, WeekStatus>([[`EAS|${week}`, "published"], [`WEM|${week}`, "published"]]);
+  const shifts: State["shifts"] = [];
+  const add = (siteId: SiteId, personId: string, section: string, start: string, end: string, dayOffset = 0) => {
+    const date = addDaysIso(today, dayOffset);
+    if (weekStartOf(date) !== week) return;
+    shifts.push({ id: `demo-shift-${shifts.length + 1}`, siteId, personId, staffCode: personId, section, week, date, start, end, endsNextDay: end <= start, cancelled: false,
+      sourceKey: `${siteId}|${week}|${personId}|${section}|${date}` });
+  };
+  for (const d of [-1, 0, 1, 2]) {
+    add("EAS", "DEMO-MGR", "FOH", "10:00", "18:00", d);
+    add("EAS", "DEMO-FOH", "FOH", "11:00", "22:30", d);
+    add("EAS", "DEMO-FLT", "BOH", "10:30", "16:00", d);
+    add("EAS", "DEMO-BOH", "BOH", "15:00", "23:00", d);
+    add("WEM", "DEMO-PRD", "PROD", "06:00", "14:30", d);
+  }
+  return { shifts, weeks };
+}
+
 function seed(): State {
   const owner = hashPin(DEMO_PINS.owner), staff = hashPin(DEMO_PINS.staff);
   const p = (id: string, name: string, access: Person["access"], pin: string): Person =>
@@ -287,7 +313,7 @@ function seed(): State {
       C: { code: "C", label: "Cooking core", targetMin: 75, legalMin: 75 },
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
-    rotaSources: [], weeks: new Map(), shifts: [], notices: [], pushSubs: [], secrets: new Map(),
+    rotaSources: [], ...demoRota(), notices: [], pushSubs: [], secrets: new Map(),
     prepItems: masterItems(), prepSites: ["EAS"], prepHandovers: [], prepEntries: [], teamNotices: [], timeOff: [], certificates: demoCertificates(), ...demoEquipment(), tasks: demoTasks(), shiftReplies: [], gasChecks: [], cover: [], coverOffers: [], ...demoLibrary(), ...demoTraining(),
   };
 }

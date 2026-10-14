@@ -31,13 +31,14 @@ export function PhoneTopBar({ ctx }: { ctx: Ctx }) {
   );
 }
 
-export function BottomNav({ ctx, current }: { ctx: Ctx; current: "today" | "handover" | "rota" | "library" | "owner" | "manage" }) {
-  const item = (href: string, id: typeof current, label: string, icon: string) => (
-    <Link href={href} aria-current={current === id ? "page" : undefined}><Icon name={icon} />{label}</Link>
+/** The tabs. "Today" (everything at the site) is reached from the Shift screen's More row and keeps its tab highlight there. */
+export function BottomNav({ ctx, current }: { ctx: Ctx; current: "shift" | "today" | "handover" | "rota" | "library" | "owner" | "manage" }) {
+  const item = (href: string, id: typeof current, label: string, icon: string, also?: typeof current) => (
+    <Link href={href} aria-current={current === id || current === also ? "page" : undefined}><Icon name={icon} />{label}</Link>
   );
   return (
     <nav className="nav" aria-label="Main">
-      {item("/today", "today", "Today", "today")}
+      {item("/shift", "shift", "Shift", "clock", "today")}
       {item("/handover", "handover", "Handover", "handover")}
       {item("/rota", "rota", "Rota", "rota")}
       {item("/library", "library", "Library", "book")}
