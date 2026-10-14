@@ -26,15 +26,42 @@ export function ManageTiles({ counts = {} }: { counts?: ManageCounts }) {
         const n = t.count ? counts[t.count] ?? 0 : 0;
         return (
           <Link key={t.href} href={t.href} className="tile">
-            <span className="tile-ico"><Icon name={t.icon} /></span>
+            <span className="row" style={{ gap: 10 }}>
+              <span className="tile-ico"><Icon name={t.icon} /></span>
+              {n > 0 && <span className={`chip ${t.count === "noticesActive" ? "done" : "late"}`} style={{ marginLeft: "auto" }}>{n} {t.countLabel}</span>}
+            </span>
             <span className="grow">
-              <span className="strong" style={{ display: "block" }}>{t.title}</span>
+              <span className="tile-title">{t.title}</span>
               <span className="muted">{t.text}</span>
             </span>
-            {n > 0 && <span className={`chip ${t.count === "noticesActive" ? "done" : "late"}`}>{n} {t.countLabel}</span>}
           </Link>
         );
       })}
     </nav>
+  );
+}
+
+/** What's waiting for a manager, most pressing first: the counts that need a decision or a hand, as a strip above the tiles. */
+export function NeedsYou({ counts }: { counts: ManageCounts }) {
+  const items = [
+    { n: counts.urgent, href: "/manage/tasks", label: "urgent in the task centre", tone: "bad" },
+    { n: counts.coverToDo, href: "/manage/cover", label: "cover requests to decide", tone: "" },
+    { n: counts.timeOffPending, href: "/manage/time-off", label: "time-off requests to decide", tone: "" },
+    { n: counts.trainingToDo, href: "/manage/training", label: "training things to do", tone: "" },
+    { n: counts.certIssues, href: "/manage/certificates", label: "certificates need attention", tone: "" },
+    { n: counts.libraryToDo, href: "/library", label: "SOPs to approve or finish", tone: "" },
+    { n: counts.recipesToDo, href: "/library/recipes", label: "recipes to approve or finish", tone: "" },
+    { n: counts.equipmentIssues, href: "/manage/equipment", label: "kit faults or services to sort", tone: "" },
+  ].filter((i) => (i.n ?? 0) > 0).slice(0, 4);
+  if (!items.length) return <div className="card muted">Nothing waiting for you right now.</div>;
+  return (
+    <div className="needs-you">
+      {items.map((i) => (
+        <Link key={i.href} href={i.href} className={`alert ${i.tone}`} style={{ textDecoration: "none", padding: "10px 14px" }}>
+          <span className="stat" style={{ fontSize: 30, color: "inherit" }}>{i.n}</span>
+          <span className="grow strong" style={{ fontSize: 14 }}>{i.label}</span>
+        </Link>
+      ))}
+    </div>
   );
 }

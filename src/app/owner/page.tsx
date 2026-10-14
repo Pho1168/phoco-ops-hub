@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { DEMO_MODE, store } from "@/lib/data";
 import { currentDevice } from "@/lib/device";
 import { DevicesCard, type DeviceRow } from "./DevicesCard";
@@ -7,7 +8,7 @@ import { progress, runState } from "@/lib/domain/checklist";
 import { londonNow, requireLead } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { OwnerClient, type SiteSummary, type PersonRow } from "./OwnerClient";
-import { ManageTiles } from "../manage/ManageTiles";
+import { ManageTiles, NeedsYou } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { RightNow } from "./RightNow";
@@ -107,12 +108,14 @@ export default async function Owner() {
       ready={withReady.length ? { green: withReady.filter((s) => s.ready!.light === "green").length, of: withReady.length } : undefined}
       prep={prepSites.length ? { toDo: prepOpen.length, urgent: prepOpen.filter((e) => e.urgent).length } : undefined}
       team={{ onRota: teamRows.length, late: teamRows.filter((r) => r.reply?.kind === "late").length, cantMakeIt: teamRows.filter((r) => r.reply?.kind === "cant_make_it").length }}
-      lanes={ctx.site.status === "open" ? { site: ctx.site.name, href: "/shift?view=lanes" } : undefined} />
+    />
   );
   return (
     <>
-      <TopBar ctx={ctx} />
-      <OwnerClient lead={lead} rightNow={rightNow} tools={<ManageTiles counts={counts} />}
+      <TopBar ctx={ctx} title="Right now" eyebrow={lead === "owner" ? "All sites · owner" : `${sites.map((s) => s.name).join(" · ")} · operations`}>
+        {ctx.site.status === "open" && <Link className="pill-btn top-extra" href="/shift?view=lanes">Lanes at {ctx.site.name}</Link>}
+      </TopBar>
+      <OwnerClient lead={lead} rightNow={rightNow} needs={<NeedsYou counts={counts} />} tools={<ManageTiles counts={counts} />}
         reminders={<RemindersCard rows={team} active={active.length} pushOn={active.length - missing.length} missing={missing} />} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
         rota={<RotaCard rows={rota} canConnect={ctx.isOwner} />}
         devices={<DevicesCard devices={devices} demo={DEMO_MODE} sites={sites.filter((s) => s.status === "open").map((s) => ({ id: s.id, name: s.name }))} />} />
