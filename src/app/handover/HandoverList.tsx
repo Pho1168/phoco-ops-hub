@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { assignHandover, prepSetDone, setNoteDone } from "@/app/actions";
 import type { PickGroup } from "@/lib/domain/assign";
@@ -19,6 +20,8 @@ export interface Tile {
    * `forGone`: they've left the site or are frozen, so it counts as for anyone.
    */
   forId?: string; forName?: string; forBy?: string; forAt?: number; forGone?: boolean;
+  /** Somewhere to open for it: a prep item's recipe sheet. */
+  link?: { href: string; label: string };
 }
 
 const hm = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -83,7 +86,10 @@ export function HandoverList({ handoverId, open, done, canAct, pick, empty }: {
                       {t.info && <span className="chip">For info</span>}
                       <span className="muted">{t.label}</span>
                     </div>
-                    <div className={t.kind === "note" ? "note-body" : "prep-name"}>{t.title}</div>
+                    <div className={t.kind === "note" ? "note-body" : "prep-name"}>
+                      {t.title}
+                      {t.link && <Link className="chip done tile-link" href={t.link.href}>{t.link.label}</Link>}
+                    </div>
                     {t.detail && <div className="prep-note">{t.detail}</div>}
                     {t.meta && <div className="prep-note">{t.meta}</div>}
                     {canAct && pick && t.assignable

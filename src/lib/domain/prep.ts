@@ -43,7 +43,18 @@ export const PREP_SHIFTS: { id: PrepShift; label: string }[] = [
 export const shiftLabel = (s: PrepShift) => PREP_SHIFTS.find((x) => x.id === s)?.label ?? s;
 
 /** One thing on the master list. Groups show in the order of their first item; items by position within a group. */
-export interface PrepItem { id: string; name: string; kind: PrepKind; group: string; position: number; active: boolean }
+export interface PrepItem { id: string; name: string; kind: PrepKind; group: string; position: number; active: boolean;
+  /** The prep recipe in the library it's made from, if a manager has linked one (`/library/<id>`). */
+  recipeId?: string }
+
+/** A recipe can be linked to a handover item when it's a published, live prep recipe. */
+export function canLinkRecipe(doc: { kind: string; retiredAt?: number; published?: unknown } | undefined): { ok: true } | { ok: false; error: string } {
+  if (!doc) return { ok: false, error: "That recipe isn't in the library" };
+  if (doc.kind !== "prep") return { ok: false, error: "Only a prep recipe can be linked: a dish spec isn't a recipe sheet" };
+  if (doc.retiredAt) return { ok: false, error: "That recipe has been retired" };
+  if (!doc.published) return { ok: false, error: "That recipe isn't approved yet" };
+  return { ok: true };
+}
 
 /**
  * The list the database was first seeded with (63 items, all to prep): supabase/migrations/0006_kitchen_prep.sql has

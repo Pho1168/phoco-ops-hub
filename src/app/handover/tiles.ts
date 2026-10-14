@@ -17,12 +17,14 @@ const forFields = (x: { assignedTo?: string; assignedToName?: string; assignedBy
   } : {}),
 });
 
-export function prepTile(e: PrepEntryView, items: Map<string, PrepItem>, here?: Set<string>): Tile {
+/** `recipes`: the recipe sheets this reader can open (published prep recipes, on the full app); absent on a phone. */
+export function prepTile(e: PrepEntryView, items: Map<string, PrepItem>, here?: Set<string>, recipes?: Set<string>): Tile {
   const item = items.get(e.itemId);
+  const recipe = item?.recipeId && recipes?.has(item.recipeId) ? { href: `/library/${item.recipeId}`, label: "Recipe" } : undefined;
   return {
     kind: "prep", id: e.id, title: item?.name ?? e.itemId, label: item ? `${kindLabel(item.kind)} · ${item.group}` : "To prep",
     urgent: e.urgent, carried: !!e.carriedFrom, detail: e.note, completedAt: e.completedAt, completedByName: e.completedByName,
-    assignable: entryCanBeFor(e), ...forFields(e, here),
+    assignable: entryCanBeFor(e), ...forFields(e, here), link: recipe,
   };
 }
 

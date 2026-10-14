@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { movePrepItem, savePrepItem, setPrepItemActive } from "@/app/actions";
+import { movePrepItem, savePrepItem, setPrepItemActive, setPrepItemRecipe } from "@/app/actions";
 import { filterPrep, prepGroups, PREP_GROUP_MAX, PREP_KINDS, PREP_NAME_MAX, type PrepItem, type PrepKind } from "@/lib/domain/prep";
 
 interface Draft { name: string; kind: PrepKind; group: string }
@@ -25,7 +25,10 @@ function Fields({ d, set, groups, idp }: { d: Draft; set: (d: Draft) => void; gr
   );
 }
 
-export function ListEditor({ items, canRetire }: { items: PrepItem[]; canRetire: boolean }) {
+export interface RecipeOption { id: string; title: string; code: string }
+
+export function ListEditor({ items, canRetire, recipes }: { items: PrepItem[]; canRetire: boolean; recipes: RecipeOption[] }) {
+  const recipeTitle = (id?: string) => recipes.find((r) => r.id === id)?.title;
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -74,6 +77,15 @@ export function ListEditor({ items, canRetire }: { items: PrepItem[]; canRetire:
                           ? (
                             <form className="stack grow" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); run(() => savePrepItem(i.id, edit.d), "Saved", () => setEdit(null)); }}>
                               <Fields d={edit.d} set={(d) => setEdit({ id: i.id, d })} groups={groups} idp={`e-${i.id}`} />
+                              <label className="row wrap" style={{ gap: 8 }}>
+                                <span className="muted">Recipe sheet</span>
+                                <select value={i.recipeId ?? ""} disabled={pending} style={{ flex: "1 1 220px" }}
+                                  onChange={(e) => run(() => setPrepItemRecipe(i.id, e.target.value || null), e.target.value ? "Recipe linked" : "Recipe link removed")}>
+                                  <option value="">None</option>
+                                  {recipes.map((r) => <option key={r.id} value={r.id}>{r.title} · {r.code}</option>)}
+                                </select>
+                                <span className="muted" style={{ fontSize: 13, flexBasis: "100%" }}>Whoever picks this up from the handover gets a one-tap link to the recipe. Only approved prep recipes can be linked.</span>
+                              </label>
                               <div className="row" style={{ gap: 8 }}>
                                 <button className="btn small accent" type="submit" disabled={pending}>Save</button>
                                 <button className="btn small ghost" type="button" onClick={() => setEdit(null)}>Cancel</button>
@@ -85,7 +97,7 @@ export function ListEditor({ items, canRetire }: { items: PrepItem[]; canRetire:
                           )
                           : (
                             <>
-                              <span className="grow">{i.name}</span>
+                              <span className="grow">{i.name}{i.recipeId && <span className="muted" style={{ fontSize: 13 }}> · recipe: {recipeTitle(i.recipeId) ?? "linked"}</span>}</span>
                               <button type="button" className="btn ghost small icon" aria-label={`Move ${i.name} up`} disabled={pending || n === 0} onClick={() => run(() => movePrepItem(i.id, "up"))}>↑</button>
                               <button type="button" className="btn ghost small icon" aria-label={`Move ${i.name} down`} disabled={pending || n === list.length - 1} onClick={() => run(() => movePrepItem(i.id, "down"))}>↓</button>
                               <button type="button" className="btn ghost small" aria-label={`Edit ${i.name}`} onClick={() => { setErr(""); setEdit({ id: i.id, d: { name: i.name, kind: i.kind, group: i.group } }); }}>Edit</button>

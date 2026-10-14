@@ -638,6 +638,13 @@ export const demoStore: Store = {
     Object.assign(it, item, moved ? { position: Math.max(...S().prepItems.map((i) => i.position)) + 1 } : {});
     return true;
   },
+  async setPrepItemRecipe(id, recipeId, byId) {
+    void byId;
+    const it = S().prepItems.find((i) => i.id === id);
+    if (!it) return false;
+    it.recipeId = recipeId ?? undefined;
+    return true;
+  },
   async swapPrepItems(a, b, byId) {
     void byId;
     const [x, y] = [S().prepItems.find((i) => i.id === a), S().prepItems.find((i) => i.id === b)];
