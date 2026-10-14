@@ -10,6 +10,7 @@ import { OwnerClient, type SiteSummary, type PersonRow } from "./OwnerClient";
 import { ManageTiles } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
+import { RightNow } from "./RightNow";
 import { teamRowsView, teamToday } from "@/lib/team-today";
 import { gasFor, lastClose, readyFor, shiftsAround } from "@/lib/daily-service";
 import { readyShownUntil } from "@/lib/domain/daily";
@@ -89,15 +90,29 @@ export default async function Owner() {
       issues: r?.issues ?? [],
     };
   });
-  const team = teamRowsView(await teamToday(sites.filter((s) => s.status === "open").map((s) => s.id), now), now);
+  const openSites = sites.filter((s) => s.status === "open");
+  const teamRows = await teamToday(openSites.map((s) => s.id), now);
+  const team = teamRowsView(teamRows, now);
   const withPush = await db.peopleWithPush();
   const active = all.filter((p) => p.status === "active");
   const lead = ctx.isOwner ? "owner" as const : "ops" as const;
   const missing = active.filter((p) => !withPush.has(p.id)).map((p) => p.name);
+  const counts = await manageCounts(ctx.person);
+  // The first glance: urgent things, sites ready to open, prep still to do, who's on (and late or not coming).
+  const prepSites = (await db.prepEnabledSites()).filter((id) => openSites.some((s) => s.id === id));
+  const prepOpen = (await Promise.all(prepSites.map((id) => db.prepOutstanding(id)))).flat();
+  const withReady = summaries.filter((s) => s.ready);
+  const rightNow = (
+    <RightNow urgent={counts.urgent ?? 0}
+      ready={withReady.length ? { green: withReady.filter((s) => s.ready!.light === "green").length, of: withReady.length } : undefined}
+      prep={prepSites.length ? { toDo: prepOpen.length, urgent: prepOpen.filter((e) => e.urgent).length } : undefined}
+      team={{ onRota: teamRows.length, late: teamRows.filter((r) => r.reply?.kind === "late").length, cantMakeIt: teamRows.filter((r) => r.reply?.kind === "cant_make_it").length }}
+      lanes={ctx.site.status === "open" ? { site: ctx.site.name, href: "/shift?view=lanes" } : undefined} />
+  );
   return (
     <>
       <TopBar ctx={ctx} />
-      <OwnerClient lead={lead} tools={<ManageTiles counts={await manageCounts(ctx.person)} />}
+      <OwnerClient lead={lead} rightNow={rightNow} tools={<ManageTiles counts={counts} />}
         reminders={<RemindersCard rows={team} active={active.length} pushOn={active.length - missing.length} missing={missing} />} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
         rota={<RotaCard rows={rota} canConnect={ctx.isOwner} />}
         devices={<DevicesCard devices={devices} demo={DEMO_MODE} sites={sites.filter((s) => s.status === "open").map((s) => ({ id: s.id, name: s.name }))} />} />

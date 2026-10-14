@@ -215,7 +215,7 @@ export async function queueShiftReminders(now = Date.now(), db: Store = store(),
     if (already.has(key)) continue;
     if (!waiting.has(s.siteId)) waiting.set(s.siteId, await waitingAt(s.siteId, db));
     const m = shiftReminderMessage(s, waiting.get(s.siteId), today);
-    if (await db.queueNotice({ personId: s.personId, kind: "shift", title: m.title, body: m.body, dedupeKey: key, sendAfter: now, url: "/me" })) told.push(s.personId);
+    if (await db.queueNotice({ personId: s.personId, kind: "shift", title: m.title, body: m.body, dedupeKey: key, sendAfter: now, url: "/shift" })) told.push(s.personId);
   }
   return told;
 }

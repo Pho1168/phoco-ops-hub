@@ -463,7 +463,7 @@ export async function setPrepItemActive(id: string, active: boolean): Promise<Ac
 /** Closing and reopening sites and connecting rota sheets stay with the owner. */
 async function requireOwner() {
   const ctx = await requireCtx();
-  if (!ctx.isOwner) redirect("/today");
+  if (!ctx.isOwner) redirect("/shift");
   return ctx;
 }
 
@@ -1760,7 +1760,7 @@ const SkillZ = z.object({
 const QuestionZ = z.object({ text: z.string().max(1000), options: z.array(z.string().max(500)).max(10), answer: z.number().int().min(-1).max(9) });
 const QuizZ = z.object({ version: z.string().max(4000), answers: z.record(z.string(), z.number().int().min(0).max(9)) });
 const TakeBackZ = z.string().trim().min(3, "Say why it has to be done again").max(300, "Keep it under 300 characters");
-const TRAINING_PATHS = ["/library/training", "/manage/training", "/me", "/today"];
+const TRAINING_PATHS = ["/library/training", "/manage/training", "/me", "/today", "/shift"];
 const revalidateTraining = (...more: string[]) => { for (const p of [...TRAINING_PATHS, ...more]) revalidatePath(p); };
 
 /** Signed in on any device (the shop tablet or their own phone), with their own PIN chosen. */

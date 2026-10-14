@@ -48,14 +48,14 @@ export async function requireCtx(): Promise<Ctx> {
 export async function requireManager(): Promise<Ctx & { managed: SiteId[] }> {
   const ctx = await requireCtx();
   const managed = managedSites(ctx.person);
-  if (!managed.length) redirect("/today");
+  if (!managed.length) redirect("/shift");
   return { ...ctx, managed };
 }
 
 /** Owners and operations managers only (on the full app). `leads` are the sites they run: every site for an owner. */
 export async function requireLead(): Promise<Ctx & { leads: SiteId[] }> {
   const ctx = await requireCtx();
-  if (!ctx.isLead) redirect("/today");
+  if (!ctx.isLead) redirect("/shift");
   return { ...ctx, leads: leadSites(ctx.person, (await store().sites()).map((s) => s.id)) };
 }
 
