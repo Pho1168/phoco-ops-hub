@@ -26,8 +26,8 @@ import { bySkillOrder, trainingSections, type Pathway, type Question, type Skill
 export const DEMO_PINS = { owner: "4826", staff: "1357" } as const;
 
 const DUE: Record<string, string> = {
-  "EAS-FOH-OPEN": "11:30", "EAS-FOH-CLOSE": "22:30", "EAS-FOH-CLEAN": "22:30", "EAS-BAR-PREP": "11:30",
-  "EAS-BOH-OPEN": "11:00", "EAS-BOH-CLOSE": "22:30", "EAS-BOH-CLEAN": "22:30", "EAS-TEMP-COLD": "11:00",
+  "EAS-FOH-OPEN": "11:45", "EAS-FOH-CLOSE": "22:30", "EAS-FOH-CLEAN": "22:30", "EAS-BAR-PREP": "11:30",
+  "EAS-BOH-OPEN": "11:45", "EAS-BOH-CLOSE": "22:30", "EAS-BOH-CLEAN": "22:30", "EAS-TEMP-COLD": "11:45",
   "EAS-TEMP-COOK": "12:00", "WEM-OPEN": "08:00", "WEM-CLOSE": "17:00", "WEM-CLEAN": "17:00",
   "WEM-TEMP-COLD": "08:00", "WEM-TEMP-COOK": "10:00", "WEM-DISPATCH": "10:30",
 };

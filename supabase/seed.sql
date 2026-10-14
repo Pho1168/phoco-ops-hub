@@ -7,7 +7,7 @@ insert into temp_rules (code, label, target_max, target_min, legal_max, legal_mi
  ('F','Fridge / chilled', 5, null, 8, null),
  ('Z','Freezer', -18, null, null, null),
  ('C','Cooking core', null, 75, null, 75);
-insert into checklist_templates (id, site_id, name, area, when_label, due_time, is_suggested) values ('EAS-FOH-OPEN', 'EAS', 'FOH Opening', 'FOH', 'Before doors open', '11:30', false);
+insert into checklist_templates (id, site_id, name, area, when_label, due_time, is_suggested) values ('EAS-FOH-OPEN', 'EAS', 'FOH Opening', 'FOH', 'Before doors open', '11:45', false);
 with v as (insert into checklist_versions (template_id, version, status, source_note, published_at) values ('EAS-FOH-OPEN', 1, 'published', 'EAS- FOH Opening Closing + SYD FOH (counter desk items)', now()) returning id)
 insert into checklist_items (version_id, position, section, text, answer_type, rule_code, hint, tag) values
  ((select id from v), 1, 'Dining area', 'Set and adjust menus on tables', 'tick', null, null, null),
@@ -118,7 +118,7 @@ insert into checklist_items (version_id, position, section, text, answer_type, r
  ((select id from v), 20, 'Drinks', 'Lemons sliced', 'tick', null, null, null),
  ((select id from v), 21, 'Drinks', 'Mix jugs checked', 'tick', null, null, null),
  ((select id from v), 22, 'Drinks', 'Che restocked', 'tick', null, null, null);
-insert into checklist_templates (id, site_id, name, area, when_label, due_time, is_suggested) values ('EAS-BOH-OPEN', 'EAS', 'BOH Opening', 'BOH', 'Before service', '11:00', false);
+insert into checklist_templates (id, site_id, name, area, when_label, due_time, is_suggested) values ('EAS-BOH-OPEN', 'EAS', 'BOH Opening', 'BOH', 'Before service', '11:45', false);
 with v as (insert into checklist_versions (template_id, version, status, source_note, published_at) values ('EAS-BOH-OPEN', 1, 'published', 'No EAS BOH file found: based on SYD BOH Opening & Closing', now()) returning id)
 insert into checklist_items (version_id, position, section, text, answer_type, rule_code, hint, tag) values
  ((select id from v), 1, 'Start of shift', 'Uniform on, hands washed, hairnet on', 'tick', null, null, null),
@@ -162,7 +162,7 @@ insert into checklist_items (version_id, position, section, text, answer_type, r
  ((select id from v), 17, 'Every month', 'Upper walls', 'tick', null, null, null),
  ((select id from v), 18, 'Every month', 'Evaporators (cold room motors)', 'tick', null, null, null),
  ((select id from v), 19, 'Every month', 'Air con', 'tick', null, null, null);
-insert into checklist_templates (id, site_id, name, area, when_label, due_time, is_suggested) values ('EAS-TEMP-COLD', 'EAS', 'Fridge & Freezer Temps', 'BOH', 'Opening and closing', '11:00', false);
+insert into checklist_templates (id, site_id, name, area, when_label, due_time, is_suggested) values ('EAS-TEMP-COLD', 'EAS', 'Fridge & Freezer Temps', 'BOH', 'Opening and closing', '11:45', false);
 with v as (insert into checklist_versions (template_id, version, status, source_note, published_at) values ('EAS-TEMP-COLD', 1, 'published', 'WEM Cold Storage Temp Log format. EAS fridge list to confirm', now()) returning id)
 insert into checklist_items (version_id, position, section, text, answer_type, rule_code, hint, tag) values
  ((select id from v), 1, 'Cold storage', 'Undercounter fridge (bar)', 'temp', 'F', null, null),
