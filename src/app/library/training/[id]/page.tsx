@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { KIND_TEXT, type LibraryDoc } from "@/lib/domain/library";
 import { seesRecipes } from "@/lib/domain/recipes";
-import { canEditTraining, canMarkDone, PATHWAY_TEXT, progressText, quizOf, WHY_TEXT, type Progress, type TrainingEvent } from "@/lib/domain/training";
+import { canEditTraining, canMarkDone, guideHasContent, guidePhotoIds, PATHWAY_TEXT, progressText, quizOf, WHY_TEXT, type Progress, type TrainingEvent } from "@/lib/domain/training";
 import { dayMonthYear } from "@/lib/domain/time";
 import { londonDate } from "@/lib/domain/time";
 import { current } from "@/lib/session";
@@ -12,6 +12,7 @@ import { BottomNav, PhoneTopBar, TopBar } from "@/components/Chrome";
 import { dayMonthYearAt } from "../../format";
 import { StateChips } from "../parts";
 import { MarkDone } from "./MarkDone";
+import { SkillCard } from "../SkillCard";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,9 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
   const shown = editor ? docs : docs.filter((d) => d.published && !d.retiredAt);
   const events = row ? (await db.trainingEvents({ personIds: [ctx.person.id], skillIds: [skill.id] })).reverse().slice(0, 10) : [];
   const recipesOk = full && seesRecipes(ctx.person, sites);
+  // The written guide, as a card. A picture the owner has erased shows as removed.
+  const guide = guideHasContent(skill.guide) ? skill.guide : undefined;
+  const erased = guide ? Array.from((await db.mediaStatus(guidePhotoIds(guide))).entries()).filter(([, m]) => m.erased).map(([id]) => id) : [];
   const today = londonDate(Date.now());
   const p = row?.progress;
 
@@ -64,7 +68,7 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
   return (
     <>
       <Bar ctx={ctx} title={skill.title} eyebrow={`${PATHWAY_TEXT[skill.section]} · ${skill.group}`} back="/library/training" />
-      <main>
+      <main className={guide ? "wide" : undefined}>
         <div className="muted">{skill.handsOn ? "Hands-on: a manager confirms it once they've watched you do it." : quiz.length || row?.drafted ? "Done when you pass the quiz." : "Done when you've read and watched it."}
           {skill.refresherMonths ? ` Done again every ${skill.refresherMonths} months.` : ""}</div>
         {skill.retiredAt && <div className="alert bad" role="status">Retired: it isn&apos;t part of anyone&apos;s training.</div>}
@@ -79,7 +83,8 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
           </section>
         )}
 
-        {skill.about && <section className="card" aria-label="What it covers" style={{ whiteSpace: "pre-wrap" }}>{skill.about}</section>}
+        {guide && <SkillCard skill={skill} guide={guide} erased={erased} />}
+        {skill.about && !guide && <section className="card" aria-label="What it covers" style={{ whiteSpace: "pre-wrap" }}>{skill.about}</section>}
 
         {shown.length > 0 && (
           <section className="stack" aria-label="Read" style={{ gap: 8 }}>

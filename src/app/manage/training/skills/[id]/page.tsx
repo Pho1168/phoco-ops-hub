@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
-import { canEditTraining, PATHWAY_TEXT } from "@/lib/domain/training";
+import { canEditTraining, emptyGuide, guidePhotoIds, PATHWAY_TEXT } from "@/lib/domain/training";
 import { requireCtx } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { SkillForm } from "../SkillForm";
 import { QuestionsEditor } from "../QuestionsEditor";
 import { RetireSkill } from "../SkillButtons";
+import { GuideForm } from "./GuideForm";
 import { groupsBySection, linkOptions } from "../load";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,8 @@ export default async function EditSkill(props: { params: Promise<{ id: string }>
   const skill = await db.trainingSkill(id);
   if (!skill) notFound();
   const [skills, options, questions] = await Promise.all([db.trainingSkills(), linkOptions(db, skill.links), db.trainingQuestions([skill.id])]);
+  const guide = skill.guide ?? emptyGuide();
+  const erased = Array.from((await db.mediaStatus(guidePhotoIds(guide))).entries()).filter(([, m]) => m.erased).map(([pid]) => pid);
   return (
     <>
       <TopBar ctx={ctx} title={skill.title} eyebrow={`${PATHWAY_TEXT[skill.section]} · ${skill.group}`} back={`/manage/training/skills?section=${skill.section}`}>
@@ -35,6 +38,7 @@ export default async function EditSkill(props: { params: Promise<{ id: string }>
         ) : (
           <>
             <SkillForm skill={skill} section={skill.section} groups={groupsBySection(skills)} options={options} />
+            <GuideForm skillId={skill.id} guide={guide} erased={erased} />
             <QuestionsEditor skillId={skill.id} questions={questions.map((q) => ({ id: q.id, text: q.text, options: q.options, answer: q.answer, approved: q.approved }))} />
           </>
         )}

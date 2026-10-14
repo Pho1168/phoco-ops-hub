@@ -14,7 +14,7 @@ import type { ShiftReply } from "@/lib/domain/reminders";
 import type { GasCheck } from "@/lib/domain/daily";
 import type { CoverRequest } from "@/lib/domain/cover";
 import type { BodyOf, ChangeKind, LibraryBody, LibraryDoc, LibraryKind, LibraryVersion } from "@/lib/domain/library";
-import type { EventKind, Pathway, Question, Skill, SkillFields, TrainingEvent, TrainingStart } from "@/lib/domain/training";
+import type { EventKind, Guide, Pathway, Question, Skill, SkillFields, TrainingEvent, TrainingStart } from "@/lib/domain/training";
 
 export interface Session { id: string; personId: string; siteId: SiteId; deviceId?: string; scope: SessionScope; startedAt: number; expiresAt: number; revokedAt?: number; revokedReason?: string }
 /** "full" = normal app; "shifts" = a staff member's own phone, limited to My shifts. */
@@ -287,7 +287,7 @@ export interface Store {
   mediaCountSince(personId: string, since: number): Promise<number>;
   /** Empties a photo for good (it shows as removed). False if it's already erased or isn't there. */
   eraseMedia(id: string, personId: string): Promise<boolean>;
-  /** Deletes photos older than `before` that no library version uses (discarded drafts don't count). Returns how many. */
+  /** Deletes photos older than `before` that no library version (discarded drafts don't count) and no training guide uses. Returns how many. */
   deleteUnusedMedia(before: number): Promise<number>;
 
   // Training: skills in pathways, their quiz questions and deadlines (retired, never deleted), when each person started
@@ -303,6 +303,8 @@ export interface Store {
    * linked document is dated in `linkedAt`. The new revision, or undefined (changed meanwhile, or retired).
    */
   saveTrainingSkill(id: string, rev: number, s: SkillFields): Promise<number | undefined>;
+  /** The skill's written guide (the training card). False if the skill isn't there. */
+  saveTrainingGuide(id: string, guide: Guide, by: string): Promise<boolean>;
   /** Swaps a live skill with the live one before (-1) or after (1) it in its pathway. False if there's none. */
   moveTrainingSkill(id: string, dir: -1 | 1): Promise<boolean>;
   /** Retires a skill (a new revision, so an open form can't save over it). */

@@ -818,3 +818,59 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 
 /* A link on a handover tile (the recipe sheet for a prep item). */
 .tile-link { margin-left: 8px; vertical-align: middle; text-decoration: none; font-size: 12px; }
+
+/* Training card: the Pho & Co poster style (cream ground, deep-teal headings, soft teal and peach panels), with the app's teal. */
+.tcard { --tc-cream: #FBF7F1; --tc-teal: #2C6E63; --tc-teal-soft: #DCEDE7; --tc-peach: #FBE6D6; --tc-peach-ink: #7C3A0B; --tc-ink: #1F3B35;
+  background: var(--tc-cream); color: var(--tc-ink); border-radius: 22px; padding: 22px 24px 18px; display: flex; flex-direction: column; gap: 16px;
+  border: 1px solid #EFE6DA; font-size: 14px; }
+.tc-head { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "logo kicker" "logo title" "logo tag"; column-gap: 18px; row-gap: 2px; align-items: center; }
+.tc-brand { grid-area: logo; display: flex; flex-direction: column; align-items: center; gap: 2px; padding-right: 18px; border-right: 1px solid #E6DDD0; }
+.tc-logo { font-family: var(--display); font-weight: 700; font-size: 26px; line-height: .9; letter-spacing: 1px; color: var(--tc-teal); text-align: center; }
+.tc-brand-sub { font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--tc-ink); opacity: .7; }
+.tc-kicker { grid-area: kicker; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--tc-peach-ink); background: var(--tc-peach); border-radius: 999px; padding: 4px 12px; justify-self: start; }
+.tc-title { grid-area: title; margin: 0; font-family: var(--display); font-weight: 700; font-size: 44px; line-height: 1; text-transform: uppercase; color: var(--tc-teal); letter-spacing: .5px; }
+.tc-tagline { grid-area: tag; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: var(--tc-ink); }
+.tc-intro { display: grid; gap: 14px; }
+.tc-intro.with-hero { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+.tc-hero { border-radius: 18px; overflow: hidden; background: #fff; display: flex; align-items: center; justify-content: center; }
+.tc-hero-img { width: 100%; height: auto; display: block; max-height: 420px; object-fit: contain; }
+.tc-intro-text { display: flex; flex-direction: column; gap: 12px; }
+.tc-panel { border-radius: 16px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.tc-panel.teal { background: var(--tc-teal-soft); }
+.tc-panel.peach { background: var(--tc-peach); }
+.tc-panel p { margin: 0; line-height: 1.45; }
+.tc-h { margin: 0; font-family: var(--display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .5px; color: var(--tc-teal); }
+.tc-h.bad { color: var(--bad); }
+.tc-ticks, .tc-crosses { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.tc-ticks li, .tc-crosses li { position: relative; padding-left: 28px; line-height: 1.35; }
+.tc-ticks li::before, .tc-crosses li::before { content: ""; position: absolute; left: 0; top: 1px; width: 18px; height: 18px; border-radius: 50%; background: var(--tc-teal); }
+.tc-ticks li::after { content: ""; position: absolute; left: 6px; top: 4px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.tc-crosses li::before { background: var(--bad); }
+.tc-crosses li::after { content: "×"; position: absolute; left: 4px; top: -1px; color: #fff; font-weight: 700; font-size: 15px; line-height: 20px; }
+.tc-band { margin: 0; background: var(--tc-teal); color: var(--brand-ink); border-radius: 14px 14px 0 0; padding: 10px 16px; font-family: var(--display); font-weight: 700; font-size: 24px; text-transform: uppercase; letter-spacing: .5px; }
+.tc-steps { list-style: none; margin: 0; padding: 12px; display: grid; gap: 12px; background: var(--tc-teal-soft); border-radius: 0 0 14px 14px; }
+.tc-step { background: #fff; border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.tc-step p { margin: 0; line-height: 1.4; font-size: 14px; }
+.tc-step-pic { position: relative; border-radius: 10px; overflow: hidden; background: var(--tc-peach); aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; }
+.tc-step-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tc-step-blank { font-family: var(--display); font-weight: 700; font-size: 56px; color: var(--tc-peach-ink); opacity: .35; }
+.tc-n { position: absolute; left: 8px; top: 8px; width: 30px; height: 30px; border-radius: 50%; background: var(--tc-teal); color: #fff; font-family: var(--display); font-weight: 700; font-size: 18px; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.tc-warn { background: var(--bad-soft); color: var(--bad-ink); border-radius: 8px; padding: 6px 9px; font-size: 12.5px; font-weight: 600; }
+.tc-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.tc-note { font-size: 12.5px; color: var(--tc-ink); opacity: .75; }
+.tc-removed { display: flex; align-items: center; justify-content: center; background: var(--surface-2); color: var(--ink-2); font-size: 13px; min-height: 80px; }
+.tc-foot { background: var(--tc-teal); color: var(--brand-ink); border-radius: 14px; padding: 12px 18px; display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+.tc-foot-main { font-family: var(--display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .5px; }
+.tc-foot-sub { font-size: 12px; letter-spacing: 1.5px; text-transform: uppercase; opacity: .85; margin-left: auto; }
+@media (max-width: 760px) {
+  .tcard { padding: 16px 14px; border-radius: 16px; }
+  .tc-head { grid-template-columns: minmax(0, 1fr); grid-template-areas: "kicker" "title" "tag"; }
+  .tc-brand { display: none; }
+  .tc-title { font-size: 32px; }
+  .tc-intro.with-hero, .tc-two { grid-template-columns: minmax(0, 1fr); }
+  .tc-steps { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+@media print {
+  .tcard { border: 0; padding: 0; break-inside: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .tc-steps { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+}

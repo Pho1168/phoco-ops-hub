@@ -14,7 +14,7 @@ import type { PrepEntry, PrepItem, PrepKind, PrepShift } from "@/lib/domain/prep
 import type { StoredShift, WeekStatus } from "@/lib/domain/rota";
 import { addDays, londonDate, londonHM, londonToUtc } from "@/lib/domain/time";
 import type { Device } from "@/lib/domain/devices";
-import { trainingSections, type Pathway, type Question, type Skill, type TrainingEvent } from "@/lib/domain/training";
+import { trainingSections, type Guide, type Pathway, type Question, type Skill, type TrainingEvent } from "@/lib/domain/training";
 
 /**
  * Postgres implementation of Store, used when DATABASE_URL is set (Supabase in production).
@@ -327,13 +327,14 @@ interface SkillRow {
   id: string; section: Area; grp: string; position: number; title: string; about: string; hands_on: boolean; induction: boolean; links: string[] | null;
   video_url: string | null; refresher_months: number | null; pass_mark: number; created_at: Date; updated_at: Date; added_at: Date; induction_from: Date | null;
   refresher_from: Date | null; refresher_was: number | null; link_since: Record<string, number> | null; rev: number; retired_at: Date | null;
+  guide: Guide | null;
 }
 const toSkill = (r: SkillRow): Skill => ({
   id: r.id, section: r.section, group: r.grp, position: r.position, title: r.title, about: r.about, handsOn: r.hands_on, induction: r.induction,
   links: r.links ?? [], videoUrl: opt(r.video_url), refresherMonths: opt(r.refresher_months), passMark: r.pass_mark,
   createdAt: r.created_at.getTime(), updatedAt: r.updated_at.getTime(), addedAt: r.added_at.getTime(), inductionFrom: ms(r.induction_from),
   refresherFrom: ms(r.refresher_from), refresherWas: opt(r.refresher_was), linkedAt: Object.fromEntries(Object.entries(r.link_since ?? {}).map(([k, v]) => [k, Number(v)])),
-  rev: r.rev, retiredAt: ms(r.retired_at),
+  rev: r.rev, retiredAt: ms(r.retired_at), guide: r.guide ?? undefined,
 });
 interface QuestionRow { id: string; skill_id: string; position: number; text: string; options: string[]; answer: number; approved_at: Date | null; created_at: Date; updated_at: Date }
 const toQuestion = (r: QuestionRow): Question => ({
@@ -1427,7 +1428,8 @@ export const sqlStore: Store = {
   async deleteUnusedMedia(before) {
     const q = sql();
     const r = await q`delete from media m where m.created_at < ${new Date(before)}
-      and not exists (select 1 from library_versions v where v.status <> 'discarded' and strpos(v.body::text, m.id::text) > 0)`;
+      and not exists (select 1 from library_versions v where v.status <> 'discarded' and strpos(v.body::text, m.id::text) > 0)
+      and not exists (select 1 from training_skills s where s.guide is not null and strpos(s.guide::text, m.id::text) > 0)`;
     return r.count;
   },
 
@@ -1436,7 +1438,7 @@ export const sqlStore: Store = {
     const q = sql();
     return (await q<SkillRow[]>`
       select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, added_at,
-        induction_from, refresher_from, refresher_was, link_since, rev, retired_at
+        induction_from, refresher_from, refresher_was, link_since, rev, retired_at, guide
       from training_skills order by case section when 'FOH' then 1 when 'BOH' then 2 else 3 end, position, title`).map(toSkill);
   },
   async trainingSkill(id) {
@@ -1444,7 +1446,7 @@ export const sqlStore: Store = {
     const q = sql();
     const [r] = await q<SkillRow[]>`
       select id, section, grp, position, title, about, hands_on, induction, links, video_url, refresher_months, pass_mark, created_at, updated_at, added_at,
-        induction_from, refresher_from, refresher_was, link_since, rev, retired_at
+        induction_from, refresher_from, refresher_was, link_since, rev, retired_at, guide
       from training_skills where id = ${id}`;
     return r ? toSkill(r) : undefined;
   },
@@ -1460,6 +1462,11 @@ export const sqlStore: Store = {
         returning id`;
       return r.id;
     });
+  },
+  async saveTrainingGuide(id, guide, by) {
+    if (!isUuid(id)) return false;
+    const r = await sql()`update training_skills set guide = ${JSON.stringify(guide)}::jsonb, updated_at = now(), updated_by = ${by} where id = ${id} returning id`;
+    return r.length > 0;
   },
   async saveTrainingSkill(id, rev, s) {
     if (!isUuid(id)) return undefined;
