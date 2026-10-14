@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { GasCheck } from "@/components/GasCheck";
 import { TaskDone } from "@/components/TaskDone";
+import { initials } from "@/lib/domain/names";
 import { laneName, type ItemState, type ShiftItem } from "@/lib/domain/shift-mode";
 import { londonHM } from "@/lib/domain/time";
 import type { OnLane, ShiftView } from "@/lib/shift-service";
@@ -93,8 +94,6 @@ export function OnShift({ on, showTimes = true }: { on: OnLane[]; showTimes?: bo
   );
 }
 
-/** "Minh Nguyen" → "MN"; a label in brackets, like "(demo)", doesn't count. */
-export const initials = (name: string) => name.split(/\s+/).filter((w) => w && !w.startsWith("(")).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("");
 
 /** The shift as a strip of time: its timed items as dots, the moment now as a line. */
 export function DayStrip({ view, now }: { view: ShiftView; now: number }) {

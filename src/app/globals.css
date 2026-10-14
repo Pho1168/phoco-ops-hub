@@ -1,6 +1,6 @@
 /* PHO & CO Ops Hub. Brand: cream ground, deep muted green, the logo's teal (and a pale tint of it), warm orange for "do this now". */
 :root {
-  --bg: #F6F1E7; --surface: #FFFFFF; --surface-2: #EFEBE2; --ink: #1F2A22; --ink-2: #4F5E53; --line: #E3DCCD;
+  --bg: #F6F1E7; --surface: #FFFCF6; --surface-2: #EFEBE2; --ink: #1F2A22; --ink-2: #4F5E53; --line: #E3DCCD;
   --brand: #2F4A3A; --brand-ink: #F6F1E7; --teal: #639C8D; --teal-tint: #D6E7E1; --teal-ink: #24504A;
   --accent: #C2611A; --accent-ink: #FFFFFF; --accent-soft: #FDE9D3; --accent-soft-ink: #7C3A0B;
   --warn-soft: #F3E6C8; --warn-ink: #6B4E0E;
@@ -28,12 +28,28 @@ button, input, select, textarea { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; text-wrap: balance; }
 a { color: inherit; }
 
-.top { position: sticky; top: 0; z-index: 5; background: var(--brand); color: var(--brand-ink); padding: 10px 16px; display: flex; align-items: center; gap: 12px; }
+/* The bar at the top: the screen's name, who's signed in, the time. Sticky so "Switch user" is always there. */
+.top { position: sticky; top: 0; z-index: 5; background: var(--brand); color: var(--brand-ink); padding: 0 16px; min-height: 64px; display: flex; align-items: center; gap: 12px; }
+.top-logo { height: 30px; width: auto; display: block; flex-shrink: 0; }
+.top-site { font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: .5px; line-height: 1; white-space: nowrap; }
 .logo { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: 1px; line-height: 1; white-space: nowrap; }
-.top .who { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13px; min-width: 0; }
-.top .who span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-back { min-width: 44px; padding: 0 10px; }
+.top-ttl { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.top-eyebrow { font-family: var(--display); font-weight: 600; font-size: 12px; letter-spacing: 1.4px; text-transform: uppercase; color: color-mix(in srgb, var(--brand-ink) 72%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-h1 { font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1; letter-spacing: .3px; color: var(--brand-ink); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-clock { font-family: var(--display); font-weight: 600; font-size: 22px; letter-spacing: .5px; font-variant-numeric: tabular-nums; line-height: 1; display: none; }
+.who { display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px; border-radius: 999px; background: color-mix(in srgb, var(--brand-ink) 10%, transparent); font-size: 13px; font-weight: 500; min-width: 0; flex-shrink: 0; }
+.who .avatar { width: 32px; height: 32px; font-size: 12px; }
+.top .avatar.tone-lead { background: var(--brand-ink); color: var(--brand); }
+.who-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: none; }
 .pill-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: color-mix(in srgb, var(--brand-ink) 16%, transparent); color: var(--brand-ink); font-weight: 600; font-size: 13px; cursor: pointer; min-height: 40px; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; }
-@media (max-width: 420px) { .top .who span { display: none; } }
+@media (min-width: 700px) {
+  .top { min-height: 78px; padding: 0 24px; gap: 16px; }
+  .top-logo { height: 34px; }
+  .top-h1 { font-size: 32px; }
+  .top-clock { display: block; }
+  .who-name { display: inline; padding-right: 2px; }
+}
 
 main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; display: flex; flex-direction: column; gap: 18px; }
 .eyebrow { font-size: 13px; color: var(--ink-2); font-weight: 500; }
@@ -71,6 +87,10 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
 .nav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); display: flex; justify-content: center; gap: 4px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 5; }
 .nav a { flex: 1; max-width: 150px; border-radius: 12px; padding: 8px 4px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 12px; font-weight: 600; color: var(--ink-2); text-decoration: none; min-height: 54px; }
 .nav a[aria-current="page"] { background: var(--teal-tint); color: var(--teal-ink); }
+@media (min-width: 700px) {
+  .nav { gap: 8px; padding: 8px 24px calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .nav a { flex: 0 0 auto; max-width: none; flex-direction: row; gap: 9px; font-family: var(--display); font-size: 17px; letter-spacing: .3px; padding: 10px 20px; min-height: 48px; }
+}
 .ico { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 
 .run-head { background: var(--brand); color: var(--brand-ink); border-radius: 20px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
@@ -106,10 +126,10 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
 /* The staff form's role picker: four roles wrap to two rows on a phone. */
 .seg.roles { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); }
 .seg.roles button { padding: 0 4px; white-space: nowrap; }
-.people { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-.person { border: 2px solid transparent; background: var(--surface); border-radius: 16px; padding: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; cursor: pointer; text-align: left; min-height: 84px; }
-.person[aria-pressed="true"] { border-color: var(--accent); }
-.avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--teal-tint); color: var(--teal-ink); display: flex; align-items: center; justify-content: center; font-weight: 700; }
+.avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--teal-tint); color: var(--teal-ink); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.avatar.tone-FOH, .avatar.tone-amber { background: var(--amber); color: var(--amber-ink); }
+.avatar.tone-BOH, .avatar.tone-PROD { background: var(--teal); color: #fff; }
+.avatar.tone-lead { background: var(--brand); color: var(--brand-ink); }
 .pin-dots { display: flex; gap: 12px; justify-content: center; }
 .pin-dots i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--brand); }
 .pin-dots i.on { background: var(--brand); }
@@ -117,6 +137,61 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
 .pad button { min-height: 62px; border-radius: 16px; border: 0; background: var(--surface); font-size: 24px; font-weight: 600; cursor: pointer; font-family: var(--display); }
 .err { color: var(--bad-ink); background: var(--bad-soft); border-radius: 12px; padding: 10px 12px; font-size: 14px; }
 .banner { background: var(--warn-soft); color: var(--warn-ink); font-size: 12px; text-align: center; padding: 6px 16px; }
+
+/* Sign in: a green panel with the site, the date and the time; the team (today's rota first) beside it on a tablet, below it on a phone. */
+.login-shell { min-height: 100dvh; display: flex; flex-direction: column; }
+.login-aside { background: var(--brand); color: var(--brand-ink); padding: 18px 20px 16px; display: flex; flex-direction: column; gap: 12px; }
+.login-logo { height: 56px; width: auto; display: block; }
+.login-title { display: flex; flex-direction: column; gap: 4px; }
+.login-eyebrow { font-family: var(--display); font-weight: 600; font-size: 12px; letter-spacing: 1.4px; text-transform: uppercase; color: color-mix(in srgb, var(--brand-ink) 72%, transparent); }
+.login-site { font-family: var(--display); font-weight: 700; font-size: 44px; line-height: 1; text-transform: uppercase; }
+.login-date { font-size: 15px; color: color-mix(in srgb, var(--brand-ink) 80%, transparent); }
+.login-clock { font-family: var(--display); font-weight: 600; font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; margin-top: 4px; }
+.login-facts { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: color-mix(in srgb, var(--brand-ink) 85%, transparent); margin-top: auto; }
+.login-facts > div { display: flex; align-items: center; gap: 10px; }
+.login-note { color: color-mix(in srgb, var(--brand-ink) 55%, transparent); margin-top: 4px; display: none; }
+.login-steps { list-style: none; margin: auto 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.login-steps li { display: flex; gap: 10px; align-items: flex-start; }
+.login-steps .avatar { width: 26px; height: 26px; font-size: 12px; }
+.login-main { padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 20px; flex: 1; width: 100%; max-width: none; }
+.login-main.pinpane { align-items: center; justify-content: center; text-align: center; gap: 16px; position: relative; }
+.login-back { align-self: flex-start; }
+.login-hi { display: flex; flex-direction: column; gap: 6px; }
+.login-head { align-items: flex-end; }
+.login-foot { margin-top: auto; padding-top: 8px; }
+.login-foot .muted { font-size: 12px; }
+.grp-h { font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: .8px; text-transform: uppercase; color: var(--brand); display: flex; align-items: center; gap: 10px; line-height: 1; margin: 0; }
+.grp-h span { font-family: var(--body); font-weight: 500; font-size: 13px; color: var(--ink-2); text-transform: none; letter-spacing: 0; }
+.people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.people-grid.rota { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.person-btn { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 2px solid transparent; min-height: 78px; text-align: left; color: inherit; cursor: pointer; }
+.person-btn.big { min-height: 88px; padding: 14px 18px; }
+.person-btn[aria-pressed="true"] { border-color: var(--accent); }
+.person-btn.frozen { opacity: .55; }
+.person-btn .grow { display: flex; flex-direction: column; gap: 2px; }
+.person-name { font-weight: 600; font-size: 16px; }
+.login-main .pad { max-width: 300px; }
+.login-main .pad button { min-height: 66px; }
+.setup-main { gap: 14px; max-width: 680px; }
+.setup-nudge { align-items: center; gap: 12px; }
+.card.soft { background: var(--teal-tint); color: var(--teal-ink); }
+.card.soft .muted { color: var(--teal-ink); }
+.txt.big-id { font-family: var(--display); font-size: 26px; letter-spacing: 4px; height: 56px; }
+.num.code { width: 100%; max-width: none; height: 72px; font-size: 40px; letter-spacing: 8px; text-transform: uppercase; }
+@media (min-width: 900px) {
+  .login-shell { display: grid; grid-template-columns: 360px minmax(0, 1fr); }
+  .login-aside { padding: 40px 36px 32px; gap: 28px; position: sticky; top: 0; height: 100dvh; }
+  .login-logo { height: 120px; }
+  .login-site { font-size: 52px; }
+  .login-clock { font-size: 44px; margin-top: 8px; }
+  .login-note { display: block; }
+  .login-main { padding: 36px 40px 28px; gap: 26px; }
+  .login-back { position: absolute; left: 28px; top: 28px; }
+  .setup-main { padding-top: 48px; }
+  .setup-code { order: -1; }
+  .setup-nudge { display: none; }
+  .login-main .pad { max-width: 330px; }
+}
 
 .modal-back { position: fixed; inset: 0; background: rgba(10, 16, 12, .55); display: flex; align-items: flex-end; justify-content: center; z-index: 20; padding: 16px; }
 .modal { background: var(--bg); border-radius: 20px; width: 100%; max-width: 440px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
@@ -575,7 +650,7 @@ main.recipe-page > .rc-back { max-width: none; }
   main.recipe-page > :not(.rcard) { display: none !important; }
   /* One A4 page. A recipe too long for one (RecipeCard's "long") prints in plain flow over two instead (below). */
   .rcard { page: recipe; width: 194mm; height: 279mm; min-height: 0; border: 0; padding: 0; gap: 3mm;
-    --bg: #F6F1E7; --surface: #FFFFFF; --surface-2: #EFEBE2; --ink: #1F2A22; --ink-2: #4F5E53; --line: #E3DCCD; --brand: #2F4A3A; --brand-ink: #F6F1E7;
+    --bg: #F6F1E7; --surface: #FFFCF6; --surface-2: #EFEBE2; --ink: #1F2A22; --ink-2: #4F5E53; --line: #E3DCCD; --brand: #2F4A3A; --brand-ink: #F6F1E7;
     --teal: #639C8D; --teal-tint: #D6E7E1; --teal-ink: #24504A; --accent: #C2611A; --accent-ink: #FFFFFF; --bad-soft: #FBE3E0; --bad-ink: #8C1D18; --warn-soft: #F3E6C8; --warn-ink: #6B4E0E; --bad: #B3261E;
     -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .rc-tools > :not(.rc-makes) { display: none !important; }

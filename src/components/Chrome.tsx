@@ -2,31 +2,80 @@ import Link from "next/link";
 import { signOut } from "@/app/actions";
 import type { Ctx } from "@/lib/session";
 import { managedSites } from "@/lib/domain/access";
+import { toneOf } from "@/lib/domain/login";
+import { firstName } from "@/lib/domain/names";
+import { londonDate, longDay } from "@/lib/domain/time";
+import { Avatar } from "./Avatar";
+import { Clock } from "./Clock";
 import { Icon } from "./Icon";
+import { Logo } from "./Logo";
 
-export function TopBar({ ctx }: { ctx: Ctx }) {
+interface BarProps {
+  ctx: Ctx;
+  /** The screen's name, shown big in the bar. A page that passes it renders no h1 of its own. */
+  title?: React.ReactNode;
+  /** The small line above the title; the site and today's date unless the page says otherwise. */
+  eyebrow?: React.ReactNode;
+  /** A link back to where this screen was opened from, shown as an arrow before the title. */
+  back?: string;
+  /** Anything the screen wants beside the clock: a switch, a badge, a button. */
+  children?: React.ReactNode;
+}
+
+function Brand({ ctx, title, eyebrow, back }: BarProps) {
+  if (!title) {
+    return (
+      <>
+        <Logo className="top-logo" />
+        <span className="top-site">{ctx.site.name}</span>
+      </>
+    );
+  }
+  return (
+    <>
+      {back
+        ? <Link className="pill-btn top-back" href={back} aria-label="Back"><Icon name="back" /></Link>
+        : <Logo className="top-logo" />}
+      <div className="top-ttl">
+        <span className="top-eyebrow">{eyebrow ?? <>{ctx.site.name} · {longDay(londonDate(Date.now()))}</>}</span>
+        <h1 className="top-h1">{title}</h1>
+      </div>
+    </>
+  );
+}
+
+/** The bar at the top of every screen on a site tablet (and an owner's or ops manager's own device). */
+export function TopBar(props: BarProps) {
+  const { ctx, children } = props;
   return (
     <header className="top">
-      <div className="logo">PHO &amp; CO</div>
-      <span className="chip" style={{ background: "color-mix(in srgb, var(--brand-ink) 16%, transparent)", color: "var(--brand-ink)" }}>{ctx.site.name}</span>
-      <div className="who">
-        <span>{ctx.person.name}</span>
-        <form action={signOut}><button className="pill-btn" type="submit">Switch user</button></form>
-      </div>
+      <Brand {...props} />
+      <div className="grow" />
+      {children}
+      <Clock />
+      <form className="who" action={signOut}>
+        <Avatar name={ctx.person.name} tone={toneOf(ctx.person, ctx.site.id)} />
+        <span className="who-name">{firstName(ctx.person.name)}</span>
+        <button className="pill-btn" type="submit">Switch user</button>
+      </form>
     </header>
   );
 }
 
-/** The header on a staff member's own phone (My shifts scope): back to My shifts, sign out. */
-export function PhoneTopBar({ ctx }: { ctx: Ctx }) {
+/** The bar on a staff member's own phone (My shifts scope): back to My shifts, sign out. */
+export function PhoneTopBar(props: BarProps) {
+  const { ctx, children } = props;
   return (
     <header className="top">
-      <div className="logo">PHO &amp; CO</div>
-      <div className="who">
-        <span>{ctx.person.name}</span>
+      <Brand {...props} />
+      <div className="grow" />
+      {children}
+      <form className="who" action={signOut}>
+        <Avatar name={ctx.person.name} tone={toneOf(ctx.person, ctx.site.id)} />
+        <span className="who-name">{firstName(ctx.person.name)}</span>
         <Link className="pill-btn" href="/me">My shifts</Link>
-        <form action={signOut}><button className="pill-btn" type="submit">Sign out</button></form>
-      </div>
+        <button className="pill-btn" type="submit">Sign out</button>
+      </form>
     </header>
   );
 }
