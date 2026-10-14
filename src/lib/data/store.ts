@@ -155,6 +155,8 @@ export interface Store {
   addPrepItem(item: PrepItemFields, byId: string): Promise<string>;
   /** Renames an item, or moves it to another list or group (where it goes last). False if there's no such item. */
   updatePrepItem(id: string, item: PrepItemFields, byId: string): Promise<boolean>;
+  /** Links a handover item to its recipe sheet in the library (or clears the link with null). */
+  setPrepItemRecipe(id: string, recipeId: string | null, byId: string): Promise<boolean>;
   /** Swaps two items' places in their group (moving one up or down). False unless both are in the same group. */
   swapPrepItems(a: string, b: string, byId: string): Promise<boolean>;
   /** Takes an item off the list, or puts it back (never deleted). False if it's already that way. */

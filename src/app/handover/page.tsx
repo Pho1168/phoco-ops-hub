@@ -4,6 +4,7 @@ import type { HandoverItem } from "@/lib/data/store";
 import { forLabel, NEXT_SHIFT_DAYS, pickPeriod, targetPeriod } from "@/lib/domain/assign";
 import { currentNotes, noteOrder } from "@/lib/domain/handover";
 import { reportOrder, shiftLabel } from "@/lib/domain/prep";
+import { seesRecipes } from "@/lib/domain/recipes";
 import { phoneShows } from "@/lib/domain/reminders";
 import { faultsOf, sinceText, SEVERITY_LABEL } from "@/lib/domain/equipment";
 import { givablePeople, pickFor, rotaAround } from "@/lib/handover-service";
@@ -45,6 +46,9 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
   // The rota from the last prep handover (to say which shift it's for), but no further back than a next shift can be.
   const rota = await rotaAround(site.id, Math.max(Math.min(now, latest?.submittedAt ?? now), now - (NEXT_SHIFT_DAYS + 1) * 86_400_000), now, db);
   const byId = new Map(items.map((i) => [i.id, i]));
+  // Recipe sheets open from a prep item for anyone who reads recipes here (the kitchen, on the full app): published, live prep recipes.
+  const recipes = !readOnly && seesRecipes(ctx.person, sites) && items.some((i) => i.recipeId)
+    ? new Set((await db.libraryDocs("prep", { light: true })).filter((d) => d.published && !d.retiredAt).map((d) => d.id)) : undefined;
   const sentTimes = history.map((h) => h.submittedAt!);
   // Anyone on the tablet can give something to someone: the people working the shift it's about come first.
   const pick = readOnly ? undefined : pickFor(site, pickPeriod(latest && { shift: latest.shift, submittedAt: latest.submittedAt! }, now, rota), rota, people, now);
@@ -62,11 +66,11 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
     ...notesOpen.filter((n) => n.category === "Food safety" && n.needsAction).map((n) => noteTile(n, here)),
     ...notesOpen.filter((n) => !(n.category === "Food safety" && n.needsAction)).map((n) => noteTile(n, here)),
   ];
-  const prepTiles = [...prepOpen.filter((e) => e.urgent), ...prepOpen.filter((e) => !e.urgent)].map((e) => prepTile(e, byId, here));
+  const prepTiles = [...prepOpen.filter((e) => e.urgent), ...prepOpen.filter((e) => !e.urgent)].map((e) => prepTile(e, byId, here, recipes));
   const doneSince = latest?.submittedAt ?? now - 24 * 3_600_000;
   const byDone = (a: { completedAt?: number }, b: { completedAt?: number }) => (b.completedAt ?? 0) - (a.completedAt ?? 0);
   const doneNotes = notes.filter((n) => n.closedAt && n.closedAt > doneSince && onPhone(n)).map((n) => noteTile(n, here)).sort(byDone);
-  const donePrep = (latest?.entries.filter((e) => e.status === "completed").map((e) => prepTile(e, byId, here)) ?? []).sort(byDone);
+  const donePrep = (latest?.entries.filter((e) => e.status === "completed").map((e) => prepTile(e, byId, here, recipes)) ?? []).sort(byDone);
   const hiddenToDo = allNotes.filter((n) => n.needsAction && !onPhone(n)).length;
   const notesToDo = noteTiles.filter((t) => !t.info).length + hiddenToDo;
   const toDo = notesToDo + prepTiles.length;

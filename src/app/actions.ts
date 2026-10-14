@@ -35,7 +35,7 @@ import { trainingData } from "@/lib/training-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { AREA_TEXT, canEditChecklists, canPublish, cleanItems, cleanSettings, describeChange, templateId, toDraftItems } from "@/lib/domain/checklist-edit";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
-import { canEditPrepList, canRetirePrepItem, canUndo, canUsePrep, cleanPrepItem, kindLabel as prepKindLabel, moveTarget, planSubmit, shiftLabel } from "@/lib/domain/prep";
+import { canEditPrepList, canLinkRecipe, canRetirePrepItem, canUndo, canUsePrep, cleanPrepItem, kindLabel as prepKindLabel, moveTarget, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
 import { canBeGiven, noteCanBeFor } from "@/lib/domain/assign";
 import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
@@ -421,6 +421,29 @@ export async function savePrepItem(id: string | null, input: unknown): Promise<A
     detail: `Handover list: "${was.name}" (${prepKindLabel(was.kind)} · ${was.group}) is now "${v.name}" (${prepKindLabel(v.kind)} · ${v.group})` });
   listChanged();
   return { ok: true, id: was.id };
+}
+
+/** Links a handover item to its recipe sheet (a published prep recipe), or clears the link. */
+export async function setPrepItemRecipe(id: string, recipeId: string | null): Promise<ActionResult> {
+  const { ctx, error } = await prepListCtx();
+  if (error) return { ok: false, error };
+  const itemId = PrepItemZ.safeParse(id), docId = z.string().uuid().nullable().safeParse(recipeId);
+  if (!itemId.success || !docId.success) return { ok: false, error: "That change couldn't be saved" };
+  const db = store();
+  const it = (await db.prepItems()).find((i) => i.id === itemId.data);
+  if (!it) return { ok: false, error: "That item isn't on the list" };
+  let title = "";
+  if (docId.data) {
+    const doc = await db.libraryDoc(docId.data);
+    const can = canLinkRecipe(doc);
+    if (!can.ok) return can;
+    title = doc!.published!.title;
+  }
+  if ((it.recipeId ?? null) === docId.data) return { ok: true };
+  await db.setPrepItemRecipe(it.id, docId.data, ctx.person.id);
+  await db.audit({ actorId: ctx.person.id, action: "prep.list.recipe", detail: docId.data ? `Handover list: "${it.name}" now opens the recipe "${title}"` : `Handover list: "${it.name}" no longer links to a recipe` });
+  listChanged();
+  return { ok: true };
 }
 
 /** Moves an item one place up or down its group. */

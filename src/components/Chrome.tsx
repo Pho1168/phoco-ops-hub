@@ -2,10 +2,8 @@ import Link from "next/link";
 import { signOut } from "@/app/actions";
 import type { Ctx } from "@/lib/session";
 import { managedSites } from "@/lib/domain/access";
-import { toneOf } from "@/lib/domain/login";
 import { firstName } from "@/lib/domain/names";
 import { londonDate, longDay } from "@/lib/domain/time";
-import { Avatar } from "./Avatar";
 import { Clock } from "./Clock";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
@@ -54,7 +52,6 @@ export function TopBar(props: BarProps) {
       {children}
       <Clock />
       <form className="who" action={signOut}>
-        <Avatar name={ctx.person.name} tone={toneOf(ctx.person, ctx.site.id)} />
         <span className="who-name">{firstName(ctx.person.name)}</span>
         <button className="pill-btn" type="submit" aria-label="Switch user"><span className="sw-text">Switch user</span><Icon name="switch" /></button>
       </form>
@@ -71,7 +68,6 @@ export function PhoneTopBar(props: BarProps & { home?: boolean }) {
       <div className="grow" />
       {children}
       <form className="who" action={signOut}>
-        <Avatar name={ctx.person.name} tone={toneOf(ctx.person, ctx.site.id)} />
         <span className="who-name">{firstName(ctx.person.name)}</span>
         {!home && <Link className="pill-btn" href="/me" aria-label="My shifts"><span className="sw-text">My shifts</span><Icon name="clock" /></Link>}
         <button className="pill-btn" type="submit" aria-label="Sign out"><span className="sw-text">Sign out</span><Icon name="switch" /></button>

@@ -759,9 +759,13 @@ export const sqlStore: Store = {
 
   async prepItems() {
     const q = sql();
-    const rows = await q<{ id: string; name: string; kind: PrepKind; grp: string; position: number; active: boolean }[]>`
-      select id, name, kind, grp, position, active from prep_items order by position`;
-    return rows.map((r): PrepItem => ({ id: r.id, name: r.name, kind: r.kind, group: r.grp, position: r.position, active: r.active }));
+    const rows = await q<{ id: string; name: string; kind: PrepKind; grp: string; position: number; active: boolean; recipe_doc_id: string | null }[]>`
+      select id, name, kind, grp, position, active, recipe_doc_id from prep_items order by position`;
+    return rows.map((r): PrepItem => ({ id: r.id, name: r.name, kind: r.kind, group: r.grp, position: r.position, active: r.active, recipeId: opt(r.recipe_doc_id) }));
+  },
+  async setPrepItemRecipe(id, recipeId, byId) {
+    const r = await sql()`update prep_items set recipe_doc_id = ${recipeId}, updated_at = now(), updated_by = ${byId} where id = ${id} returning id`;
+    return r.length > 0;
   },
   async addPrepItem(item, byId) {
     return withTx(async (tx) => {

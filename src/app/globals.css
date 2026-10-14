@@ -33,7 +33,8 @@ a { color: inherit; }
 .who { display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px; border-radius: 999px; background: color-mix(in srgb, var(--brand-ink) 10%, transparent); font-size: 13px; font-weight: 500; min-width: 0; flex-shrink: 0; }
 .who .avatar { width: 32px; height: 32px; font-size: 12px; }
 .top .avatar.tone-lead { background: var(--brand-ink); color: var(--brand); }
-.who-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: none; }
+.who-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 14px; padding: 0 6px 0 12px; max-width: 120px; }
+@media (max-width: 699px) { .who-name { max-width: 84px; font-size: 13px; padding-left: 10px; } }
 .pill-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: color-mix(in srgb, var(--brand-ink) 16%, transparent); color: var(--brand-ink); font-weight: 600; font-size: 13px; cursor: pointer; min-height: 40px; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; }
 @media (max-width: 699px) { .top { overflow: hidden; gap: 8px; } .top .top-extra { display: none; } .top-ttl { min-width: 38%; } .who { flex-shrink: 1; } .who .pill-btn { padding: 0 10px; font-size: 12px; white-space: nowrap; } .who .sw-text { display: none; } }
 .who .pill-btn .ico { width: 18px; height: 18px; }
@@ -43,7 +44,7 @@ a { color: inherit; }
   .top-logo { height: 34px; }
   .top-h1 { font-size: 32px; white-space: nowrap; display: block; }
   .top-clock { display: block; }
-  .who-name { display: inline; padding-right: 2px; }
+  .who-name { padding-right: 4px; }
 }
 
 main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; display: flex; flex-direction: column; gap: 18px; }
@@ -814,3 +815,6 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
   .ck-n { grid-area: n; } .ck-text { grid-area: text; } .ck-tools { grid-area: tools; justify-self: end; }
   .ck-section { grid-area: section; } .ck-type { grid-area: type; } .ck-rule, .ck-hint { grid-area: rule; }
 }
+
+/* A link on a handover tile (the recipe sheet for a prep item). */
+.tile-link { margin-left: 8px; vertical-align: middle; text-decoration: none; font-size: 12px; }
