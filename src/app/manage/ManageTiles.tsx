@@ -17,18 +17,23 @@ const TILES = [
   { href: "/manage/certificates", icon: "cert", title: "Certificates", text: "Food hygiene, allergens, first aid and expiry dates", count: "certIssues" as const, countLabel: "need attention" },
   { href: "/manage/equipment", icon: "wrench", title: "Equipment", text: "Faults, repairs, servicing and QR labels", count: "equipmentIssues" as const, countLabel: "to sort" },
 ];
+/** The owner's own tools, after the shared ones. */
+const OWNER_TILES = [
+  { href: "/manage/checklists", icon: "records", title: "Checklists", text: "The opening, closing, cleaning and temperature checks: due times, and new versions of the checks" },
+];
 
 /** The manager's tools, shown on the Manage tab and at the top of the Owner screen. */
-export function ManageTiles({ counts = {} }: { counts?: ManageCounts }) {
+export function ManageTiles({ counts = {}, owner = false }: { counts?: ManageCounts; owner?: boolean }) {
+  const tiles: (typeof TILES[number] | typeof OWNER_TILES[number])[] = owner ? [...TILES, ...OWNER_TILES] : TILES;
   return (
     <nav className="tiles" aria-label="Manager tools">
-      {TILES.map((t) => {
-        const n = t.count ? counts[t.count] ?? 0 : 0;
+      {tiles.map((t) => {
+        const n = "count" in t && t.count ? counts[t.count] ?? 0 : 0;
         return (
           <Link key={t.href} href={t.href} className="tile">
             <span className="row" style={{ gap: 10 }}>
               <span className="tile-ico"><Icon name={t.icon} /></span>
-              {n > 0 && <span className={`chip ${t.count === "noticesActive" ? "done" : "late"}`} style={{ marginLeft: "auto" }}>{n} {t.countLabel}</span>}
+              {n > 0 && "count" in t && <span className={`chip ${t.count === "noticesActive" ? "done" : "late"}`} style={{ marginLeft: "auto" }}>{n} {t.countLabel}</span>}
             </span>
             <span className="grow">
               <span className="tile-title">{t.title}</span>

@@ -33,6 +33,7 @@ import { canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, cleanPathw
   quizOf, quizVersion, TRAINING_LIMITS, type PassportRow } from "@/lib/domain/training";
 import { trainingData } from "@/lib/training-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
+import { AREA_TEXT, canEditChecklists, canPublish, cleanItems, cleanSettings, describeChange, templateId, toDraftItems } from "@/lib/domain/checklist-edit";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
 import { canEditPrepList, canRetirePrepItem, canUndo, canUsePrep, cleanPrepItem, kindLabel as prepKindLabel, moveTarget, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
@@ -2013,5 +2014,120 @@ export async function savePathway(section: string, inductionDays: number, allDay
   await db.saveTrainingPathway({ section: sec.data, ...c.value }, who.ctx.person.id);
   await db.audit({ actorId: who.ctx.person.id, action: "training.deadlines", detail: `${PATHWAY_TEXT[sec.data]} training: induction within ${c.value.inductionDays} days, everything within ${c.value.allDays}` });
   revalidateTraining("/manage/training/skills");
+  return { ok: true };
+}
+
+// ---------- editing checklists (the owner) ----------
+
+const ChecklistIdZ = z.string().regex(/^[A-Z]{3}-[A-Z]+-[A-Z0-9-]{1,40}$/);
+const checklistChanged = (id: string) => {
+  for (const p of ["/manage/checklists", `/manage/checklists/${id}`, "/today", `/run/${id}`, "/shift", "/owner", "/manage"]) revalidatePath(p);
+};
+async function checklistCtx() {
+  const ctx = await requireCtx();
+  if (!canEditChecklists(ctx.person)) return { ctx, error: "Only the owner edits checklists" };
+  return { ctx, error: undefined };
+}
+
+/** A new checklist at a site: its settings and a first draft of its checks (empty is fine, it's published later). */
+export async function checklistCreate(input: unknown): Promise<ActionResult & { id?: string }> {
+  const { ctx, error } = await checklistCtx();
+  if (error) return { ok: false, error };
+  const f = z.object({ siteId: SiteIdZ, name: z.string().max(200), area: z.string().max(10), when: z.string().max(200), due: z.string().max(10), items: z.unknown() }).safeParse(input);
+  if (!f.success) return { ok: false, error: "That couldn't be saved" };
+  const c = cleanSettings(f.data);
+  if (!c.ok) return c;
+  const db = store();
+  const site = await db.site(f.data.siteId);
+  if (!site) return { ok: false, error: "Site not found" };
+  const rules = await db.rules();
+  const items = Array.isArray(f.data.items) && f.data.items.length ? cleanItems(f.data.items, rules) : { ok: true as const, value: [] };
+  if (!items.ok) return items;
+  const taken = (await db.checklistTemplates(f.data.siteId)).map((t) => t.id);
+  const id = templateId(f.data.siteId, c.value.area, c.value.name, taken);
+  await db.createChecklist({ id, siteId: f.data.siteId, ...c.value }, items.value, ctx.person.id);
+  await db.audit({ actorId: ctx.person.id, siteId: f.data.siteId, action: "checklist.create", detail: `New checklist "${c.value.name}" (${id}, ${c.value.area}, ${c.value.when}${c.value.due ? `, due ${c.value.due}` : ""}) as a draft` });
+  checklistChanged(id);
+  return { ok: true, id };
+}
+
+/** Name, when, due time and on/off: take effect at once, no new version. */
+export async function checklistSettings(id: string, input: unknown): Promise<ActionResult> {
+  const { ctx, error } = await checklistCtx();
+  if (error) return { ok: false, error };
+  const idZ = ChecklistIdZ.safeParse(id);
+  const f = z.object({ name: z.string().max(200), area: z.string().max(10), when: z.string().max(200), due: z.string().max(10), active: z.boolean() }).safeParse(input);
+  if (!idZ.success || !f.success) return { ok: false, error: "That couldn't be saved" };
+  const db = store();
+  const t = await db.checklistTemplate(idZ.data);
+  if (!t) return { ok: false, error: "Checklist not found" };
+  const c = cleanSettings(f.data);
+  if (!c.ok) return c;
+  if (f.data.active && !t.active && !t.published) return { ok: false, error: "Publish its checks before switching it on" };
+  const next = { name: c.value.name, area: c.value.area, when: c.value.when, due: c.value.due, active: f.data.active };
+  const changes: string[] = [];
+  if (next.name !== t.name) changes.push(`name "${t.name}" → "${next.name}"`);
+  if (next.area !== t.area) changes.push(`done by ${AREA_TEXT[t.area]} → ${AREA_TEXT[next.area]}`);
+  if (next.when !== t.when) changes.push(`when "${t.when}" → "${next.when}"`);
+  if ((next.due ?? "") !== (t.due ?? "")) changes.push(`due ${t.due ?? "none"} → ${next.due ?? "none"}`);
+  if (next.active !== t.active) changes.push(next.active ? "switched on" : "switched off");
+  if (!changes.length) return { ok: true };
+  await db.updateChecklistSettings(t.id, next);
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "checklist.settings", detail: `${t.name} (${t.id}): ${changes.join("; ")}` });
+  checklistChanged(t.id);
+  return { ok: true };
+}
+
+/** Saves the draft's checks as a whole (making the draft from the published checks if there is none). */
+export async function checklistSaveDraft(id: string, items: unknown): Promise<ActionResult & { version?: number }> {
+  const { ctx, error } = await checklistCtx();
+  if (error) return { ok: false, error };
+  const idZ = ChecklistIdZ.safeParse(id);
+  if (!idZ.success) return { ok: false, error: "That couldn't be saved" };
+  const db = store();
+  const t = await db.checklistTemplate(idZ.data);
+  if (!t) return { ok: false, error: "Checklist not found" };
+  const c = cleanItems(items, await db.rules());
+  if (!c.ok) return c;
+  const note = describeChange(t.published ? toDraftItems(t.published.items) : undefined, c.value);
+  const v = await db.saveChecklistDraft(t.id, c.value, note, ctx.person.id);
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "checklist.draft", detail: `${t.name} (${t.id}): draft v${v.version} saved, ${note}` });
+  checklistChanged(t.id);
+  return { ok: true, version: v.version };
+}
+
+/** The draft goes live for the next run; the version in use before it is retired. */
+export async function checklistPublish(id: string): Promise<ActionResult> {
+  const { ctx, error } = await checklistCtx();
+  if (error) return { ok: false, error };
+  const idZ = ChecklistIdZ.safeParse(id);
+  if (!idZ.success) return { ok: false, error: "That couldn't be saved" };
+  const db = store();
+  const t = await db.checklistTemplate(idZ.data);
+  if (!t) return { ok: false, error: "Checklist not found" };
+  if (!t.draft) return { ok: false, error: "There's no draft to publish" };
+  const today = await db.run(t.id, londonNow().date);
+  const can = canPublish(toDraftItems(t.draft.items), { answers: today.answers.length, signed: !!today.signedAt });
+  if (!can.ok) return can;
+  await db.publishChecklistDraft(t.id, ctx.person.id);
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "checklist.publish", detail: `${t.name} (${t.id}): v${t.draft.version} published${t.published ? `, v${t.published.version} retired` : ""} (${t.draft.note ?? `${t.draft.items.length} checks`})` });
+  checklistChanged(t.id);
+  return { ok: true };
+}
+
+/** Drops the draft. The only draft of a never-published checklist takes the checklist with it (switched off). */
+export async function checklistDiscard(id: string): Promise<ActionResult> {
+  const { ctx, error } = await checklistCtx();
+  if (error) return { ok: false, error };
+  const idZ = ChecklistIdZ.safeParse(id);
+  if (!idZ.success) return { ok: false, error: "That couldn't be saved" };
+  const db = store();
+  const t = await db.checklistTemplate(idZ.data);
+  if (!t) return { ok: false, error: "Checklist not found" };
+  if (!t.draft) return { ok: false, error: "There's no draft to discard" };
+  await db.discardChecklistDraft(t.id);
+  if (!t.published) await db.updateChecklistSettings(t.id, { name: t.name, area: t.area, when: t.when, due: t.due, active: false });
+  await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "checklist.discard", detail: `${t.name} (${t.id}): draft v${t.draft.version} discarded${t.published ? "" : "; the checklist was never published, so it's off"}` });
+  checklistChanged(t.id);
   return { ok: true };
 }

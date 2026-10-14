@@ -70,6 +70,35 @@ export interface Checklist {
   items: ChecklistItem[];
 }
 
+/** One numbered version of a checklist's items. Runs are signed against a version, so a published one never changes. */
+export interface ChecklistVersion {
+  id: string;
+  templateId: string;
+  version: number;
+  status: "draft" | "published" | "retired" | "discarded";
+  items: ChecklistItem[];
+  note?: string;
+  createdBy?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  publishedAt?: number;
+  publishedBy?: string;
+}
+
+/** A checklist as the owner edits it: its settings, the version in use and the draft, if any. */
+export interface ChecklistTemplate {
+  id: string;
+  siteId: SiteId;
+  name: string;
+  area: Area;
+  when: string;
+  due?: string;
+  suggested: boolean;
+  active: boolean;
+  published?: ChecklistVersion;
+  draft?: ChecklistVersion;
+}
+
 export interface Answer {
   itemId: string;
   value: string;

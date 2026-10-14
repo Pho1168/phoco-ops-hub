@@ -798,3 +798,19 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 @media (min-width: 1100px) { .lib-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .lib-grid .list-btn { min-height: 60px; padding: 10px 14px; align-items: center; }
 .lib-tools .txt { height: 44px; }
+
+/* Checklist editor: one row per check, the section on the row that starts it. */
+.ck-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ck-row { display: grid; grid-template-columns: 170px 28px minmax(0, 2.2fr) 140px minmax(0, 1.3fr) auto; gap: 6px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px; }
+.ck-row.starts { margin-top: 10px; border-color: var(--teal); }
+.ck-row .txt, .ck-row select { width: 100%; max-width: none; min-width: 0; height: 40px; font-size: 14px; }
+.ck-row .ck-section { font-weight: 600; }
+.ck-row:not(.starts) .ck-section { opacity: .55; }
+.ck-n { font-family: var(--display); font-weight: 700; color: var(--teal-ink); text-align: center; }
+.ck-tools { display: flex; gap: 4px; }
+.ck-tools .btn { min-height: 36px; padding: 0 10px; }
+@media (max-width: 760px) {
+  .ck-row { grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "n text text" "section section type" "rule rule tools"; }
+  .ck-n { grid-area: n; } .ck-text { grid-area: text; } .ck-tools { grid-area: tools; justify-self: end; }
+  .ck-section { grid-area: section; } .ck-type { grid-area: type; } .ck-rule, .ck-hint { grid-area: rule; }
+}
