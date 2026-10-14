@@ -1463,9 +1463,10 @@ export const sqlStore: Store = {
       return r.id;
     });
   },
-  async saveTrainingGuide(id, guide, by) {
+  async saveTrainingGuide(id, guide) {
     if (!isUuid(id)) return false;
-    const r = await sql()`update training_skills set guide = ${JSON.stringify(guide)}::jsonb, updated_at = now(), updated_by = ${by} where id = ${id} returning id`;
+    // The audit entry says who; the row has no updated_by. The skill's rev is for the settings form, which doesn't carry the guide.
+    const r = await sql()`update training_skills set guide = ${JSON.stringify(guide)}::jsonb, updated_at = now() where id = ${id} and retired_at is null returning id`;
     return r.length > 0;
   },
   async saveTrainingSkill(id, rev, s) {
