@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 /** What a photo the owner has erased shows instead (brand sage and green). */
 const REMOVED = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" fill="#DCE3D6"/>`
-  + `<text x="200" y="158" font-family="sans-serif" font-size="24" text-anchor="middle" fill="#2F4A3A">Photo removed</text></svg>`;
+  + `<text x="200" y="158" font-family="sans-serif" font-size="24" text-anchor="middle" fill="#2C6E63">Photo removed</text></svg>`;
 
 /**
  * A photo, for anyone signed in (tablet or own phone). The browser keeps it for 10 minutes, then checks it's still
