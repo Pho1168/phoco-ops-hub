@@ -36,7 +36,7 @@ export default async function ChecklistEditor(props: { params: Promise<{ id: str
         <section className="card stack" aria-label="Settings" style={{ gap: 10 }}>
           <h2 className="h-sec">Settings</h2>
           <div className="muted" style={{ fontSize: 13 }}>These take effect straight away.</div>
-          <SettingsForm id={t.id} name={t.name} when={t.when} due={t.due ?? ""} active={t.active} published={!!t.published} />
+          <SettingsForm id={t.id} name={t.name} area={t.area} when={t.when} due={t.due ?? ""} active={t.active} published={!!t.published} />
         </section>
 
         <section className="stack" aria-label="Checks" style={{ gap: 8 }}>

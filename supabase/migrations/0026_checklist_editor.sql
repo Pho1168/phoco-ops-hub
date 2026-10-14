@@ -59,8 +59,8 @@ begin
   if tg_op = 'DELETE' then
     raise exception 'checklists are switched off, never deleted' using errcode = 'check_violation';
   end if;
-  if new.id <> old.id or new.site_id <> old.site_id or new.area <> old.area then
-    raise exception 'a checklist keeps its id, site and area' using errcode = 'check_violation';
+  if new.id <> old.id or new.site_id <> old.site_id then
+    raise exception 'a checklist keeps its id and site' using errcode = 'check_violation';
   end if;
   return new;
 end $$;

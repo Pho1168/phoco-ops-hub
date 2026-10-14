@@ -517,7 +517,7 @@ export const demoStore: Store = {
   async updateChecklistSettings(id, next) {
     const t = S().templates.find((x) => x.id === id);
     if (!t) throw new Error("Checklist not found");
-    Object.assign(t, { name: next.name, when: next.when, due: next.due, active: next.active });
+    Object.assign(t, { name: next.name, area: next.area, when: next.when, due: next.due, active: next.active });
   },
   async saveChecklistDraft(templateId, items, note, by) {
     const vs = versionsOf(templateId);

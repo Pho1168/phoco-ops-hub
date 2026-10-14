@@ -546,7 +546,7 @@ export const sqlStore: Store = {
     });
   },
   async updateChecklistSettings(id, next) {
-    await sql()`update checklist_templates set name = ${next.name}, when_label = ${next.when}, due_time = ${next.due ?? null}, active = ${next.active} where id = ${id}`;
+    await sql()`update checklist_templates set name = ${next.name}, area = ${next.area}, when_label = ${next.when}, due_time = ${next.due ?? null}, active = ${next.active} where id = ${id}`;
   },
   async saveChecklistDraft(templateId, items, note, by) {
     const id = await withTx(async (tx) => {

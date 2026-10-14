@@ -114,8 +114,8 @@ export interface Store {
   checklistVersions(templateId: string): Promise<ChecklistVersion[]>;
   /** A new checklist: its template (on) and a draft version 1 with the items given. */
   createChecklist(t: { id: string; siteId: SiteId; name: string; area: Area; when: string; due?: string }, items: ChecklistDraftItem[], by: string): Promise<void>;
-  /** Name, when, due time, on/off: take effect at once, no version. */
-  updateChecklistSettings(id: string, s: { name: string; when: string; due?: string; active: boolean }): Promise<void>;
+  /** Name, who does it, when, due time, on/off: take effect at once, no version. */
+  updateChecklistSettings(id: string, s: { name: string; area: Area; when: string; due?: string; active: boolean }): Promise<void>;
   /** Replaces the draft's items (making the draft if there is none). Returns the draft. */
   saveChecklistDraft(templateId: string, items: ChecklistDraftItem[], note: string, by: string): Promise<ChecklistVersion>;
   /** The draft goes live; the version in use before it is retired. */
