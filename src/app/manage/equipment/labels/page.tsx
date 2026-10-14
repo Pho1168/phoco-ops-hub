@@ -17,7 +17,7 @@ export default async function Labels(props: { searchParams: Promise<{ site?: str
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "phoco-ops-hub.vercel.app";
   const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const labels = await Promise.all(items.map(async (eq) => ({
-    eq, svg: await QRCode.toString(`${proto}://${host}/equipment/${eq.id}`, { type: "svg", margin: 1, errorCorrectionLevel: "M", color: { dark: "#2F4A3A", light: "#FFFFFF" } }),
+    eq, svg: await QRCode.toString(`${proto}://${host}/equipment/${eq.id}`, { type: "svg", margin: 1, errorCorrectionLevel: "M", color: { dark: "#22272A", light: "#FFFFFF" } }),
   })));
 
   return (
