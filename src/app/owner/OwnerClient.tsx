@@ -141,6 +141,7 @@ export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, pe
             <a className="chip" href="#rota-sheets">Rota sheets</a>
             <a className="chip" href="#tablets">Site tablets</a>
             <a className="chip" href="#activity">Activity log</a>
+            {lead === "owner" && <Link className="chip" href="/manage/checklists">Checklists</Link>}
             {lead === "owner" && <Link className="chip" href="/manage/certificates">Right to work</Link>}
           </div>
         </div>

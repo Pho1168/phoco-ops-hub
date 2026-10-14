@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
-import type { Area, Checklist, ChecklistItem, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
-import type { Alert, AuditEntry, HandoverItem, LibraryAck, NoticeRow, PrepEntryView, PrepHandover, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
+import type { Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
+import type { Alert, AuditEntry, ChecklistDraftItem, HandoverItem, LibraryAck, NoticeRow, PrepEntryView, PrepHandover, PushSub, RotaResult, Run, Session, ShiftView, Store } from "./store";
 import { latestAnswers } from "@/lib/domain/checklist";
 import { londonDate, londonToUtc, addDays as addDaysIso } from "@/lib/domain/time";
 import { masterItems, type PrepEntry, type PrepItem } from "@/lib/domain/prep";
@@ -69,8 +69,35 @@ function buildChecklists(): Checklist[] {
   return out;
 }
 
+/** The seeded lists become templates with a published version 1 each. */
+function seedChecklists(lists: Checklist[]): Pick<State, "templates" | "listVersions"> {
+  const at = Date.now() - 30 * 86_400_000;
+  const listVersions = new Map<string, ChecklistVersion[]>();
+  for (const l of lists) listVersions.set(l.id, [{ id: `${l.id}#v1`, templateId: l.id, version: 1, status: "published", items: l.items, createdAt: at, publishedAt: at }]);
+  return { templates: lists.map((l) => ({ id: l.id, siteId: l.siteId, name: l.name, area: l.area, when: l.when, due: l.due, suggested: l.suggested, active: true })), listVersions };
+}
+
+/** Draft items get fresh ids and positions each save; published ids are what runs record against. */
+const numberItems = (templateId: string, items: ChecklistDraftItem[]): ChecklistItem[] =>
+  items.map((i, n) => ({ id: `${templateId}#${randomUUID().slice(0, 8)}`, position: n + 1, section: i.section, text: i.text, type: i.type, ruleCode: i.ruleCode, hint: i.hint }));
+
+const versionsOf = (templateId: string) => S().listVersions.get(templateId) ?? [];
+const templateView = (t: Omit<ChecklistTemplate, "published" | "draft">): ChecklistTemplate => {
+  const vs = versionsOf(t.id);
+  return { ...t, published: vs.find((v) => v.status === "published"), draft: vs.find((v) => v.status === "draft") };
+};
+/** The checklists the site runs today: on, with a published version. */
+const liveLists = (): Checklist[] => S().templates.flatMap((t) => {
+  const v = versionsOf(t.id).find((x) => x.status === "published");
+  return t.active && v ? [{ id: t.id, siteId: t.siteId, name: t.name, area: t.area, when: t.when, due: t.due, suggested: t.suggested, items: v.items }] : [];
+});
+/** An item from any version of a checklist (records keep answers against the version they were signed on). */
+const itemAnywhere = (templateId: string, itemId: string) => versionsOf(templateId).flatMap((v) => v.items).find((i) => i.id === itemId);
+
 interface State {
-  sites: Site[]; people: Person[]; sessions: Session[]; lists: Checklist[]; rules: Record<string, TempRule>;
+  sites: Site[]; people: Person[]; sessions: Session[]; rules: Record<string, TempRule>;
+  /** Checklists as the owner edits them: settings here, their versions (items) in listVersions, newest first. */
+  templates: Omit<ChecklistTemplate, "published" | "draft">[]; listVersions: Map<string, ChecklistVersion[]>;
   runs: Map<string, Run>; alerts: Alert[]; handover: HandoverItem[]; audit: AuditEntry[];
   devices: (Device & { tokenHash: string })[];
   pairings: { codeHash: string; siteId: SiteId; label: string; createdBy: string; expiresAt: number; usedAt?: number }[];
@@ -305,7 +332,7 @@ function seed(): State {
       p("DEMO-FLT", "Floater (demo)", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }, { siteId: "WEM", role: "staff", sections: ["PROD"] }], staff),
     ],
     sessions: [],
-    lists: buildChecklists(),
+    ...seedChecklists(buildChecklists()),
     // Placeholder limits until the owner confirms them against the approved HACCP plan.
     rules: {
       F: { code: "F", label: "Fridge / chilled", targetMax: 5, legalMax: 8 },
@@ -476,8 +503,45 @@ export const demoStore: Store = {
   },
 
   async rules() { return S().rules; },
-  async checklists(siteId) { return S().lists.filter((l) => l.siteId === siteId); },
-  async checklist(id) { return S().lists.find((l) => l.id === id); },
+  async checklists(siteId) { return liveLists().filter((l) => l.siteId === siteId); },
+  async checklist(id) { return liveLists().find((l) => l.id === id); },
+  // ---------- editing checklists ----------
+  async checklistTemplates(siteId) { return S().templates.filter((t) => t.siteId === siteId).map(templateView).sort((a, b) => a.id.localeCompare(b.id)); },
+  async checklistTemplate(id) { const t = S().templates.find((x) => x.id === id); return t && templateView(t); },
+  async checklistVersions(templateId) { return versionsOf(templateId).map((v) => ({ ...v, items: v.status === "published" || v.status === "draft" ? v.items : [] })); },
+  async createChecklist(t, items, by) {
+    if (S().templates.some((x) => x.id === t.id)) throw new Error("That checklist id is taken");
+    S().templates.push({ ...t, suggested: false, active: true });
+    S().listVersions.set(t.id, [{ id: randomUUID(), templateId: t.id, version: 1, status: "draft", items: numberItems(t.id, items), note: "New checklist", createdBy: by, createdAt: Date.now(), updatedAt: Date.now() }]);
+  },
+  async updateChecklistSettings(id, next) {
+    const t = S().templates.find((x) => x.id === id);
+    if (!t) throw new Error("Checklist not found");
+    Object.assign(t, { name: next.name, when: next.when, due: next.due, active: next.active });
+  },
+  async saveChecklistDraft(templateId, items, note, by) {
+    const vs = versionsOf(templateId);
+    if (!S().templates.some((x) => x.id === templateId)) throw new Error("Checklist not found");
+    let d = vs.find((v) => v.status === "draft");
+    if (!d) {
+      d = { id: randomUUID(), templateId, version: Math.max(0, ...vs.map((v) => v.version)) + 1, status: "draft", items: [], createdBy: by, createdAt: Date.now() };
+      S().listVersions.set(templateId, [d, ...vs]);
+    }
+    d.items = numberItems(templateId, items); d.note = note; d.updatedAt = Date.now();
+    return d;
+  },
+  async publishChecklistDraft(templateId, by) {
+    const vs = versionsOf(templateId);
+    const d = vs.find((v) => v.status === "draft");
+    if (!d) throw new Error("No draft to publish");
+    if (d.items.length === 0) throw new Error("A version needs at least one check");
+    for (const v of vs) if (v.status === "published") v.status = "retired";
+    d.status = "published"; d.publishedAt = Date.now(); d.publishedBy = by;
+  },
+  async discardChecklistDraft(templateId) {
+    const d = versionsOf(templateId).find((v) => v.status === "draft");
+    if (d) d.status = "discarded";
+  },
   async run(listId, date) {
     const k = `${date}|${listId}`;
     let r = S().runs.get(k);
@@ -498,13 +562,13 @@ export const demoStore: Store = {
   },
 
   async recordsData(siteId, from, to) {
-    const lists = S().lists.filter((l) => l.siteId === siteId);
+    const lists = liveLists().filter((l) => l.siteId === siteId);
     const runs = Array.from(S().runs.values()).filter((r) => lists.some((l) => l.id === r.listId));
     const inRange = runs.filter((r) => r.date >= from && r.date <= to);
     const answers = inRange.flatMap((r) => {
       const list = lists.find((l) => l.id === r.listId)!;
       return r.answers.map((a) => {
-        const item = list.items.find((i) => i.id === a.itemId);
+        const item = itemAnywhere(list.id, a.itemId);
         return { listId: list.id, listName: list.name, date: r.date, itemId: a.itemId, itemText: item?.text ?? a.itemId, itemType: item?.type ?? "tick",
           ruleCode: item?.ruleCode, value: a.value, outcome: a.outcome, byName: nameOf(a.recordedBy) ?? "", at: a.capturedAt,
           action: a.action, actionByName: a.action ? nameOf(a.recordedBy) : undefined };
@@ -813,7 +877,7 @@ export const demoStore: Store = {
         published: true, cancelled: false, personId: s.personId, staffCode: s.staffCode }));
   },
   async checklistsStartedOn(siteId) {
-    const lists = new Set(S().lists.filter((l) => l.siteId === siteId).map((l) => l.id));
+    const lists = new Set(liveLists().filter((l) => l.siteId === siteId).map((l) => l.id));
     return Array.from(S().runs.values()).filter((r) => lists.has(r.listId)).map((r) => r.date).sort()[0];
   },
   // ---------- library ----------

@@ -1,6 +1,6 @@
 import postgres from "postgres";
-import type { Answer, Area, Checklist, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
-import type { Alert, AuditEntry, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
+import type { Answer, Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
+import type { Alert, AuditEntry, ChecklistDraftItem, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
 import type { RawAnswer } from "@/lib/domain/records";
 import type { TeamNotice } from "@/lib/domain/notices";
 import type { TimeOff, TimeOffKind, TimeOffStatus } from "@/lib/domain/timeoff";
@@ -220,6 +220,55 @@ async function loadChecklists(filter: postgres.PendingQuery<postgres.Row[]>): Pr
       ruleCode: opt(i.rule_code), hint: opt(i.hint), tag: opt(i.tag),
     })),
   }));
+}
+
+// ---------- editing checklists ----------
+
+interface ItemRow { id: string; position: number; section: string; text: string; answer_type: ChecklistItem["type"]; rule_code: string | null; hint: string | null; tag: string | null }
+interface VersionRow { id: string; template_id: string; version: number; status: ChecklistVersion["status"]; source_note: string | null; approved_by: string | null; published_at: Date | null; created_by: string | null; created_at: Date; updated_at: Date; items: ItemRow[] | null }
+
+const toItem = (i: ItemRow): ChecklistItem => ({ id: i.id, position: i.position, section: i.section, text: i.text, type: i.answer_type, ruleCode: opt(i.rule_code), hint: opt(i.hint), tag: opt(i.tag) });
+const toVersion = (v: VersionRow): ChecklistVersion => ({
+  id: v.id, templateId: v.template_id, version: v.version, status: v.status, items: (v.items ?? []).map(toItem), note: opt(v.source_note),
+  createdBy: opt(v.created_by), createdAt: v.created_at.getTime(), updatedAt: v.updated_at.getTime(), publishedAt: v.published_at?.getTime(), publishedBy: opt(v.approved_by),
+});
+
+/** Versions of the checklists matching the filter, with items for the published and draft ones. */
+async function loadVersions(filter: postgres.PendingQuery<postgres.Row[]>): Promise<ChecklistVersion[]> {
+  const q = sql();
+  const rows = await q<VersionRow[]>`
+    select v.id, v.template_id, v.version, v.status, v.source_note, v.approved_by, v.published_at, v.created_by, v.created_at, v.updated_at,
+      case when v.status in ('published', 'draft') then
+        (select json_agg(json_build_object('id', i.id, 'position', i.position, 'section', i.section, 'text', i.text,
+                  'answer_type', i.answer_type, 'rule_code', i.rule_code, 'hint', i.hint, 'tag', i.tag) order by i.position)
+           from checklist_items i where i.version_id = v.id) end as items
+    from checklist_versions v
+    where ${filter}
+    order by v.version desc`;
+  return rows.map(toVersion);
+}
+
+async function loadTemplates(filter: postgres.PendingQuery<postgres.Row[]>): Promise<ChecklistTemplate[]> {
+  const q = sql();
+  const rows = await q<{ id: string; site_id: SiteId; name: string; area: Area; when_label: string; due_time: string | null; is_suggested: boolean; active: boolean }[]>`
+    select t.id, t.site_id, t.name, t.area, t.when_label, t.due_time::text, t.is_suggested, t.active
+    from checklist_templates t where ${filter} order by t.id`;
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const versions = await loadVersions(q`v.template_id in ${q(ids)} and v.status in ('published', 'draft')`);
+  return rows.map((r) => ({
+    id: r.id, siteId: r.site_id, name: r.name, area: r.area, when: r.when_label, due: r.due_time ? r.due_time.slice(0, 5) : undefined,
+    suggested: r.is_suggested, active: r.active,
+    published: versions.find((v) => v.templateId === r.id && v.status === "published"),
+    draft: versions.find((v) => v.templateId === r.id && v.status === "draft"),
+  }));
+}
+
+async function insertItems(tx: postgres.ReservedSql | postgres.Sql, versionId: string, items: ChecklistDraftItem[]) {
+  for (const [n, i] of items.entries()) {
+    await tx`insert into checklist_items (version_id, position, section, text, answer_type, rule_code, hint)
+             values (${versionId}, ${n + 1}, ${i.section}, ${i.text}, ${i.type}, ${i.ruleCode ?? null}, ${i.hint ?? null})`;
+  }
 }
 
 interface NoticeDbRow { id: string; person_id: string; kind: NoticeRow["kind"]; title: string; body: string; send_after: Date; sent_at: Date | null; created_at: Date; url: string | null }
@@ -484,6 +533,55 @@ export const sqlStore: Store = {
   },
   async checklists(siteId) { const q = sql(); return loadChecklists(q`t.site_id = ${siteId}`); },
   async checklist(id) { const q = sql(); return (await loadChecklists(q`t.id = ${id}`))[0]; },
+  async checklistTemplates(siteId) { const q = sql(); return loadTemplates(q`t.site_id = ${siteId}`); },
+  async checklistTemplate(id) { const q = sql(); return (await loadTemplates(q`t.id = ${id}`))[0]; },
+  async checklistVersions(templateId) { const q = sql(); return loadVersions(q`v.template_id = ${templateId}`); },
+  async createChecklist(t, items, by) {
+    await withTx(async (tx) => {
+      await tx`insert into checklist_templates (id, site_id, name, area, when_label, due_time, is_suggested, active)
+               values (${t.id}, ${t.siteId}, ${t.name}, ${t.area}, ${t.when}, ${t.due ?? null}, false, true)`;
+      const [v] = await tx<{ id: string }[]>`
+        insert into checklist_versions (template_id, version, status, source_note, created_by) values (${t.id}, 1, 'draft', 'New checklist', ${by}) returning id`;
+      await insertItems(tx, v.id, items);
+    });
+  },
+  async updateChecklistSettings(id, next) {
+    await sql()`update checklist_templates set name = ${next.name}, when_label = ${next.when}, due_time = ${next.due ?? null}, active = ${next.active} where id = ${id}`;
+  },
+  async saveChecklistDraft(templateId, items, note, by) {
+    const id = await withTx(async (tx) => {
+      await tx`select id from checklist_templates where id = ${templateId} for update`;
+      let [d] = await tx<{ id: string }[]>`select id from checklist_versions where template_id = ${templateId} and status = 'draft'`;
+      if (!d) {
+        [d] = await tx<{ id: string }[]>`
+          insert into checklist_versions (template_id, version, status, source_note, created_by)
+          values (${templateId}, (select coalesce(max(version), 0) + 1 from checklist_versions where template_id = ${templateId}), 'draft', ${note}, ${by})
+          returning id`;
+      } else {
+        await tx`delete from checklist_items where version_id = ${d.id}`;
+        await tx`update checklist_versions set source_note = ${note}, updated_at = now() where id = ${d.id}`;
+      }
+      await insertItems(tx, d.id, items);
+      return d.id;
+    });
+    const q = sql();
+    return (await loadVersions(q`v.id = ${id}`))[0];
+  },
+  async publishChecklistDraft(templateId, by) {
+    await withTx(async (tx) => {
+      await tx`select id from checklist_templates where id = ${templateId} for update`;
+      const [d] = await tx<{ id: string; n: number }[]>`
+        select v.id, (select count(*)::int from checklist_items i where i.version_id = v.id) as n
+        from checklist_versions v where v.template_id = ${templateId} and v.status = 'draft'`;
+      if (!d) throw new Error("No draft to publish");
+      if (d.n === 0) throw new Error("A version needs at least one check");
+      await tx`update checklist_versions set status = 'retired', updated_at = now() where template_id = ${templateId} and status = 'published'`;
+      await tx`update checklist_versions set status = 'published', approved_by = ${by}, published_at = now(), updated_at = now() where id = ${d.id}`;
+    });
+  },
+  async discardChecklistDraft(templateId) {
+    await sql()`update checklist_versions set status = 'discarded', updated_at = now() where template_id = ${templateId} and status = 'draft'`;
+  },
 
   async run(listId, date) {
     const q = sql();

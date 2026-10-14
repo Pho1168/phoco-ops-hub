@@ -1,4 +1,4 @@
-import type { Answer, Checklist, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
+import type { Answer, Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Device } from "@/lib/domain/devices";
 import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib/domain/rota";
 import type { PrepEntry, PrepItem, PrepKind, PrepShift, SubmitPlan } from "@/lib/domain/prep";
@@ -59,6 +59,8 @@ export interface RecordsData {
   /** The first day the site recorded any checklist: days before it aren't counted as missed. */
   trackingFrom?: string;
 }
+/** An item as the editor saves it; id and position are given by the store. */
+export type ChecklistDraftItem = Pick<ChecklistItem, "section" | "text" | "type" | "ruleCode" | "hint">;
 export interface AuditEntry { at: number; actorId?: string; siteId?: SiteId; action: string; detail: string }
 /** "I've read it" for one version of a library document. */
 export interface LibraryAck { versionId: string; docId: string; personId: string; at: number }
@@ -104,6 +106,22 @@ export interface Store {
   rules(): Promise<Record<string, TempRule>>;
   checklists(siteId: SiteId): Promise<Checklist[]>;
   checklist(id: string): Promise<Checklist | undefined>;
+  // Editing checklists (the owner). Items are versioned: a draft is saved as a whole, then published as the next version.
+  /** Every checklist at the site, on or off, with the version in use and the draft (items included). */
+  checklistTemplates(siteId: SiteId): Promise<ChecklistTemplate[]>;
+  checklistTemplate(id: string): Promise<ChecklistTemplate | undefined>;
+  /** Every version of a checklist, newest first (items of the published and draft ones only). */
+  checklistVersions(templateId: string): Promise<ChecklistVersion[]>;
+  /** A new checklist: its template (on) and a draft version 1 with the items given. */
+  createChecklist(t: { id: string; siteId: SiteId; name: string; area: Area; when: string; due?: string }, items: ChecklistDraftItem[], by: string): Promise<void>;
+  /** Name, when, due time, on/off: take effect at once, no version. */
+  updateChecklistSettings(id: string, s: { name: string; when: string; due?: string; active: boolean }): Promise<void>;
+  /** Replaces the draft's items (making the draft if there is none). Returns the draft. */
+  saveChecklistDraft(templateId: string, items: ChecklistDraftItem[], note: string, by: string): Promise<ChecklistVersion>;
+  /** The draft goes live; the version in use before it is retired. */
+  publishChecklistDraft(templateId: string, by: string): Promise<void>;
+  /** Drops the draft (kept as discarded). */
+  discardChecklistDraft(templateId: string): Promise<void>;
   run(listId: string, date: string): Promise<Run>;
   addAnswer(listId: string, date: string, answer: Answer): Promise<void>;
   signRun(listId: string, date: string, personId: string): Promise<void>;
