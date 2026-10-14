@@ -1039,10 +1039,9 @@ export const demoStore: Store = {
       linkedAt: Object.fromEntries(s.links.map((l) => [l, now])), rev: 1, createdBy: by });
     return id;
   },
-  async saveTrainingGuide(id, guide, by) {
-    void by;
+  async saveTrainingGuide(id, guide) {
     const k = S().trainingSkills.find((x) => x.id === id);
-    if (!k) return false;
+    if (!k || k.retiredAt) return false;
     k.guide = guide; k.updatedAt = Date.now();
     return true;
   },

@@ -304,7 +304,7 @@ export interface Store {
    */
   saveTrainingSkill(id: string, rev: number, s: SkillFields): Promise<number | undefined>;
   /** The skill's written guide (the training card). False if the skill isn't there. */
-  saveTrainingGuide(id: string, guide: Guide, by: string): Promise<boolean>;
+  saveTrainingGuide(id: string, guide: Guide): Promise<boolean>;
   /** Swaps a live skill with the live one before (-1) or after (1) it in its pathway. False if there's none. */
   moveTrainingSkill(id: string, dir: -1 | 1): Promise<boolean>;
   /** Retires a skill (a new revision, so an open form can't save over it). */

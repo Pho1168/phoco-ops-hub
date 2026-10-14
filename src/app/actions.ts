@@ -1967,7 +1967,7 @@ export async function saveSkillGuide(skillId: string, input: unknown): Promise<A
     const status = await db.mediaStatus(photos);
     if (photos.some((p) => !status.has(p))) return { ok: false, error: "One of the pictures didn't upload. Add it again" };
   }
-  if (!(await db.saveTrainingGuide(skill.id, c.value, who.ctx.person.id))) return { ok: false, error: "That skill isn't there any more" };
+  if (!(await db.saveTrainingGuide(skill.id, c.value))) return { ok: false, error: "That skill isn't there any more" };
   await db.audit({ actorId: who.ctx.person.id, action: "training.guide", detail: `Wrote the guide for ${skill.title}: ${c.value.steps.length} steps, ${photos.length} pictures` });
   revalidateTraining("/manage/training/skills", `/manage/training/skills/${id.data}`, `/library/training/${id.data}`);
   return { ok: true };
