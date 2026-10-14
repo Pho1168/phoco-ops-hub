@@ -85,7 +85,7 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
 .alert.bad { background: var(--bad-soft); color: var(--bad-ink); }
 .alert.good { background: var(--teal-tint); color: var(--teal-ink); }
 
-.nav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); display: flex; justify-content: center; gap: 4px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 5; }
+.nav { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); display: flex; justify-content: center; gap: 4px; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 5; }
 .nav a { flex: 1; max-width: 150px; border-radius: 12px; padding: 8px 4px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 12px; font-weight: 600; color: var(--ink-2); text-decoration: none; min-height: 54px; }
 .nav a[aria-current="page"] { background: var(--teal-tint); color: var(--teal-ink); }
 @media (min-width: 700px) {
@@ -161,7 +161,7 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
 .login-head { align-items: flex-end; }
 .login-foot { margin-top: auto; padding-top: 8px; }
 .login-foot .muted { font-size: 12px; }
-.grp-h { font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: .8px; text-transform: uppercase; color: var(--brand); display: flex; align-items: center; gap: 10px; line-height: 1; margin: 0; }
+.grp-h { font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: .8px; text-transform: uppercase; color: var(--brand); display: flex; align-items: center; gap: 10px; line-height: 1.1; margin: 0; padding-left: 10px; border-left: 4px solid var(--teal); }
 .grp-h span { font-family: var(--body); font-weight: 500; font-size: 13px; color: var(--ink-2); text-transform: none; letter-spacing: 0; }
 .people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .people-grid.rota { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
@@ -171,6 +171,9 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
 .person-btn.frozen { opacity: .55; }
 .person-btn .grow { display: flex; flex-direction: column; gap: 2px; }
 .person-name { font-weight: 600; font-size: 16px; }
+.panel { background: color-mix(in srgb, var(--teal-tint) 55%, var(--surface)); border: 1px solid var(--teal-tint); border-radius: 18px; padding: 14px; }
+.panel.nude { background: var(--surface-2); border-color: var(--line); }
+.pinpane .panel { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 22px 26px; width: 100%; max-width: 400px; }
 .login-main .pad { max-width: 300px; }
 .login-main .pad button { min-height: 66px; }
 .setup-main { gap: 14px; max-width: 680px; }
@@ -731,7 +734,7 @@ main.recipe-page > .rc-back { max-width: none; }
 .sm-item { width: 100%; background: var(--surface); border-radius: 16px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; min-height: 64px; }
 .sm-item.late { outline: 2px solid var(--accent); }
 .sm-item.now { outline: 2px solid var(--amber); }
-.sm-state { width: 54px; height: 44px; border-radius: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; background: var(--surface-2); color: var(--ink-2); text-align: center; line-height: 1.05; padding: 0 4px; }
+.sm-state { width: 54px; height: 44px; border-radius: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; background: color-mix(in srgb, var(--teal-tint) 55%, var(--surface)); color: var(--teal-ink); text-align: center; line-height: 1.05; padding: 0 4px; }
 .sm-state.late { background: var(--accent); color: var(--accent-ink); }
 .sm-state.now { background: var(--amber); color: var(--amber-ink); }
 .sm-state.done { background: var(--teal-tint); color: var(--teal-ink); font-size: 18px; }

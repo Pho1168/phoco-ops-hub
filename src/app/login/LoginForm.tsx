@@ -78,15 +78,17 @@ export function LoginForm({ sites, groups, deviceLabel, returnTo, dateLine }: {
             <h1 className="h-display">Hi {firstName(pick.name)}</h1>
             <div className="muted">{pick.label}{pick.shift ? ` · on from ${pick.shift.start} today` : ""} · enter your PIN</div>
           </div>
-          <div className="pin-dots" aria-live="polite" aria-label={`${pin.length} of 4 digits entered`}>
-            {[0, 1, 2, 3].map((i) => <i key={i} className={i < pin.length ? "on" : ""} />)}
-          </div>
-          {err && <div className="err" role="alert">{err}</div>}
-          <div className="pad">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"].map((d, i) =>
-              d === "" ? <span key={i} /> : (
-                <button key={i} type="button" onClick={() => press(d)} aria-label={d === "del" ? "Delete" : d} disabled={pending}>{d === "del" ? "⌫" : d}</button>
-              ))}
+          <div className="panel">
+            <div className="pin-dots" aria-live="polite" aria-label={`${pin.length} of 4 digits entered`}>
+              {[0, 1, 2, 3].map((i) => <i key={i} className={i < pin.length ? "on" : ""} />)}
+            </div>
+            {err && <div className="err" role="alert">{err}</div>}
+            <div className="pad">
+              {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "del"].map((d, i) =>
+                d === "" ? <span key={i} /> : (
+                  <button key={i} type="button" onClick={() => press(d)} aria-label={d === "del" ? "Delete" : d} disabled={pending}>{d === "del" ? "⌫" : d}</button>
+                ))}
+            </div>
           </div>
           <div className="muted">Forgotten it? The owner or operations manager can set you a new one.</div>
         </main>
@@ -104,13 +106,13 @@ export function LoginForm({ sites, groups, deviceLabel, returnTo, dateLine }: {
           {site?.closed && <div className="err"><strong>{site.name} is closed.</strong> {site.reason ? `${site.reason}. ` : ""}Staff sign-in is frozen until the owner reopens it.</div>}
           {empty && <div className="card muted">No staff at this site yet. The owner or operations manager adds people from the overview.</div>}
           {g.onToday.length > 0 && (
-            <section className="stack">
+            <section className="stack panel">
               <h2 className="grp-h">On the rota today <span>{g.onToday.length} · in start order</span></h2>
               <div className="people-grid rota">{g.onToday.map((p) => person(p, true))}</div>
             </section>
           )}
           {g.others.length > 0 && (
-            <section className="stack">
+            <section className="stack panel nude">
               <h2 className="grp-h">{g.onToday.length ? "Everyone else" : "Everyone"} at {site?.name} <span>{g.others.length}</span></h2>
               <div className="people-grid">{g.others.map((p) => person(p, false))}</div>
             </section>
