@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { store } from "@/lib/data";
-import { latestAnswers, progress } from "@/lib/domain/checklist";
+import Link from "next/link";
+import { latestAnswers, progress, runState } from "@/lib/domain/checklist";
 import { describeRule } from "@/lib/domain/temperature";
 import { londonNow, requireCtx } from "@/lib/session";
 import { TopBar } from "@/components/Chrome";
@@ -22,10 +23,11 @@ export default async function RunPage(props: { params: Promise<{ id: string }> }
   const list = await db.checklist(params.id);
   if (!list || list.siteId !== ctx.site.id) notFound();
   const rules = await db.rules();
-  const { date } = londonNow();
+  const { date, hm } = londonNow();
   const run = await db.run(list.id, date);
   const latest = latestAnswers(run.answers);
   const p = progress(list, run.answers);
+  const state = runState(p, !!run.signedAt, list.due, hm);
   const signer = run.signedBy ? await db.person(run.signedBy) : undefined;
 
   const items: RunItemView[] = list.items.map((it) => {
@@ -42,7 +44,11 @@ export default async function RunPage(props: { params: Promise<{ id: string }> }
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title={list.name} eyebrow={`${ctx.site.name} · ${list.when}${list.due ? ` · due ${list.due}` : ""}`} back="/today">
+        {state === "overdue" && <span className="chip late">Late</span>}
+        {state === "done" && <span className="chip done">Signed off</span>}
+        {!run.signedAt && <Link className="pill-btn top-extra" href="/handover">Report issue</Link>}
+      </TopBar>
       <RunClient
         listId={list.id} name={list.name} siteName={ctx.site.name} when={list.when} due={list.due} suggested={list.suggested}
         items={items} answered={p.answered} total={p.total} needsAction={p.needsAction}
