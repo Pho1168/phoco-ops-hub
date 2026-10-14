@@ -9,17 +9,8 @@
   --go: #2E7D4F; --wait: #C98A12;
   --display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
   --body: 'Be Vietnam Pro', 'Segoe UI', system-ui, sans-serif;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17191A; --surface: #212426; --surface-2: #2B2F31; --ink: #ECEDEA; --ink-2: #B4BABA; --line: #353A3C;
-    --brand: #7FB8A8; --brand-ink: #0F2A24; --teal: #7FB8A8; --teal-tint: #223E39; --teal-ink: #BFE0D6;
-    --accent: #E8893F; --accent-ink: #1C1007; --accent-soft: #3A2614; --accent-soft-ink: #F6C99C;
-    --warn-soft: #3A3019; --warn-ink: #EBD39A; --bad: #F2867E; --bad-ink-on: #2A0D0B; --bad-soft: #3D1D1A; --bad-ink: #F7B4AE;
-    --go: #6CC48E; --wait: #E8B54A;
-    color-scheme: dark;
-  }
+  /* One look everywhere: the shop tablets and phones show the brand palette whatever their system theme. */
+  color-scheme: only light;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
@@ -707,7 +698,6 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 
 /* Shift Mode (/shift): your role + your shift = your screen. Amber is the brand's golden highlight (the logo's colour). */
 :root { --amber: #FCBA63; --amber-ink: #1F2A22; --amber-soft: #FFE9C4; }
-@media (prefers-color-scheme: dark) { :root { --amber: #E6A84F; --amber-ink: #1C1207; --amber-soft: #3B2C12; } }
 .err-text { color: var(--bad-ink); }
 .sm-head { gap: 10px; }
 .sm-seg { display: inline-flex; gap: 4px; padding: 4px; }
