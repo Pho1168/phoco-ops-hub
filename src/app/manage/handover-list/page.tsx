@@ -17,13 +17,9 @@ export default async function HandoverList() {
   const items = await store().prepItems();
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Handover list" eyebrow="Manage · every site" back={ctx.isLead ? "/owner" : "/manage"} />
       <main>
-        <div>
-          <div className="eyebrow">Manage · every site</div>
-          <h1 className="h-display">Handover list</h1>
-          <p className="muted" style={{ margin: "4px 0 0" }}>What the closing shift picks from on the prep handover: things to do, then things to prep, in groups. Changes show on the tablet straight away.</p>
-        </div>
+        <p className="muted" style={{ margin: 0 }}>What the closing shift picks from on the prep handover: things to do, then things to prep, in groups. Changes show on the tablet straight away.</p>
         <ListEditor items={items} canRetire={canRetirePrepItem(ctx.person)} />
       </main>
       <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />

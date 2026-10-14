@@ -28,11 +28,8 @@ export default async function Allergens() {
 
   return (
     <>
-      {full ? <TopBar ctx={ctx} /> : <PhoneTopBar ctx={ctx} />}
+      {full ? <TopBar ctx={ctx} title="Allergens" eyebrow="The 14 allergens, and E120 colouring" /> : <PhoneTopBar ctx={ctx} title="Allergens" eyebrow="The 14 allergens, and E120 colouring" back="/me" />}
       <main className="wide">
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">The 14 allergens, and E120 colouring</div><h1 className="h-display">Allergens</h1></div>
-        </div>
         <LibraryTabs current="allergens" recipes={full && seesRecipes(ctx.person, sites)} />
         <MustRead docs={[]} allergens={toConfirm} />
         <div className="muted">{rows.length

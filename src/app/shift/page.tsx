@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { signOut } from "@/app/actions";
-import { BottomNav, TopBar } from "@/components/Chrome";
+import { BottomNav, PhoneTopBar, TopBar } from "@/components/Chrome";
 import { Icon } from "@/components/Icon";
 import { store } from "@/lib/data";
 import { LANES, laneName, windowLabel, type Lane } from "@/lib/domain/shift-mode";
+import { firstName } from "@/lib/domain/names";
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { myShift, siteLaneIds, siteLanes, type ShiftView } from "@/lib/shift-service";
@@ -35,16 +35,8 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
   const managerHere = !onPhone && ctx.isManager;
   const view = params.view === "me" || params.view === "lanes" ? params.view : managerHere ? "lanes" : "me";
 
-  const header = onPhone ? (
-    <header className="top">
-      <div className="logo">PHO &amp; CO</div>
-      <div className="who">
-        <span>{ctx.person.name}</span>
-        <Link className="pill-btn" href="/me">My shifts</Link>
-        <form action={signOut}><button className="pill-btn" type="submit">Sign out</button></form>
-      </div>
-    </header>
-  ) : <TopBar ctx={ctx} />;
+  const Bar = onPhone ? PhoneTopBar : TopBar;
+  const dateLine = (site: string, when = shortDay(today)) => `${site} · ${when}`;
 
   const more = (site: ShiftView["site"] | undefined) => (
     <nav className="row wrap" aria-label="More" style={{ gap: 8 }}>
@@ -63,13 +55,10 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
     const lanes = await siteLanes(ctx.site, now, db);
     return (
       <>
-        {header}
+        <Bar ctx={ctx} title="Today’s lanes" eyebrow={dateLine(ctx.site.name)} />
         <main className="wide">
-          <div className="row wrap" style={{ alignItems: "flex-end" }}>
-            <div className="grow">
-              <div className="eyebrow">{ctx.site.name} · {shortDay(today)} · {londonHM(now)}</div>
-              <h1 className="h-display">Today&apos;s lanes</h1>
-            </div>
+          <div className="row wrap" style={{ gap: 8 }}>
+            <span className="muted lead">Every lane with people on today, side by side.</span>
             <div className="seg sm-seg" role="group" aria-label="View as">
               <Link href="/shift?view=lanes" aria-current="page" className="sm-seg-on">Every lane</Link>
               <Link href="/shift?view=me">My shift</Link>
@@ -114,12 +103,8 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
     const { choices, elsewhere } = result;
     return (
       <>
-        {header}
+        <Bar ctx={ctx} title={`Hi ${firstName(ctx.person.name)}`} eyebrow={dateLine(ctx.site.name)} />
         <main>
-          <div>
-            <div className="eyebrow">{ctx.site.name} · {shortDay(today)} · {londonHM(now)}</div>
-            <h1 className="h-display">Hi {ctx.person.name.split(" ")[0]}</h1>
-          </div>
           <div className="card stack" style={{ gap: 10 }}>
             <div className="strong" style={{ fontSize: 18 }}>You&apos;re not on today&apos;s published rota at {ctx.site.name}.</div>
             {elsewhere && <div className="muted">Your shift today is at {elsewhere.site.name}, {elsewhere.start}–{elsewhere.end}.</div>}
@@ -143,25 +128,24 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
   const picked = !shift;
   return (
     <>
-      {header}
+      <Bar ctx={ctx} title={<LaneTitle lane={w.lane} />} eyebrow={`${dateLine(site.name, dayLabel(w.date, today))} · ${windowLabel(w)}${picked ? " · not on the rota" : ""}`} />
       <main>
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow">
-            <div className="eyebrow">{site.name} · {dayLabel(w.date, today)} · {windowLabel(w)}{picked ? " · not on the rota" : ""}</div>
-            <h1 className="h-display"><LaneTitle lane={w.lane} /></h1>
+        {(managerHere || picked) && (
+          <div className="row wrap" style={{ gap: 8 }}>
+            <span className="muted lead">{picked ? "Not on today's rota: showing the lane you picked." : "Your own shift."}</span>
+            {managerHere && (
+              <div className="seg sm-seg" role="group" aria-label="View as">
+                <Link href="/shift?view=lanes">Every lane</Link>
+                <Link href="/shift?view=me" aria-current="page" className="sm-seg-on">My shift</Link>
+              </div>
+            )}
+            {picked && (
+              <div className="row wrap" style={{ gap: 6 }} aria-label="Lane">
+                {LANES.filter((l) => l !== w.lane && siteLaneIds(site).includes(l)).map((l) => <Link key={l} className="btn ghost small" href={`/shift?view=me&lane=${l}`}>Switch to {laneName(l)}</Link>)}
+              </div>
+            )}
           </div>
-          {managerHere && (
-            <div className="seg sm-seg" role="group" aria-label="View as">
-              <Link href="/shift?view=lanes">Every lane</Link>
-              <Link href="/shift?view=me" aria-current="page" className="sm-seg-on">My shift</Link>
-            </div>
-          )}
-          {picked && (
-            <div className="row wrap" style={{ gap: 6 }} aria-label="Lane">
-              {LANES.filter((l) => l !== w.lane && siteLaneIds(site).includes(l)).map((l) => <Link key={l} className="btn ghost small" href={`/shift?view=me&lane=${l}`}>Switch to {laneName(l)}</Link>)}
-            </div>
-          )}
-        </div>
+        )}
 
         <div className="card stack sm-head" style={{ gap: 10 }}>
           <div className="row wrap" style={{ gap: 10 }}>

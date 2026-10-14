@@ -22,12 +22,12 @@ export default async function EditSkill(props: { params: Promise<{ id: string }>
   const [skills, options, questions] = await Promise.all([db.trainingSkills(), linkOptions(db, skill.links), db.trainingQuestions([skill.id])]);
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title={skill.title} eyebrow={`${PATHWAY_TEXT[skill.section]} · ${skill.group}`} back={`/manage/training/skills?section=${skill.section}`}>
+        <Link className="pill-btn top-extra" href={`/library/training/${skill.id}`}>See it as staff do</Link>
+      </TopBar>
       <main>
-        <Link href={`/manage/training/skills?section=${skill.section}`} className="muted" style={{ fontWeight: 600 }}>← Skills and quizzes</Link>
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">{PATHWAY_TEXT[skill.section]} · {skill.group}</div><h1 className="h-display">{skill.title}</h1></div>
-          <Link className="btn ghost small" href={`/library/training/${skill.id}`}>See it as staff do</Link>
+        <div className="row wrap" style={{ gap: 8 }}>
+          <span className="muted lead">{skill.handsOn ? "Hands-on: a manager confirms it once the person is ready." : "Knowledge: a passed quiz completes it."}</span>
           <RetireSkill skillId={skill.id} retired={!!skill.retiredAt} />
         </div>
         {skill.retiredAt ? (

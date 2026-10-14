@@ -60,17 +60,13 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
   const today = londonDate(Date.now());
   const p = row?.progress;
 
+  const Bar = full ? TopBar : PhoneTopBar;
   return (
     <>
-      {full ? <TopBar ctx={ctx} /> : <PhoneTopBar ctx={ctx} />}
+      <Bar ctx={ctx} title={skill.title} eyebrow={`${PATHWAY_TEXT[skill.section]} · ${skill.group}`} back="/library/training" />
       <main>
-        <Link href="/library/training" className="muted" style={{ fontWeight: 600 }}>← Training</Link>
-        <div className="stack" style={{ gap: 6 }}>
-          <div className="eyebrow">{PATHWAY_TEXT[skill.section]} · {skill.group}</div>
-          <h1 className="h-display">{skill.title}</h1>
-          <div className="muted">{skill.handsOn ? "Hands-on: a manager confirms it once they've watched you do it." : quiz.length || row?.drafted ? "Done when you pass the quiz." : "Done when you've read and watched it."}
-            {skill.refresherMonths ? ` Done again every ${skill.refresherMonths} months.` : ""}</div>
-        </div>
+        <div className="muted">{skill.handsOn ? "Hands-on: a manager confirms it once they've watched you do it." : quiz.length || row?.drafted ? "Done when you pass the quiz." : "Done when you've read and watched it."}
+          {skill.refresherMonths ? ` Done again every ${skill.refresherMonths} months.` : ""}</div>
         {skill.retiredAt && <div className="alert bad" role="status">Retired: it isn&apos;t part of anyone&apos;s training.</div>}
 
         {p && (

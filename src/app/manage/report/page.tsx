@@ -101,18 +101,13 @@ export default async function Report(props: { searchParams: Promise<{ week?: str
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title={`Week of ${shortDay(week)}`} eyebrow={`Weekly report${week === thisWeek ? " · this week so far" : ""}`} back="/manage" />
       <main className="wide">
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow">
-            <div className="eyebrow">Weekly report{week === thisWeek ? " · this week so far" : ""}</div>
-            <h1 className="h-display">Week of {shortDay(week)}</h1>
-          </div>
-          <div className="row" style={{ gap: 8 }}>
-            <Link className="btn ghost small" href={href(addDays(week, -7))}>← Previous</Link>
-            {week !== thisWeek && <Link className="btn ghost small" href={href(thisWeek)}>This week</Link>}
-            {week < thisWeek && <Link className="btn ghost small" href={href(addDays(week, 7))}>Next →</Link>}
-          </div>
+        <div className="row wrap" style={{ gap: 8 }}>
+          <span className="muted lead">What the Monday message says, for every site you run.</span>
+          <Link className="btn ghost small" href={href(addDays(week, -7))}>← Previous</Link>
+          {week !== thisWeek && <Link className="btn ghost small" href={href(thisWeek)}>This week</Link>}
+          {week < thisWeek && <Link className="btn ghost small" href={href(addDays(week, 7))}>Next →</Link>}
         </div>
 
         {reports.length > 1 && (

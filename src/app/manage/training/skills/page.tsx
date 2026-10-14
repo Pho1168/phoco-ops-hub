@@ -29,13 +29,10 @@ export default async function Skills(props: { searchParams: Promise<{ section?: 
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Skills and quizzes" eyebrow="Training · the owner and operations managers" back="/manage/training">
+        <Link className="pill-btn top-extra" href={`/manage/training/skills/new?section=${section}`} style={{ background: "var(--amber)", color: "var(--amber-ink)" }}>Add a skill</Link>
+      </TopBar>
       <main>
-        <Link href="/manage/training" className="muted" style={{ fontWeight: 600 }}>← Training</Link>
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">Training · the owner and operations managers</div><h1 className="h-display">Skills and quizzes</h1></div>
-          <Link className="btn accent small" href={`/manage/training/skills/new?section=${section}`}>Add a skill</Link>
-        </div>
         <nav className="lib-tabs" aria-label="Pathway">
           {PATHWAYS.map((s) => <Link key={s} href={`/manage/training/skills?section=${s}`} aria-current={s === section ? "page" : undefined}>{PATHWAY_TEXT[s]}</Link>)}
         </nav>

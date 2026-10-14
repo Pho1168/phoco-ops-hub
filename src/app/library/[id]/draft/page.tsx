@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { approvesKind, canDiscard, canDraft, canReview, canWithdraw, defaultReviewBy, docReach, isKind, KIND_TEXT, ownerApproves, reachedSites, readsAt, type LibraryDoc, type SopBody } from "@/lib/domain/library";
@@ -37,22 +36,19 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
   const [gone, sites] = await Promise.all([erasedPhotos(v.body as SopBody | PrepBody, db), db.sites()]);
   const covers = docReach(doc, sites); // the sites it covers, before and after this version
   const what = KIND_TEXT[doc.kind].toLowerCase();
+  const bar = (
+    <TopBar ctx={ctx} title={v.status === "draft" ? "Draft" : "Waiting for approval"} back={doc.published ? `/library/${doc.id}` : home}
+      eyebrow={<><span className="lib-code">{doc.code}</span> · {doc.published ? `new version (now on version ${doc.published.version})` : `new ${what}`}</>} />
+  );
   const head = (
-    <>
-      <Link href={doc.published ? `/library/${doc.id}` : home} className="muted" style={{ fontWeight: 600 }}>← {doc.published ? doc.published.title : doc.kind === "sop" ? "Library" : "Recipes"}</Link>
-      <div className="stack" style={{ gap: 6 }}>
-        <div className="eyebrow"><span className="lib-code">{doc.code}</span> · {doc.published ? `new version (now on version ${doc.published.version})` : `new ${what}`}</div>
-        <h1 className="h-display">{v.status === "draft" ? "Draft" : "Waiting for approval"}</h1>
-        <div className="muted">Written by {v.authorName}{doc.published ? ". Staff keep seeing the published version until this one is approved." : ". Staff can't see it until it's approved."}</div>
-      </div>
-    </>
+    <div className="muted">Written by {v.authorName}{doc.published ? ". Staff keep seeing the published version until this one is approved." : ". Staff can't see it until it's approved."}</div>
   );
 
   if (v.status === "draft") {
     const discard = canDiscard(ctx.person, v, covers, doc.kind).ok;
     return (
       <>
-        <TopBar ctx={ctx} />
+        {bar}
         <main>
           {head}
           {v.reviewNote && (
@@ -91,7 +87,7 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
       .map((s) => ({ site: s.name, n: people.filter((p) => readsAt(v.body.sections, p, s)).length })).filter((x) => x.n > 0);
     return (
       <>
-        <TopBar ctx={ctx} />
+        {bar}
         <main>
           {head}
           <div className="card stack" style={{ gap: 4 }}>
@@ -122,7 +118,7 @@ export default async function LibraryDraft(props: { params: Promise<{ id: string
   const asks = kind === "dish" && changes.length ? "Its allergens change, so everyone at its sites will be asked to confirm they've seen it." : "";
   return (
     <>
-      <TopBar ctx={ctx} />
+      {bar}
       <main className="recipe-page">
         {head}
         <div className="card stack" style={{ gap: 4 }}>

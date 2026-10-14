@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { signOut } from "@/app/actions";
+import { PhoneTopBar, TopBar } from "@/components/Chrome";
 import { store } from "@/lib/data";
 import { addDays, londonDate, shortDay } from "@/lib/domain/time";
 import { current } from "@/lib/session";
@@ -96,17 +96,11 @@ export default async function MyShifts() {
 
   return (
     <>
-      <header className="top">
-        <div className="logo">PHO &amp; CO</div>
-        <div className="who">
-          <span>{ctx.person.name}</span>
-          {ctx.scope === "full" && <Link className="pill-btn" href="/">Back</Link>}
-          <form action={signOut}><button className="pill-btn" type="submit">Sign out</button></form>
-        </div>
-      </header>
+      {ctx.scope === "full"
+        ? <TopBar ctx={ctx} title="My shifts" eyebrow="Next 4 weeks · published rotas only" back="/" />
+        : <PhoneTopBar ctx={ctx} title="My shifts" eyebrow="Next 4 weeks · published rotas only" home />}
       <main style={{ paddingBottom: 40 }}>
         <div className="stack" style={{ gap: 10 }}>
-          <div><div className="eyebrow">Next 4 weeks · published rotas only</div><h1 className="h-display">My shifts</h1></div>
           <nav className="row wrap" aria-label="More" style={{ gap: 8 }}>
             {readsHandover && <Link className="btn ghost small" href="/handover">Handover</Link>}
             <Link className="btn ghost small" href="/library">SOPs</Link>

@@ -47,13 +47,11 @@ export default async function TeamTraining(props: { searchParams: Promise<{ site
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Training" eyebrow="Manager tools · skills passports" back="/manage">
+        {canEditTraining(ctx.person) && <Link className="pill-btn top-extra" href="/manage/training/skills">Skills and quizzes</Link>}
+        <Link className="pill-btn top-extra" href="/library/training">My training</Link>
+      </TopBar>
       <main className="wide">
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">Manager tools · skills passports</div><h1 className="h-display">Training</h1></div>
-          {canEditTraining(ctx.person) && <Link className="btn ghost small" href="/manage/training/skills">Skills and quizzes</Link>}
-          <Link className="btn ghost small" href="/library/training">My training</Link>
-        </div>
 
         {picker.length > 1 && (
           <nav className="row wrap" style={{ gap: 6 }} aria-label="Site">

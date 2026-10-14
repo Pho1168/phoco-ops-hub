@@ -48,9 +48,8 @@ export default async function CoverPage() {
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Shift cover" eyebrow="Manager tools" back="/manage" />
       <main>
-        <div><div className="eyebrow">Manager tools</div><h1 className="h-display">Shift cover</h1></div>
 
         <section className="stack">
           <h2 className="h-sec">To decide ({toDecide.length})</h2>

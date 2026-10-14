@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { store } from "@/lib/data";
 import { peopleInCare } from "@/lib/domain/certificates";
@@ -42,10 +41,8 @@ export default async function PersonTraining(props: { params: Promise<{ personId
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title={target.name} eyebrow="Skills passport" back="/manage/training" />
       <main>
-        <Link href="/manage/training" className="muted" style={{ fontWeight: 600 }}>← Training</Link>
-        <div className="stack" style={{ gap: 6 }}><div className="eyebrow">Skills passport</div><h1 className="h-display">{target.name}</h1></div>
         {rows.length === 0 ? <div className="card muted">{target.name} has no training set: training follows their sections as staff or a manager at an open site.</div> : (
           <>
             <section className="card stack" style={{ gap: 10 }} aria-label="How it adds up">

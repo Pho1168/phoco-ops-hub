@@ -36,7 +36,7 @@ export default async function HandoverPrep() {
   const pickBy = Object.fromEntries(PREP_SHIFTS.map((s) => [s.id, pickFor(ctx.site, targetPeriod(s.id, now, rota), rota, people, now)])) as Record<PrepShift, ReturnType<typeof pickFor>>;
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Prep handover" eyebrow={`${ctx.site.name} · what the next shift needs`} back="/handover" />
       <PrepBoard
         siteId={ctx.site.id} siteName={ctx.site.name} sites={sites.filter((s) => enabled.includes(s.id)).map((s) => ({ id: s.id, name: s.name }))}
         items={items} shift={draft?.shift ?? "next"} picks={toPicks(draft?.entries ?? [])} carried={carried}

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { canManageEquipment, canUseEquipment, equipmentKindLabel, faultHint, faultsOf, sinceText, SEVERITY_LABEL, type EquipmentEvent } from "@/lib/domain/equipment";
@@ -39,16 +38,13 @@ export default async function EquipmentItem(props: { params: Promise<{ id: strin
   const svc = serviceText(eq, events, today);
   const history = [...events].sort((a, b) => b.createdAt - a.createdAt).slice(0, 20);
   const faultOf = (e: EquipmentEvent) => events.find((x) => x.id === e.faultId);
+  const Bar = full ? TopBar : PhoneTopBar;
 
   return (
     <>
-      {full ? <TopBar ctx={ctx} /> : <PhoneTopBar ctx={ctx} />}
+      <Bar ctx={ctx} title={eq.name} eyebrow={`Equipment · ${site?.name}${eq.location ? ` · ${eq.location}` : ""}`} back={`/equipment?site=${eq.siteId}`} />
       <main>
-        <div>
-          <div className="eyebrow"><Link href={`/equipment?site=${eq.siteId}`} style={{ color: "inherit" }}>Equipment</Link> · {site?.name}{eq.location ? ` · ${eq.location}` : ""}</div>
-          <h1 className="h-display">{eq.name}</h1>
-          <div className="muted">{[equipmentKindLabel(eq.kind), eq.makeModel, eq.serial && `Serial ${eq.serial}`].filter(Boolean).join(" · ")}</div>
-        </div>
+        <div className="muted">{[equipmentKindLabel(eq.kind), eq.makeModel, eq.serial && `Serial ${eq.serial}`].filter(Boolean).join(" · ")}</div>
 
         {eq.retiredAt
           ? <div className="card muted">Taken off the equipment register on {dayMonthYear(londonDate(eq.retiredAt))}. Its history is kept below.</div>

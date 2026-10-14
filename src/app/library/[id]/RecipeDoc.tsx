@@ -59,9 +59,8 @@ export async function RecipeDoc({ ctx, doc, wanted }: { ctx: Ctx; doc: LibraryDo
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title={kind === "prep" ? "Prep recipe" : "Dish spec"} eyebrow={<><span className="lib-code">{doc.code}</span> · version {v.version}{isCurrent ? "" : " · not in use"}</>} back="/library/recipes" />
       <main className="recipe-page">
-        <Link href="/library/recipes" className="muted rc-back" style={{ fontWeight: 600 }}>← Recipes</Link>
 
         {doc.retiredAt && <div className="alert bad" role="status"><div className="grow"><div className="strong">Retired on {dayMonthYearAt(doc.retiredAt)}</div>{doc.retiredNote && <div style={{ fontSize: 13 }}>{doc.retiredNote}</div>}</div></div>}
         {!doc.retiredAt && !isCurrent && (

@@ -30,22 +30,23 @@ export default async function Records(
   const r = await loadRecords(site.id, from, to);
   const q = (f: string, t: string) => `/manage/records?site=${site.id}&from=${f}&to=${t}`;
   const csv = (kind: string) => `/manage/records/csv?site=${site.id}&from=${from}&to=${to}&kind=${kind}`;
+  const range = `${shortDay(from)} ${from.slice(0, 4)} to ${shortDay(to)} ${to.slice(0, 4)}`;
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Food safety records" eyebrow={`${site.name} · ${range}`} back="/manage" />
       <main className="wide records">
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow">
-            <div className="eyebrow">PHO &amp; CO · food safety records</div>
-            <h1 className="h-display">{site.name}</h1>
-            <div className="strong" style={{ fontSize: 15 }}>{shortDay(from)} {from.slice(0, 4)} to {shortDay(to)} {to.slice(0, 4)}</div>
-          </div>
-          <div className="row wrap no-print" style={{ gap: 8 }}>
-            <PrintButton />
-            <a className="btn ghost small" href={csv("temps")} download>Temperatures CSV</a>
-            <a className="btn ghost small" href={csv("signoffs")} download>Sign-offs CSV</a>
-          </div>
+        {/* The bar doesn't print: the inspector's copy gets its own heading. */}
+        <div className="print-only">
+          <div className="eyebrow">PHO &amp; CO · food safety records</div>
+          <h1 className="h-display">{site.name}</h1>
+          <div className="strong" style={{ fontSize: 15 }}>{range}</div>
+        </div>
+        <div className="row wrap no-print" style={{ gap: 8 }}>
+          <span className="muted lead">The records an Environmental Health Officer asks for. Print them, or download the logs.</span>
+          <PrintButton />
+          <a className="btn ghost small" href={csv("temps")} download>Temperatures CSV</a>
+          <a className="btn ghost small" href={csv("signoffs")} download>Sign-offs CSV</a>
         </div>
 
         <form className="card row wrap no-print" style={{ gap: 10 }} action="/manage/records">

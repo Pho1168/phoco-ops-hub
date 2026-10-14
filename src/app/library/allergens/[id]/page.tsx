@@ -45,16 +45,12 @@ export default async function DishAllergens(props: { params: Promise<{ id: strin
   const kitchen = full && seesRecipes(ctx.person, sites);
   const photo = v.body.photo && !gone.includes(v.body.photo.id) ? v.body.photo : undefined;
 
+  const Bar = full ? TopBar : PhoneTopBar;
   return (
     <>
-      {full ? <TopBar ctx={ctx} /> : <PhoneTopBar ctx={ctx} />}
+      <Bar ctx={ctx} title={v.title} eyebrow={<>{v.body.category || "Dish"} · <span className="lib-code">{doc.code}</span></>} back="/library/allergens" />
       <main>
-        <Link href="/library/allergens" className="muted" style={{ fontWeight: 600 }}>← Allergens</Link>
-        <div className="stack" style={{ gap: 6 }}>
-          <div className="eyebrow">{v.body.category || "Dish"} · <span className="lib-code">{doc.code}</span></div>
-          <h1 className="h-display">{v.title}</h1>
-          {doc.retiredAt && <div className="muted">Retired on {dayMonthYearAt(doc.retiredAt)}: no longer on the menu.</div>}
-        </div>
+        {doc.retiredAt && <div className="muted">Retired on {dayMonthYearAt(doc.retiredAt)}: no longer on the menu.</div>}
 
         {changedAt && (
           <section className={`alert ${asked && !confirmed ? "bad" : ""}`} aria-label="Allergen change" style={{ alignItems: "flex-start" }}>

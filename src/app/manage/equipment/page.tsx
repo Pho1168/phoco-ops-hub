@@ -30,12 +30,10 @@ export default async function ManageEquipment(props: { searchParams: Promise<{ s
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Equipment" eyebrow={`Manager tools · maintenance · ${site.name}`} back="/manage">
+        {items.length > 0 && <Link className="pill-btn top-extra" href={`/manage/equipment/labels?site=${site.id}`}>Print QR labels</Link>}
+      </TopBar>
       <main className="wide">
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">Manager tools · maintenance</div><h1 className="h-display">Equipment</h1></div>
-          {items.length > 0 && <Link className="btn ghost small" href={`/manage/equipment/labels?site=${site.id}`}>Print QR labels</Link>}
-        </div>
         {sites.length > 1 && (
           <nav className="row wrap" style={{ gap: 6 }} aria-label="Site">
             {sites.map((s) => <Link key={s.id} className={`chip ${s.id === site.id ? "done" : ""}`} aria-current={s.id === site.id ? "page" : undefined} href={`/manage/equipment?site=${s.id}`}>{s.name}</Link>)}

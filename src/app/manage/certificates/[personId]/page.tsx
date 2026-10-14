@@ -60,12 +60,8 @@ export default async function PersonCertificates(props: { params: Promise<{ pers
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title={person.name} eyebrow={`Certificates · ${siteNames || "no site"}${person.status !== "active" ? ` · ${person.status}` : ""}`} back="/manage/certificates" />
       <main>
-        <div>
-          <div className="eyebrow"><Link href="/manage/certificates" style={{ color: "inherit" }}>Certificates</Link> · {siteNames || "no site"}{person.status !== "active" ? ` · ${person.status}` : ""}</div>
-          <h1 className="h-display">{person.name}</h1>
-        </div>
 
         {mustHave.length > 0 && (
           <section className="card stack">
