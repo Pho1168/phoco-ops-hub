@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, changedAt, cleanPathway, cleanQuestion, cleanSkill, cleanVideoUrl, gradeQuiz, managesTraining,
+  canConfirmNow, canEditTraining, cleanGuide, guideHasContent, guidePhotoIds, canMarkDone, canTakeBackNow, changedAt, cleanPathway, cleanQuestion, cleanSkill, cleanVideoUrl, gradeQuiz, managesTraining,
   missingStarts, passport, progress, progressText, quizOf, quizSince, quizVersion, REDO_DAYS, shuffled, skillsFor, tally, trainingReminders, trainingSections, trainingToDo,
   type Question, type Skill, type SkillInput, type TrainingData, type TrainingEvent,
 } from "./training";
@@ -357,5 +357,33 @@ describe("training: managers and messages", () => {
     // A manager took back a skill that was only ready: asked to do it again.
     const taken = [ev("quiz", "2026-10-05", { personId: "cook", skillId: "pho", byId: "cook" }), ev("reset", "2026-10-11", { personId: "cook", skillId: "pho", byId: "chef", note: "Practise more" })];
     expect(trainingReminders([cook], SITES, data(taken), "2026-10-12").map((x) => [x.dedupeKey, x.title])).toEqual([["training|cook|pho|again|2026-10-11", "Do it again: pho"]]);
+  });
+});
+
+describe("the guide (training card)", () => {
+  const P = { id: "00000000-0000-4000-8000-0000000000e1", w: 800, h: 600 };
+  it("trims, drops blank rows and keeps photos", () => {
+    const r = cleanGuide({
+      tagline: "  Clean hands · safe food ", why: "Hands carry bacteria.\n\n", when: ["Before food", "", "  After the toilet "],
+      steps: [{ text: " Wet hands ", photo: P }, { text: "", warning: "" }, { text: "Soap", warning: " One press " }],
+      never: ["Rinse without soap"], looks: [], closing: "Clean hands, brighter days",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value).toEqual({
+      tagline: "Clean hands · safe food", why: "Hands carry bacteria.", when: ["Before food", "After the toilet"],
+      steps: [{ text: "Wet hands", photo: P }, { text: "Soap", warning: "One press" }], never: ["Rinse without soap"], looks: [], closing: "Clean hands, brighter days",
+    });
+    expect(guideHasContent(r.value)).toBe(true);
+    expect(guidePhotoIds(r.value)).toEqual([P.id]);
+  });
+  it("accepts an empty guide (no card shown) and refuses bad photos and oversize lists", () => {
+    const e = cleanGuide({});
+    expect(e.ok && !guideHasContent(e.value)).toBe(true);
+    const bad = cleanGuide({ steps: [{ text: "x", photo: { id: "nope", w: 1, h: 1 } }] });
+    expect(bad.ok && bad.value.steps[0].photo).toBeUndefined();
+    expect(cleanGuide({ never: Array.from({ length: 11 }, (_, i) => `n${i}`) }).ok).toBe(false);
+    expect(cleanGuide({ steps: [{ warning: "only a warning" }] }).ok).toBe(false);
+    expect(cleanGuide({ steps: Array.from({ length: 13 }, () => ({ text: "s" })) }).ok).toBe(false);
   });
 });

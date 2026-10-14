@@ -1,6 +1,6 @@
 import { isOps, isOwner, opsSites } from "./access";
 import { addMonths } from "./equipment";
-import { canApprove, cleanText, type Checked, type Cleaned } from "./library";
+import { canApprove, cleanText, type Checked, type Cleaned, type Photo } from "./library";
 import { addDays, dayMonthYear, daysBetween, londonDate, londonToUtc } from "./time";
 import type { Area, Person, Site } from "./types";
 
@@ -57,6 +57,82 @@ export interface Skill {
   linkedAt: Record<string, number>;
   rev: number;
   retiredAt?: number;
+  /** The written guide: the training card staff read (none until the owner writes it). */
+  guide?: Guide;
+}
+
+// ---------- the guide: a training card in the poster style ----------
+
+/**
+ * What a skill teaches, laid out like the Pho & Co posters: why it matters and when it applies, numbered steps with
+ * a picture each, the never-do list, what a manager looks for, and a closing line. Pictures are library photos
+ * (uploaded through /api/media, like SOP steps); a step without one shows a numbered tile.
+ */
+export interface GuideStep { text: string; photo?: Photo; warning?: string }
+export interface Guide {
+  /** The big picture at the top (a poster, say). */
+  hero?: Photo;
+  /** One line under the title, e.g. "Clean hands · safe food · healthy people". */
+  tagline?: string;
+  why?: string;
+  /** When it applies: "Before handling food", "After the toilet"… */
+  when: string[];
+  steps: GuideStep[];
+  never: string[];
+  /** What good looks like: what the manager checks. */
+  looks: string[];
+  /** The sign-off line at the bottom, e.g. "Clean hands, brighter days". */
+  closing?: string;
+}
+export const GUIDE_LIMITS = { tagline: 80, why: 700, list: 10, item: 160, steps: 12, step: 240, warning: 160, closing: 80 } as const;
+export const emptyGuide = (): Guide => ({ when: [], steps: [], never: [], looks: [] });
+export const guideHasContent = (g: Guide | undefined): g is Guide =>
+  !!g && (!!g.why || g.steps.length > 0 || g.when.length > 0 || g.never.length > 0 || g.looks.length > 0 || !!g.hero);
+/** Every photo a guide uses (kept while the skill exists, retired or not). */
+export const guidePhotoIds = (g: Guide | undefined): string[] => (g ? [g.hero?.id, ...g.steps.map((s) => s.photo?.id)].filter((x): x is string => !!x) : []);
+
+const cleanPhoto = (p: unknown): Photo | undefined => {
+  if (!p || typeof p !== "object") return undefined;
+  const { id, w, h } = p as Record<string, unknown>;
+  return typeof id === "string" && UUID.test(id) && Number.isInteger(w) && Number.isInteger(h) && (w as number) > 0 && (h as number) > 0 ? { id, w: w as number, h: h as number } : undefined;
+};
+const cleanList = (xs: unknown, what: string): Cleaned<string[]> => {
+  if (!Array.isArray(xs)) return { ok: false, error: `${what} couldn't be read` };
+  const out = xs.map((x) => oneLine(String(x ?? ""))).filter(Boolean);
+  if (out.length > GUIDE_LIMITS.list) return { ok: false, error: `${what}: at most ${GUIDE_LIMITS.list} lines` };
+  const long = out.find((x) => x.length > GUIDE_LIMITS.item);
+  if (long) return { ok: false, error: `${what}: keep each line under ${GUIDE_LIMITS.item} characters` };
+  return { ok: true, value: out };
+};
+
+/** The guide as typed: trimmed, blank rows dropped, photos checked, limits applied. An empty guide is fine (the card isn't shown). */
+export function cleanGuide(input: unknown): Cleaned<Guide> {
+  const g = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const tagline = oneLine(typeof g.tagline === "string" ? g.tagline : ""), closing = oneLine(typeof g.closing === "string" ? g.closing : "");
+  const why = cleanText(typeof g.why === "string" ? g.why : "");
+  if (tagline.length > GUIDE_LIMITS.tagline) return { ok: false, error: `Keep the tagline under ${GUIDE_LIMITS.tagline} characters` };
+  if (closing.length > GUIDE_LIMITS.closing) return { ok: false, error: `Keep the closing line under ${GUIDE_LIMITS.closing} characters` };
+  if (why.length > GUIDE_LIMITS.why) return { ok: false, error: `Keep "why it matters" under ${GUIDE_LIMITS.why} characters` };
+  const when = cleanList(g.when ?? [], "When it applies"), never = cleanList(g.never ?? [], "Never"), looks = cleanList(g.looks ?? [], "What good looks like");
+  if (!when.ok) return when;
+  if (!never.ok) return never;
+  if (!looks.ok) return looks;
+  const rawSteps = g.steps ?? [];
+  if (!Array.isArray(rawSteps)) return { ok: false, error: "The steps couldn't be read" };
+  const steps: GuideStep[] = [];
+  for (const [i, raw] of rawSteps.entries()) {
+    const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const text = cleanText(typeof r.text === "string" ? r.text : ""), warning = oneLine(typeof r.warning === "string" ? r.warning : "");
+    const photo = cleanPhoto(r.photo);
+    if (!text && !warning && !photo) continue;
+    if (!text) return { ok: false, error: `Step ${i + 1} needs its words` };
+    if (text.length > GUIDE_LIMITS.step) return { ok: false, error: `Step ${i + 1}: keep it under ${GUIDE_LIMITS.step} characters` };
+    if (warning.length > GUIDE_LIMITS.warning) return { ok: false, error: `Step ${i + 1}: keep the warning under ${GUIDE_LIMITS.warning} characters` };
+    steps.push({ text, ...(photo ? { photo } : {}), ...(warning ? { warning } : {}) });
+  }
+  if (steps.length > GUIDE_LIMITS.steps) return { ok: false, error: `At most ${GUIDE_LIMITS.steps} steps: split the skill in two` };
+  const hero = cleanPhoto(g.hero);
+  return { ok: true, value: { ...(hero ? { hero } : {}), ...(tagline ? { tagline } : {}), ...(why ? { why } : {}), when: when.value, steps, never: never.value, looks: looks.value, ...(closing ? { closing } : {}) } };
 }
 
 export interface Question {

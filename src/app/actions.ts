@@ -29,7 +29,7 @@ import { canCoverNow, coverCandidates } from "@/lib/cover-service";
 import { canDiscard, canDraft, canEditDraft, canReinstate, canRetire, canReview, canWithdraw as canTakeBack, changeFor, CHANGE_TEXT, cleanSop, codePrefix, docReach,
   dropPhotos, isKind, photoIds, readsAny, readyForReview, validReviewBy, type LibraryBody, type LibraryKind, type SopBody } from "@/lib/domain/library";
 import { alertedAt, allergenAlert, cleanRecipe, recipeReady, type DishBody, type PrepBody } from "@/lib/domain/recipes";
-import { canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, cleanPathway, cleanQuestion, cleanSkill, gradeQuiz, managesTraining, passport, PATHWAY_TEXT,
+import { canConfirmNow, canEditTraining, canMarkDone, canTakeBackNow, cleanGuide, cleanPathway, cleanQuestion, cleanSkill, gradeQuiz, guidePhotoIds, managesTraining, passport, PATHWAY_TEXT,
   quizOf, quizVersion, TRAINING_LIMITS, type PassportRow } from "@/lib/domain/training";
 import { trainingData } from "@/lib/training-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
@@ -1947,6 +1947,30 @@ export async function saveSkill(skillId: string, rev: number, input: unknown): P
   await db.audit({ actorId: who.ctx.person.id, action: "training.skill", detail: `Changed the skill ${c.value.title}` });
   revalidateTraining("/manage/training/skills", `/manage/training/skills/${id.data}`, `/library/training/${id.data}`);
   return { ok: true, rev: next };
+}
+
+/** The skill's written guide (the training card): saved as a whole. */
+export async function saveSkillGuide(skillId: string, input: unknown): Promise<ActionResult> {
+  const who = await trainingEditor();
+  if (!who.ok) return who;
+  const id = UuidZ.safeParse(skillId);
+  if (!id.success) return { ok: false, error: "That skill isn't there any more" };
+  const c = cleanGuide(input);
+  if (!c.ok) return c;
+  const db = store();
+  const skill = await db.trainingSkill(id.data);
+  if (!skill) return { ok: false, error: "That skill isn't there any more" };
+  if (skill.retiredAt) return { ok: false, error: "This skill is retired: bring it back before changing it" };
+  // Every picture must be a photo in the library (uploaded by a writer), not erased.
+  const photos = guidePhotoIds(c.value);
+  if (photos.length) {
+    const status = await db.mediaStatus(photos);
+    if (photos.some((p) => !status.has(p))) return { ok: false, error: "One of the pictures didn't upload. Add it again" };
+  }
+  if (!(await db.saveTrainingGuide(skill.id, c.value, who.ctx.person.id))) return { ok: false, error: "That skill isn't there any more" };
+  await db.audit({ actorId: who.ctx.person.id, action: "training.guide", detail: `Wrote the guide for ${skill.title}: ${c.value.steps.length} steps, ${photos.length} pictures` });
+  revalidateTraining("/manage/training/skills", `/manage/training/skills/${id.data}`, `/library/training/${id.data}`);
+  return { ok: true };
 }
 
 export async function moveSkill(skillId: string, dir: number): Promise<ActionResult> {

@@ -20,7 +20,7 @@ import { ALLERGEN_KEYS } from "@/lib/domain/recipes";
 import { shiftEnd, shiftStart } from "@/lib/domain/reminders";
 import { weekStartOf, type StoredShift, type WeekStatus } from "@/lib/domain/rota";
 import type { Device } from "@/lib/domain/devices";
-import { bySkillOrder, trainingSections, type Pathway, type Question, type Skill, type TrainingEvent, type TrainingStart } from "@/lib/domain/training";
+import { bySkillOrder, guidePhotoIds, trainingSections, type Pathway, type Question, type Skill, type TrainingEvent, type TrainingStart } from "@/lib/domain/training";
 
 /** Demo-only people. Real staff come from the database, never from the code. */
 export const DEMO_PINS = { owner: "4826", staff: "1357" } as const;
@@ -203,7 +203,19 @@ function demoTraining(): Pick<State, "trainingSkills" | "trainingQuestions" | "t
     trainingSkills: [
       sk(1, { section: "FOH", group: "Operations", position: 1, title: "The 14 allergens (demo)", induction: true, refresherMonths: 12,
         about: "Which allergens the law names, how to use the allergen matrix, and what to do when a guest tells you about an allergy.", links: [DISH] }),
-      sk(2, { section: "FOH", group: "Hygiene & Cleaning", position: 2, title: "Hand washing (demo)", induction: true, links: [SOP] }),
+      sk(2, { section: "FOH", group: "Hygiene & Cleaning", position: 2, title: "Hand washing (demo)", induction: true, links: [SOP], guide: {
+        tagline: "Clean hands · safe food · healthy people",
+        why: "Hands carry bacteria from toilets, phones, money and raw food straight onto what a guest eats. Clean hands are the cheapest control we have, and the first thing an inspector watches for.",
+        when: ["Before handling food", "After handling raw meat, fish or eggs", "After using the toilet", "After touching your face, hair or phone", "After taking out the bins or cleaning", "After eating, drinking or smoking"],
+        steps: [
+          { text: "Wet hands with warm running water at the hand basin." }, { text: "Apply soap from the dispenser. One press is enough." },
+          { text: "Rub palms, backs, between fingers, thumbs and fingertips for at least 20 seconds." }, { text: "Rinse well under running water." },
+          { text: "Dry with a paper towel from the dispenser.", warning: "Damp hands spread bacteria: dry them properly." }, { text: "Turn the tap off with the towel, then drop it in the pedal bin." },
+        ],
+        never: ["Do not use the hand-wash sink for food, utensils or equipment", "Do not dry hands on your apron or a tea towel", "Do not use the sink if there is no soap or paper towels: report it"],
+        looks: ["Nails short, clean, no varnish or false nails", "Cuts covered with a blue plaster", "Basin stocked: soap, paper towels, hot water"],
+        closing: "Clean hands, brighter days",
+      } }),
       sk(3, { section: "FOH", group: "Service", position: 3, title: "Taking an order on the handheld (demo)", handsOn: true }),
       sk(4, { section: "BOH", group: "Operations", position: 1, title: "Temperature checks (demo)", induction: true, refresherMonths: 12,
         about: "Fridge, freezer and cooking temperatures: when to check, what's in range, and what to do if it isn't." }),
@@ -428,7 +440,7 @@ const skillView = (k: State["trainingSkills"][number]): Skill => ({
   id: k.id, section: k.section, group: k.group, position: k.position, title: k.title, about: k.about, handsOn: k.handsOn, induction: k.induction,
   links: [...k.links], videoUrl: k.videoUrl, refresherMonths: k.refresherMonths, passMark: k.passMark, createdAt: k.createdAt, updatedAt: k.updatedAt,
   addedAt: k.addedAt, inductionFrom: k.inductionFrom, refresherFrom: k.refresherFrom, refresherWas: k.refresherWas, linkedAt: { ...k.linkedAt },
-  rev: k.rev, retiredAt: k.retiredAt,
+  rev: k.rev, retiredAt: k.retiredAt, guide: k.guide ? structuredClone(k.guide) : undefined,
 });
 const lastPosition = (section: Skill["section"], liveOnly = false) =>
   Math.max(0, ...S().trainingSkills.filter((k) => k.section === section && (!liveOnly || !k.retiredAt)).map((k) => k.position));
@@ -1013,7 +1025,7 @@ export const demoStore: Store = {
     return true;
   },
   async deleteUnusedMedia(before) {
-    const used = JSON.stringify(S().libVersions.filter((v) => v.status !== "discarded").map((v) => v.body));
+    const used = JSON.stringify(S().libVersions.filter((v) => v.status !== "discarded").map((v) => v.body)) + S().trainingSkills.flatMap((k) => guidePhotoIds(k.guide)).join(",");
     let n = 0;
     for (const [id, m] of Array.from(S().media.entries())) if (m.createdAt < before && !used.includes(id)) { S().media.delete(id); n++; }
     return n;
@@ -1026,6 +1038,13 @@ export const demoStore: Store = {
     S().trainingSkills.push({ ...structuredClone(s), id, position: lastPosition(s.section) + 1, createdAt: now, updatedAt: now, addedAt: now,
       linkedAt: Object.fromEntries(s.links.map((l) => [l, now])), rev: 1, createdBy: by });
     return id;
+  },
+  async saveTrainingGuide(id, guide, by) {
+    void by;
+    const k = S().trainingSkills.find((x) => x.id === id);
+    if (!k) return false;
+    k.guide = guide; k.updatedAt = Date.now();
+    return true;
   },
   async saveTrainingSkill(id, rev, s) {
     const k = S().trainingSkills.find((x) => x.id === id);
