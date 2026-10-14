@@ -14,7 +14,7 @@ export function RotaCard({ rows, canConnect }: { rows: RotaRow[]; canConnect: bo
   const [err, setErr] = useState("");
 
   return (
-    <section className="card stack" aria-label="Rota">
+    <section className="card stack" aria-label="Rota" id="rota-sheets">
       <h2 className="h-sec">Rota sheets</h2>
       <p className="muted" style={{ margin: 0 }}>Each site&apos;s Google Sheet sends its rota here every hour. Only Published weeks are shown to staff or send reminders.{canConnect ? "" : " The owner connects the sheets."}</p>
       <ul className="accounts">

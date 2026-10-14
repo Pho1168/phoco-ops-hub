@@ -26,13 +26,17 @@ export function LibraryList({ items, sections }: { items: LibItem[]; sections: s
 
   return (
     <section className="stack" aria-label="SOPs">
-      <input className="txt" style={{ width: "100%", maxWidth: "none" }} type="search" placeholder="Search SOPs" aria-label="Search SOPs" value={q} onChange={(e) => setQ(e.target.value)} />
-      {filters.length > 2 && (
-        <div className="seg" role="group" aria-label="Section">
-          {filters.map(([id, label]) => <button key={id} type="button" aria-pressed={sec === id} onClick={() => setSec(id)}>{label}</button>)}
-        </div>
-      )}
+      <div className="row wrap lib-tools">
+        <input className="txt grow" style={{ maxWidth: "none", minWidth: 200 }} type="search" placeholder="Search SOPs, e.g. fryer oil" aria-label="Search SOPs" value={q} onChange={(e) => setQ(e.target.value)} />
+        {filters.length > 2 && (
+          <div className="seg small" role="group" aria-label="Section">
+            {filters.map(([id, label]) => <button key={id} type="button" aria-pressed={sec === id} onClick={() => setSec(id)}>{label}</button>)}
+          </div>
+        )}
+      </div>
+      <h2 className="grp-h">Published <span>{shown.length === items.length ? `${items.length}` : `${shown.length} of ${items.length}`}</span></h2>
       {shown.length === 0 && <div className="card muted">{items.length ? "No SOPs match." : "No SOPs published yet."}</div>}
+      <div className="lib-grid">
       {shown.map((i) => (
         <Link key={i.id} href={`/library/${i.id}`} className="list-btn lib-item">
           <span className="grow">
@@ -47,6 +51,7 @@ export function LibraryList({ items, sections }: { items: LibItem[]; sections: s
           </span>
         </Link>
       ))}
+      </div>
     </section>
   );
 }

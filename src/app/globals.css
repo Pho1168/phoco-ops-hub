@@ -289,16 +289,16 @@ main.wide { max-width: 1240px; }
 /* Team rota */
 .rota-grid-wrap { overflow-x: auto; background: var(--surface); border-radius: 16px; }
 .rota-grid { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 760px; table-layout: fixed; }
-.rota-grid col.name { width: 150px; }
+.rota-grid col.name { width: 168px; }
 main.rota-page { max-width: 1240px; }
-.rota-grid th, .rota-grid td { padding: 6px 5px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.rota-grid th, .rota-grid td { padding: 6px 3px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .rota-grid thead th { font-weight: 600; font-size: 13px; }
 .rota-grid tbody th { white-space: nowrap; }
-.rota-grid .today { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.rota-grid tr.me th, .rota-grid tr.me td { box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+.rota-grid .today { background: color-mix(in srgb, var(--teal-tint) 45%, transparent); }
+.rota-grid tr.me th, .rota-grid tr.me td { box-shadow: inset 0 2px 0 var(--teal), inset 0 -2px 0 var(--teal); }
 .rota-grid tfoot th, .rota-grid tfoot td { color: var(--ink-2); font-size: 13px; border-bottom: 0; }
 .num-cell { text-align: right !important; font-variant-numeric: tabular-nums; }
-.slot { border-radius: 8px; padding: 4px 6px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.slot { border-radius: 8px; padding: 5px 4px; font-weight: 600; font-size: 12px; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
 .slot-hrs { display: block; font-weight: 500; font-size: 12px; opacity: .85; }
 .slot + .slot { margin-top: 4px; }
 .slot.FOH { background: var(--accent-soft); color: var(--accent-soft-ink); }
@@ -307,13 +307,15 @@ main.rota-page { max-width: 1240px; }
 .sec.FOH { background: var(--accent-soft); color: var(--accent-soft-ink); }
 .sec.BOH, .sec.PROD { background: var(--teal-tint); color: var(--teal-ink); }
 .rota-days { display: none; flex-direction: column; gap: 10px; }
-.rota-day.today { outline: 2px solid var(--accent); }
+.rota-day.today { outline: 2px solid var(--teal); }
 .rota-line.me .grow { font-weight: 700; }
 @media (max-width: 719px) { .rota-grid-wrap { display: none; } .rota-days { display: flex; } }
 
 /* Manager tools */
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
-.tile { display: flex; align-items: center; gap: 12px; background: var(--surface); border-radius: 16px; padding: 14px 16px; text-decoration: none; color: inherit; min-height: 76px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.tile { display: flex; flex-direction: column; gap: 10px; background: var(--surface); border-radius: 18px; padding: 16px; text-decoration: none; color: inherit; min-height: 150px; }
+.tile-title { display: block; font-family: var(--display); font-weight: 700; font-size: 22px; line-height: 1; letter-spacing: .3px; color: var(--brand); text-transform: uppercase; margin-bottom: 4px; }
+.needs-you { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .tile:hover { outline: 2px solid var(--teal-tint); }
 .tile-ico { width: 42px; height: 42px; border-radius: 12px; background: var(--teal-tint); color: var(--teal-ink); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .tile .muted { display: block; }
@@ -769,6 +771,7 @@ main.recipe-page > .rc-back { max-width: none; }
 .cols { display: grid; gap: 16px; align-items: start; }
 @media (min-width: 900px) {
   .cols.two { grid-template-columns: minmax(0, 1fr) 340px; }
+  .cols.two.narrow { grid-template-columns: minmax(0, 1fr) 270px; }
   .cols.three { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) 300px; }
   .cols.areas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cols.areas.one { grid-template-columns: minmax(0, 1fr); }
@@ -803,3 +806,7 @@ main.recipe-page > .rc-back { max-width: none; }
 .hist > div:first-child { border-top: 0; padding-top: 0; }
 .cta-dark { display: flex; align-items: center; gap: 12px; background: var(--brand); color: var(--brand-ink); border-radius: 16px; padding: 14px 16px; text-decoration: none; }
 .cta-dark .ico { color: var(--amber); flex-shrink: 0; }
+.lib-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 1100px) { .lib-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lib-grid .list-btn { min-height: 60px; padding: 10px 14px; align-items: center; }
+.lib-tools .txt { height: 44px; }

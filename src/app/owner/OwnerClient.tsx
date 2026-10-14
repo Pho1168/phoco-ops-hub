@@ -22,7 +22,7 @@ export interface PersonRow { id: string; name: string; code: string; status: str
 type Modal = { type: "close"; site: SiteSummary } | { type: "resolve"; id: string } | null;
 
 /** The overview. `lead`: an owner (every site, closing and reopening) or an operations manager (the sites they run). */
-export function OwnerClient({ lead, rightNow, tools, reminders, sites, people, log, currentSite, devices, rota }: { lead: "owner" | "ops"; rightNow: React.ReactNode; tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
+export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, people, log, currentSite, devices, rota }: { lead: "owner" | "ops"; rightNow: React.ReactNode; needs: React.ReactNode; tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [modal, setModal] = useState<Modal>(null);
@@ -39,16 +39,15 @@ export function OwnerClient({ lead, rightNow, tools, reminders, sites, people, l
   });
 
   return (
-    <main>
-      <div><div className="eyebrow">{lead === "owner" ? "All sites · owner control" : `${sites.map((s) => s.name).join(" · ")} · operations`}</div><h1 className="h-display">Right now</h1></div>
+    <main className="wide">
       {msg && <div className="alert good" role="status"><Icon name="check" /><div className="grow">{msg}</div></div>}
 
       {rightNow}
 
-      {reminders}
-
-      {tools}
-
+      <div className="cols two">
+      <div className="stack" style={{ gap: 16 }}>
+      <section className="stack" aria-label="Sites" style={{ gap: 8 }}>
+      <h2 className="grp-h">Sites <span>{sites.filter((s) => !s.closed).length} open</span></h2>
       <div className="grid2">
         {sites.map((s) => (
           <section key={s.id} className="card stack" aria-label={s.name}>
@@ -79,8 +78,16 @@ export function OwnerClient({ lead, rightNow, tools, reminders, sites, people, l
           </section>
         ))}
       </div>
+      </section>
 
-      <section className="card stack" aria-label="Accounts">
+      <section className="stack panel nude" aria-label="Needs you" style={{ gap: 8 }}>
+        <h2 className="grp-h">Needs you <span>decisions and what&apos;s waiting at your sites</span></h2>
+        {needs}
+      </section>
+
+      {tools}
+
+      <section className="card stack" aria-label="Accounts" id="accounts">
         <div className="row"><h2 className="h-sec grow">Staff accounts</h2><Link className="btn accent small" href="/staff/new">Add person</Link></div>
         <ul className="accounts">
           {people.map((p) => (
@@ -112,13 +119,33 @@ export function OwnerClient({ lead, rightNow, tools, reminders, sites, people, l
 
       {devices}
 
-      <section className="card stack" aria-label="Activity">
+      <section className="card stack" aria-label="Activity" id="activity">
         <h2 className="h-sec">Activity</h2>
         <div className="log">
           {log.length === 0 && <div className="muted">Nothing yet today.</div>}
           {log.map((x, i) => <div key={i}><time>{x.at}</time><span><strong>{x.site}</strong> {x.who && <>{x.who} · </>}{x.detail}</span></div>)}
         </div>
       </section>
+      </div>
+
+      <aside className="aside panel">
+        {reminders}
+        <Link href="/manage/report" className="card stack" style={{ gap: 6, textDecoration: "none" }}>
+          <div className="row"><span className="h-sec grow" style={{ fontSize: 17 }}>Weekly report</span><Icon name="report" /></div>
+          <div className="muted">Checks, temperatures, handovers and hours per site. Monday&apos;s message goes to you and the managers at 06:00.</div>
+        </Link>
+        <div className="card stack" style={{ gap: 8 }}>
+          <div className="eyebrow" style={{ fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, fontSize: 12 }}>{lead === "owner" ? "Owner only" : "On this screen"}</div>
+          <div className="row wrap" style={{ gap: 6 }}>
+            <a className="chip" href="#accounts">People &amp; access</a>
+            <a className="chip" href="#rota-sheets">Rota sheets</a>
+            <a className="chip" href="#tablets">Site tablets</a>
+            <a className="chip" href="#activity">Activity log</a>
+            {lead === "owner" && <Link className="chip" href="/manage/certificates">Right to work</Link>}
+          </div>
+        </div>
+      </aside>
+      </div>
 
       {modal?.type === "close" && <CloseSiteModal site={modal.site} err={err} pending={pending} onCancel={() => setModal(null)}
         onConfirm={(name, reason) => run(() => closeSite(modal.site.id, name, reason), `${modal.site.name} closed. Staff there are logged out and frozen`)} />}

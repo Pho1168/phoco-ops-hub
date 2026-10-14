@@ -15,7 +15,7 @@ export function DevicesCard({ devices, sites, demo }: { devices: DeviceRow[]; si
   const [err, setErr] = useState("");
 
   return (
-    <section className="card stack" aria-label="Devices">
+    <section className="card stack" aria-label="Devices" id="tablets">
       <h2 className="h-sec">Site tablets</h2>
       <p className="muted" style={{ margin: 0 }}>Staff sign in by name on these. Anywhere else shows no names: people sign in with their staff ID, owners and operations managers to the full app, everyone else to My shifts.</p>
       {demo && <div className="muted">Demo mode skips the device check, so every browser acts like a tablet.</div>}
