@@ -56,17 +56,13 @@ export default async function SopPage(props: { params: Promise<{ id: string }>; 
   const review = writer && isCurrent ? reviewState(v.reviewBy, today) : undefined;
   // Retiring or bringing back: approvers for every site it covers.
   const retiring = full && (doc.retiredAt ? canReinstate : canRetire)(ctx.person, doc, docReach(doc, sites)).ok;
+  const Bar = full ? TopBar : PhoneTopBar;
 
   return (
     <>
-      {full ? <TopBar ctx={ctx} /> : <PhoneTopBar ctx={ctx} />}
+      <Bar ctx={ctx} title={v.title} eyebrow={<><span className="lib-code">{doc.code}</span> · version {v.version}{v.change && v.change !== "new" ? ` · ${CHANGE_TEXT[v.change]}` : ""}</>} back="/library" />
       <main>
-        <Link href="/library" className="muted" style={{ fontWeight: 600 }}>← Library</Link>
-        <div className="stack" style={{ gap: 6 }}>
-          <div className="eyebrow"><span className="lib-code">{doc.code}</span> · version {v.version}{v.change && v.change !== "new" ? ` · ${CHANGE_TEXT[v.change]}` : ""}</div>
-          <h1 className="h-display">{v.title}</h1>
-          <div className="muted">For: {whoFor(v.body.sections)} · approved by {v.approvedByName} on {dayMonthYearAt(v.publishedAt!)}{writer && v.reviewBy ? ` · review by ${dayMonthYear(v.reviewBy)}` : ""}</div>
-        </div>
+        <div className="muted">For: {whoFor(v.body.sections)} · approved by {v.approvedByName} on {dayMonthYearAt(v.publishedAt!)}{writer && v.reviewBy ? ` · review by ${dayMonthYear(v.reviewBy)}` : ""}</div>
 
         {doc.retiredAt && <div className="alert bad" role="status"><div className="grow"><div className="strong">Retired on {dayMonthYearAt(doc.retiredAt)}</div>{doc.retiredNote && <div style={{ fontSize: 13 }}>{doc.retiredNote}</div>}</div></div>}
         {!doc.retiredAt && !isCurrent && (

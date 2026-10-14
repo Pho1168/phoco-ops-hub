@@ -48,9 +48,8 @@ export default async function Certificates(props: { searchParams: Promise<{ site
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Certificates" eyebrow={`Manager tools · ${site.name}`} back="/manage" />
       <main className="wide">
-        <div><div className="eyebrow">Manager tools · staff training</div><h1 className="h-display">Certificates</h1></div>
 
         {sites.length > 1 && (
           <nav className="row wrap" style={{ gap: 6 }} aria-label="Site">

@@ -57,13 +57,11 @@ export default async function Recipes() {
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Recipes" eyebrow="How we make it · prep recipes and dishes">
+        {writer && <Link className="pill-btn top-extra" href="/library/new?kind=prep" style={{ background: "var(--amber)", color: "var(--amber-ink)" }}>New prep recipe</Link>}
+        {writer && <Link className="pill-btn top-extra" href="/library/new?kind=dish" style={{ background: "var(--amber)", color: "var(--amber-ink)" }}>New dish</Link>}
+      </TopBar>
       <main>
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">How we make it · prep recipes and dishes</div><h1 className="h-display">Recipes</h1></div>
-          {writer && <Link className="btn accent small" href="/library/new?kind=prep">New prep recipe</Link>}
-          {writer && <Link className="btn accent small" href="/library/new?kind=dish">New dish</Link>}
-        </div>
         <LibraryTabs current="recipes" recipes />
 
         {waiting.length > 0 && (

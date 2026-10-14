@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { canDraft } from "@/lib/domain/library";
@@ -27,10 +26,8 @@ export default async function NewLibraryItem(props: { searchParams: Promise<{ ki
       : { sections: ["BOH"], category: "", components: [], steps: [], allergens: {}, modifications: "", dietary: [] };
     return (
       <>
-        <TopBar ctx={ctx} />
+        <TopBar ctx={ctx} title={kind === "prep" ? "New prep recipe" : "New dish"} eyebrow="Recipes · a draft until it's approved" back="/library/recipes" />
         <main>
-          <Link href="/library/recipes" className="muted" style={{ fontWeight: 600 }}>← Recipes</Link>
-          <div><div className="eyebrow">Recipes · new {kind === "prep" ? "prep recipe" : "dish"}</div><h1 className="h-display">{kind === "prep" ? "New prep recipe" : "New dish"}</h1></div>
           <div className="muted">{kind === "prep"
             ? "A batch the kitchen or Wembley makes: what one batch makes, the ingredients, the method, storage and shelf life, and its allergens."
             : "How a menu item is built, per portion, and its allergens for front of house."} When it&apos;s ready, send it for approval: the owner or an operations manager publishes it.</div>
@@ -42,10 +39,8 @@ export default async function NewLibraryItem(props: { searchParams: Promise<{ ki
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="New SOP" eyebrow="Library · a draft until it's approved" back="/library" />
       <main>
-        <Link href="/library" className="muted" style={{ fontWeight: 600 }}>← Library</Link>
-        <div><div className="eyebrow">Library · new SOP</div><h1 className="h-display">New SOP</h1></div>
         <div className="muted">Write it as a draft and add photos where they help. When it&apos;s ready, send it for approval: the owner or an operations manager publishes it, and everyone it&apos;s for is asked to read it.</div>
         <SopEditor mode="new" personId={ctx.person.id} initial={{ title: "", body: { sections: [], purpose: "", steps: [] } }} />
       </main>

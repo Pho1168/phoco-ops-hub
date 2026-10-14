@@ -29,15 +29,14 @@ export default async function MyTraining() {
   const manager = full && managedSites(ctx.person).length > 0;
   const sections = Array.from(new Set(rows.map((r) => r.skill.section)));
 
+  const Bar = full ? TopBar : PhoneTopBar;
   return (
     <>
-      {full ? <TopBar ctx={ctx} /> : <PhoneTopBar ctx={ctx} />}
+      <Bar ctx={ctx} title="Training" eyebrow="Your skills passport" back={full ? undefined : "/me"}>
+        {manager && <Link className="pill-btn top-extra" href="/manage/training">Your team</Link>}
+        {full && canEditTraining(ctx.person) && <Link className="pill-btn top-extra" href="/manage/training/skills">Skills and quizzes</Link>}
+      </Bar>
       <main>
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">Your skills passport</div><h1 className="h-display">Training</h1></div>
-          {manager && <Link className="btn ghost small" href="/manage/training">Your team</Link>}
-          {full && canEditTraining(ctx.person) && <Link className="btn ghost small" href="/manage/training/skills">Skills and quizzes</Link>}
-        </div>
         <LibraryTabs current="training" recipes={full && seesRecipes(ctx.person, sites)} />
 
         {rows.length === 0 ? (

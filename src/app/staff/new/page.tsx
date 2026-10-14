@@ -12,9 +12,8 @@ export default async function NewPerson() {
   const people = await store().people();
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Add a person" eyebrow={`${ctx.isOwner ? "Owner" : "Operations"} · staff`} back="/owner#accounts" />
       <main>
-        <div><div className="eyebrow">{ctx.isOwner ? "Owner" : "Operations"} · staff</div><h1 className="h-display">Add a person</h1></div>
         <StaffForm sites={await siteOptions(ctx.leads)} roles={givableRoles(ctx.person)} suggestedCode={nextStaffCode(people)} />
       </main>
       <BottomNav ctx={ctx} current="owner" />

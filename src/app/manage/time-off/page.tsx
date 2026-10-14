@@ -38,9 +38,8 @@ export default async function TimeOffPage() {
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Time off" eyebrow="Manager tools" back="/manage" />
       <main>
-        <div><div className="eyebrow">Manager tools</div><h1 className="h-display">Time off</h1></div>
 
         <section className="stack">
           <h2 className="h-sec">To decide ({toDecide})</h2>

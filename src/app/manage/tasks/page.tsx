@@ -67,9 +67,8 @@ export default async function TaskCentre(props: { searchParams: Promise<{ site?:
 
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="Task centre" eyebrow={`Manager tools · ${multi ? "all your sites" : sites[0]?.name}`} back="/manage" />
       <main className="wide">
-        <div><div className="eyebrow">Manager tools · {multi ? "all your sites" : sites[0]?.name}</div><h1 className="h-display">Task centre</h1></div>
         {all.length > 1 && (
           <nav className="row wrap" style={{ gap: 6 }} aria-label="Site">
             <Link className={`chip ${!picked.length ? "done" : ""}`} href="/manage/tasks">All sites</Link>
@@ -94,7 +93,7 @@ export default async function TaskCentre(props: { searchParams: Promise<{ site?:
           return (
             <section key={p.id} className="stack" aria-label={`${p.code} ${p.label}`}>
               <h2 className="h-sec">{p.code} · {p.label} <span className="muted" style={{ fontSize: 14 }}>({group.length})</span></h2>
-              {group.map((it) => <Item key={it.key} it={it} />)}
+              {group.map((it) => <Item key={`${it.siteId}:${it.key}`} it={it} />)}
             </section>
           );
         })}

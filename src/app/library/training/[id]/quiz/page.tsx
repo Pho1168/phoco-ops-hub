@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { PATHWAY_TEXT, quizOf, quizVersion, shuffled } from "@/lib/domain/training";
@@ -29,16 +28,12 @@ export default async function QuizPage(props: { params: Promise<{ id: string }> 
   const version = quizVersion(quiz);
   const full = ctx.scope === "full";
 
+  const Bar = full ? TopBar : PhoneTopBar;
   return (
     <>
-      {full ? <TopBar ctx={ctx} /> : <PhoneTopBar ctx={ctx} />}
+      <Bar ctx={ctx} title={skill.title} eyebrow={`${PATHWAY_TEXT[skill.section]} · quiz`} back={`/library/training/${skill.id}`} />
       <main>
-        <Link href={`/library/training/${skill.id}`} className="muted" style={{ fontWeight: 600 }}>← {skill.title}</Link>
-        <div className="stack" style={{ gap: 6 }}>
-          <div className="eyebrow">{PATHWAY_TEXT[skill.section]} · quiz</div>
-          <h1 className="h-display">{skill.title}</h1>
-          <div className="muted">{quiz.length} question{quiz.length === 1 ? "" : "s"}. You need {skill.passMark}% to pass, and you can try again as often as you like.</div>
-        </div>
+        <div className="muted">{quiz.length} question{quiz.length === 1 ? "" : "s"}. You need {skill.passMark}% to pass, and you can try again as often as you like.</div>
         {/* Keyed by the quiz's version: saving an attempt redraws the page, which mustn't wipe the result; a changed quiz starts afresh. */}
         <Quiz key={version} skillId={skill.id} version={version} questions={shown} backHref={`/library/training/${skill.id}`} />
       </main>

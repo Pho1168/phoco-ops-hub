@@ -21,12 +21,10 @@ export default async function EditPerson(
   if (!canManageAccount(ctx.person, p).ok) redirect("/owner");
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title={p.name} eyebrow={`${ctx.isOwner ? "Owner" : "Operations"} · staff · ${p.staffCode}`} back="/owner#accounts">
+        <Link className="pill-btn top-extra" href={`/manage/certificates/${p.id}`}>Certificates</Link>
+      </TopBar>
       <main>
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">{ctx.isOwner ? "Owner" : "Operations"} · staff · {p.staffCode}</div><h1 className="h-display">{p.name}</h1></div>
-          <Link className="btn ghost small" href={`/manage/certificates/${p.id}`}>Certificates</Link>
-        </div>
         {searchParams.added && (
           <div className="alert good" role="status"><div><div className="strong">{p.name} added</div>
             <div style={{ fontSize: 13 }}>Give them the temporary PIN in person. They&apos;ll choose their own when they first sign in.</div></div></div>

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { canEditTraining, PATHWAYS } from "@/lib/domain/training";
@@ -20,10 +19,8 @@ export default async function NewSkill(props: { searchParams: Promise<{ section?
   const [skills, options] = await Promise.all([db.trainingSkills(), linkOptions(db)]);
   return (
     <>
-      <TopBar ctx={ctx} />
+      <TopBar ctx={ctx} title="New skill" eyebrow="Training · skills and quizzes" back={`/manage/training/skills?section=${section}`} />
       <main>
-        <Link href={`/manage/training/skills?section=${section}`} className="muted" style={{ fontWeight: 600 }}>← Skills and quizzes</Link>
-        <div><div className="eyebrow">Training</div><h1 className="h-display">New skill</h1></div>
         <SkillForm section={section} groups={groupsBySection(skills)} options={options} />
       </main>
       <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />

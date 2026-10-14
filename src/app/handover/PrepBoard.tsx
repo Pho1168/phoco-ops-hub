@@ -100,8 +100,8 @@ export function PrepBoard(p: Props) {
     <div ref={topRef} className="stack" style={{ gap: 12, scrollMarginTop: 70 }}>
       <div className="row wrap" style={{ alignItems: "flex-end" }}>
         <div className="grow">
-          <div className="eyebrow"><Link href="/handover">Handover</Link> · {p.siteName} · prep</div>
-          <h1 className="h-display">{mode === "pick" ? "What's needed?" : "Check and send"}</h1>
+          <div className="eyebrow">{mode === "pick" ? "Step 1 of 2" : "Step 2 of 2"} · {p.siteName}</div>
+          <h2 className="h-sec" style={{ margin: 0, fontSize: 24 }}>{mode === "pick" ? "What's needed?" : "Check and send"}</h2>
         </div>
         {p.sites.length > 1 && (
           <label className="row" style={{ gap: 8 }}><span className="muted">Site</span>

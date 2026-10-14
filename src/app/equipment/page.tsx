@@ -23,15 +23,14 @@ export default async function EquipmentList(props: { searchParams: Promise<{ sit
   const rows = items.map((eq) => ({ eq, st: itemStatus(events.filter((e) => e.equipmentId === eq.id), now) }))
     .sort((a, b) => RANK[a.st.level] - RANK[b.st.level] || a.eq.name.localeCompare(b.eq.name));
   const isManager = ctx.scope === "full" && canManageEquipment(ctx.person, site.id);
+  const Bar = ctx.scope === "full" ? TopBar : PhoneTopBar;
 
   return (
     <>
-      {ctx.scope === "full" ? <TopBar ctx={ctx} /> : <PhoneTopBar ctx={ctx} />}
+      <Bar ctx={ctx} title="Equipment" eyebrow={`${site.name} · report a fault`} back={ctx.scope === "full" ? "/today" : "/me"}>
+        {isManager && <Link className="pill-btn top-extra" href={`/manage/equipment?site=${site.id}`}>Manage</Link>}
+      </Bar>
       <main>
-        <div className="row wrap" style={{ alignItems: "flex-end" }}>
-          <div className="grow"><div className="eyebrow">{site.name} · equipment</div><h1 className="h-display">Equipment</h1></div>
-          {isManager && <Link className="btn ghost small" href={`/manage/equipment?site=${site.id}`}>Manage</Link>}
-        </div>
         {sites.length > 1 && (
           <nav className="row wrap" style={{ gap: 6 }} aria-label="Site">
             {sites.map((s) => <Link key={s.id} className={`chip ${s.id === site.id ? "done" : ""}`} aria-current={s.id === site.id ? "page" : undefined} href={`/equipment?site=${s.id}`}>{s.name}</Link>)}

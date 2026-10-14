@@ -62,9 +62,9 @@ export function TopBar(props: BarProps) {
   );
 }
 
-/** The bar on a staff member's own phone (My shifts scope): back to My shifts, sign out. */
-export function PhoneTopBar(props: BarProps) {
-  const { ctx, children } = props;
+/** The bar on a staff member's own phone (My shifts scope): back to My shifts (unless this is it), sign out. */
+export function PhoneTopBar(props: BarProps & { home?: boolean }) {
+  const { ctx, children, home } = props;
   return (
     <header className="top">
       <Brand {...props} />
@@ -73,7 +73,7 @@ export function PhoneTopBar(props: BarProps) {
       <form className="who" action={signOut}>
         <Avatar name={ctx.person.name} tone={toneOf(ctx.person, ctx.site.id)} />
         <span className="who-name">{firstName(ctx.person.name)}</span>
-        <Link className="pill-btn" href="/me">My shifts</Link>
+        {!home && <Link className="pill-btn" href="/me" aria-label="My shifts"><span className="sw-text">My shifts</span><Icon name="clock" /></Link>}
         <button className="pill-btn" type="submit" aria-label="Sign out"><span className="sw-text">Sign out</span><Icon name="switch" /></button>
       </form>
     </header>
