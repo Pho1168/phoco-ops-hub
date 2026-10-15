@@ -107,6 +107,7 @@ export default async function MyShifts() {
             <Link className="btn ghost small" href="/library/allergens">Allergens</Link>
             {training.rows.length > 0 && <Link className="btn ghost small" href="/library/training">Training</Link>}
             <Link className="btn ghost small" href="/rota">Team rota</Link>
+            <Link className="btn ghost small" href="/stock">Stock</Link>
           </nav>
         </div>
 

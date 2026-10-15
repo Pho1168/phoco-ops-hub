@@ -1,3 +1,5 @@
+import type { StockStore } from "./stock-store";
+import type { NewSite } from "@/lib/domain/sites";
 import type { Answer, Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Device } from "@/lib/domain/devices";
 import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib/domain/rota";
@@ -21,7 +23,7 @@ export interface Session { id: string; personId: string; siteId: SiteId; deviceI
 export type SessionScope = "full" | "shifts";
 export interface ShiftView { id: string; siteId: SiteId; siteName: string; section: string; week: string; date: string; start: string; end: string; published: boolean; cancelled: boolean }
 /** Kinds of message sent to a person (shown under My shifts, and pushed to phones with notifications on). */
-export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply" | "gas" | "ready" | "daily" | "cover" | "training";
+export type MessageKind = Notice["kind"] | "notice" | "leave" | "cert" | "report" | "fault" | "service" | "task" | "shift" | "reply" | "gas" | "ready" | "daily" | "cover" | "training" | "stock";
 export interface NoticeRow { id: string; personId: string; kind: MessageKind; title: string; body: string; sendAfter: number; sentAt?: number; createdAt: number; url?: string }
 export interface PushSub { personId: string; endpoint: string; p256dh: string; auth: string }
 export interface RotaResult { at: number; rows: number; shifts: number; added: number; changed: number; cancelled: number; notices: number; published: string[]; issues: string[] }
@@ -72,9 +74,11 @@ export type LibraryMove = "submit" | "withdraw" | "send_back" | "discard";
  * DemoStore keeps data in server memory for development; SqlStore implements the same methods
  * against the Postgres schema in supabase/migrations (Supabase in production).
  */
-export interface Store {
+export interface Store extends StockStore {
   sites(): Promise<Site[]>;
   site(id: SiteId): Promise<Site | undefined>;
+  /** A new site, open, last in the list (the owner: `cleanNewSite`). False if the code is taken. */
+  createSite(s: NewSite): Promise<boolean>;
   /** Opens or closes a site. Reopening starts training again for the people who train there (see createPerson). */
   setSiteStatus(id: SiteId, status: Site["status"], reason?: string): Promise<void>;
   /** The kitchen-close time ("HH:MM"), or null to go back to the end of the last shift. */

@@ -874,3 +874,43 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
   .tcard { border: 0; padding: 0; break-inside: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .tc-steps { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
 }
+
+/* ---------- Stock & Purchasing ---------- */
+.stock-tools { display: flex; flex-direction: column; gap: 10px; }
+.stock-cats { display: flex; flex-wrap: wrap; gap: 6px; }
+.stock-cats .chip, .chips button.chip { border: 0; cursor: pointer; min-height: 36px; font-size: 14px; }
+.stock-list { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 900px) { .stock-list { grid-template-columns: 1fr 1fr; } }
+.stock-item { background: var(--surface); border-radius: 14px; border: 2px solid transparent; }
+.stock-item.on { border-color: var(--warn-soft); }
+.stock-item.out { border-color: var(--accent); }
+.stock-head { width: 100%; border: 0; background: transparent; display: flex; align-items: center; gap: 12px; padding: 12px 14px; min-height: 60px; cursor: pointer; font: inherit; color: inherit; }
+.stock-head .mark { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--line); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+.stock-item.on .mark { background: var(--warn-soft); border-color: var(--warn-soft); color: var(--warn-ink); }
+.stock-item.out .mark { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.stock-edit { padding: 0 14px 14px; gap: 10px; }
+.stock-edit > .txt, .stock-tools > .txt { width: 100%; }
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper button { width: 48px; height: 48px; border-radius: 12px; border: 0; background: var(--surface-2); font-size: 24px; font-weight: 700; cursor: pointer; color: var(--brand); }
+.stepper .txt { width: 76px; text-align: center; font-size: 20px; font-weight: 700; min-height: 48px; }
+.stock-review { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.stock-review li { background: var(--surface); border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.stock-review li.out { border-left: 6px solid var(--accent); }
+.stock-qty { font-family: var(--display); font-weight: 700; font-size: 20px; color: var(--brand); white-space: nowrap; }
+.stock-group { background: var(--surface); border-radius: 18px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.stock-group-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.stock-group-head h3 { margin: 0; font-family: var(--display); font-size: 22px; text-transform: uppercase; color: var(--brand); letter-spacing: .3px; }
+.stock-row { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.stock-row-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.stock-site { display: flex; align-items: center; gap: 10px; padding-left: 4px; flex-wrap: wrap; font-size: 15px; }
+.stock-site input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--brand); }
+.stock-site .txt { width: 84px; min-height: 40px; text-align: center; }
+.stock-line { background: var(--surface); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.stock-line.done { opacity: .75; }
+.stock-acts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.stock-acts .btn { min-height: 56px; }
+.stock-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.stock-timeline li { display: flex; gap: 10px; }
+.stock-timeline time { color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.stock-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.stock-filter select { min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); padding: 0 10px; font: inherit; }

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { closeSite, logOutEverywhere, reopenSite, resolveAlert, setFrozen, setKitchenClose, switchSite } from "@/app/actions";
+import { closeSite, createSite, logOutEverywhere, reopenSite, resolveAlert, setFrozen, setKitchenClose, switchSite } from "@/app/actions";
 import { Icon } from "@/components/Icon";
 import { ReadyLight } from "@/components/ReadyLight";
 import type { Ready } from "@/lib/domain/daily";
@@ -81,6 +81,7 @@ export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, pe
           </section>
         ))}
       </div>
+      {lead === "owner" && <AddSite pending={pending} add={(v) => run(() => createSite(v), `${v.name} added. Give people access to it from their accounts.`)} />}
       </section>
 
       <section className="stack panel nude" aria-label="Needs you" style={{ gap: 8 }}>
@@ -202,6 +203,37 @@ function KitchenClose({ site, pending, save }: { site: SiteSummary; pending: boo
       <input id={`gas-by-${site.id}`} className="txt" type="time" step={900} value={v} onChange={(e) => setV(e.target.value)} style={{ width: 120 }} />
       <button type="submit" className="btn ghost small" disabled={pending || v === (site.gasBy ?? "")}>Save</button>
       <span className="muted" style={{ fontSize: 13, flexBasis: "100%" }}>{site.gasBy ? `The gas check is due at ${site.gasBy} every day, for everyone still on shift. Clear it to use the end of the last shift.` : "Not set: the gas check is due when the last shift on the rota ends."}</span>
+    </form>
+  );
+}
+
+/** The owner adds a site: a code (kept for good), a name and a kind. */
+function AddSite({ pending, add }: { pending: boolean; add: (v: { id: string; name: string; kind: string; readyBy?: string; gasBy?: string }) => void }) {
+  const [open, setOpen] = useState(false);
+  const [v, setV] = useState({ id: "", name: "", kind: "restaurant", readyBy: "", gasBy: "" });
+  if (!open) return <button type="button" className="btn ghost" onClick={() => setOpen(true)}>Add a site</button>;
+  return (
+    <form className="card stack" aria-label="Add a site" onSubmit={(e) => { e.preventDefault(); add({ ...v, readyBy: v.readyBy || undefined, gasBy: v.gasBy || undefined }); }}>
+      <h2 className="h-sec">Add a site</h2>
+      <div className="row wrap" style={{ gap: 12 }}>
+        <label className="stack" style={{ gap: 4, flex: "0 1 110px" }}><span className="strong">Code</span>
+          <input className="txt" value={v.id} maxLength={5} placeholder="GRE" onChange={(e) => setV({ ...v, id: e.target.value.toUpperCase().replace(/[^A-Z]/g, "") })} /></label>
+        <label className="stack" style={{ gap: 4, flex: "1 1 200px" }}><span className="strong">Name</span>
+          <input className="txt" value={v.name} maxLength={40} placeholder="Greenwich" onChange={(e) => setV({ ...v, name: e.target.value })} /></label>
+      </div>
+      <div className="seg" role="group" aria-label="Kind">
+        <button type="button" aria-pressed={v.kind === "restaurant"} onClick={() => setV({ ...v, kind: "restaurant" })}>Restaurant</button>
+        <button type="button" aria-pressed={v.kind === "production"} onClick={() => setV({ ...v, kind: "production" })}>Production kitchen</button>
+      </div>
+      <div className="row wrap" style={{ gap: 12 }}>
+        <label className="stack" style={{ gap: 4 }}><span className="strong">Ready to open by</span><input className="txt" type="time" step={900} value={v.readyBy} onChange={(e) => setV({ ...v, readyBy: e.target.value })} /></label>
+        <label className="stack" style={{ gap: 4 }}><span className="strong">Kitchen closes</span><input className="txt" type="time" step={900} value={v.gasBy} onChange={(e) => setV({ ...v, gasBy: e.target.value })} /></label>
+      </div>
+      <p className="muted lead" style={{ margin: 0 }}>The code can&apos;t be changed later: records are kept under it. The site opens straight away; add its team from their accounts.</p>
+      <div className="row" style={{ gap: 8 }}>
+        <button type="submit" className="btn accent" disabled={pending || v.id.length < 2 || !v.name.trim()}>Add site</button>
+        <button type="button" className="btn ghost" onClick={() => setOpen(false)}>Cancel</button>
+      </div>
     </form>
   );
 }

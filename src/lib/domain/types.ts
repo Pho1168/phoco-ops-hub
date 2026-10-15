@@ -1,4 +1,5 @@
-export type SiteId = "EAS" | "WEM" | "SYD";
+/** A site's code: 2–5 capital letters ("EAS"). Sites are rows in `sites`; the owner adds new ones (`cleanNewSite`). */
+export type SiteId = string;
 export type Area = "FOH" | "BOH" | "PROD";
 /** Per site. "ops" is an operations manager: above the site managers, below the owner. */
 export type Role = "owner" | "ops" | "manager" | "staff";
@@ -15,6 +16,8 @@ export interface Site {
   readyBy?: string;
   /** "21:30": the kitchen closes and the gas check is due (gas off at close). Unset: when the last shift ends. */
   gasBy?: string;
+  /** Closers are asked for a stock report (Shift Mode). Default on. */
+  stockReminder?: boolean;
 }
 
 export interface SiteAccess {

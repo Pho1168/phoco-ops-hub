@@ -15,6 +15,7 @@ import { dueReminders, reminderKey, shiftReminderMessage, startingLaterToday, wa
 import { canBeGiven, stillFor } from "@/lib/domain/assign";
 import { dailyDigest, gasConfirmedMessages, gasMessages, notReadyMessages, DAILY_DIGEST_FROM, DAILY_DIGEST_UNTIL, READY_ALERT_WINDOW_MIN, type DayFacts } from "@/lib/domain/daily";
 import { dayFacts, gasFor, readyFor, shiftsAround } from "@/lib/daily-service";
+import { queueStockEscalations } from "@/lib/stock-service";
 import { PHOTO_KEEP_UNUSED_DAYS } from "@/lib/domain/library";
 import { missingStarts, trainingReminders } from "@/lib/domain/training";
 import { trainingData } from "@/lib/training-service";
@@ -91,6 +92,7 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
     try { queued += await job(now, db); } catch (e) { console.error(`tick: ${job.name} failed`, e); }
   }
   try { await startMissingTraining(now, db); } catch (e) { console.error("tick: training starts failed", e); }
+  try { queued += await queueStockEscalations(now, db); } catch (e) { console.error("tick: stock escalations failed", e); }
   if (hm >= DAILY_DIGEST_FROM && hm < DAILY_DIGEST_UNTIL) {
     try { queued += await queueDailyDigest(now, db); } catch (e) { console.error("tick: daily digest failed", e); }
   }
