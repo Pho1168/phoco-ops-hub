@@ -27,20 +27,29 @@ export interface StockStore {
   /** Sent reports at these sites from a time, newest first. */
   stockReports(siteIds: SiteId[], since: number): Promise<StockReport[]>;
   /**
-   * Sends the draft, once: new requests for `create`, a "reported again" note on each of `again`. False if it was
-   * already sent (a second tap, another tab).
+   * Sends the draft, once, with these (checked) lines. Planned inside the transaction with the site's requests for
+   * those products locked (`planSubmit`), so two people sending at once never make two requests for one need. False
+   * if it was already sent (a second tap, another tab).
    */
-  submitStockReport(reportId: string, by: string, plan: { create: (DraftLine & { supplierId?: string })[]; again: { requestId: string; line: DraftLine }[] }): Promise<StockRequest[] | false>;
+  submitStockReport(reportId: string, by: string, lines: DraftLine[], products: Pick<Product, "id" | "supplierId">[]): Promise<{ created: StockRequest[]; again: number } | false>;
 
-  /** Requests and tasks made from a time (with every line, event and receipt of them), optionally only at some sites. */
+  /**
+   * Requests and tasks made from a time, plus any request still in hand however old (with every line, event and
+   * receipt of them), optionally only at some sites.
+   */
   stockData(f: { since: number; siteIds?: SiteId[] }): Promise<StockData>;
   /** One task with its lines, their requests, events and receipts. */
   stockTask(taskId: string): Promise<StockData | undefined>;
 
   /** A task and its lines, after checking every line against the requests as they are now (`checkTaskLines`). */
   createStockTask(t: Omit<PurchaseTask, "id" | "code" | "createdAt" | "cancelledAt" | "cancelReason" | "assigneeName" | "driverName">, lines: { requestId: string; qty: number }[]): Promise<Done<string>>;
-  /** Adds requests to the open production order for that kitchen, restaurant and day (making one if there's none). */
-  addToProductionOrder(supplierId: string, destination: SiteId, date: string, lines: { requestId: string; qty: number }[], by: string): Promise<string>;
+  /**
+   * Adds what's still to plan of these requests to the open production order for that kitchen, restaurant and day
+   * (making one if there's none). Worked out inside the transaction, so a double tap can't add it twice.
+   */
+  addToProductionOrder(supplierId: string, destination: SiteId, date: string, requestIds: string[], by: string): Promise<string | undefined>;
+  /** Order placed (online or with the supplier): the order event and every open line bought in full, together. */
+  orderPlaced(taskId: string, by: string, ref?: string, on?: string): Promise<Done>;
   updateStockTask(id: string, patch: Partial<Pick<PurchaseTask, "assigneeId" | "driverId" | "requiredBy" | "priority" | "note">>, by: string): Promise<boolean>;
   /** Cancels the task and ends its open lines (their quantities go back to waiting). */
   cancelStockTask(id: string, by: string, reason: string): Promise<boolean>;

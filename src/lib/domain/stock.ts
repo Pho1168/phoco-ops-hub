@@ -269,20 +269,23 @@ export const isClosed = (p: Pick<Progress, "state">) => p.state === "cancelled" 
 
 // ---------- submitting a report ----------
 
+export interface SubmitPlan { create: (DraftLine & { supplierId?: string })[]; again: { requestId: string; line: DraftLine; setQty?: number }[] }
+
 /**
- * What a submitted report does. A product already requested at that site and still in hand isn't requested twice:
- * it's noted on the open request (and an "out" makes it urgent there). Everything else becomes a new request, with
- * the product's preferred supplier.
+ * What a submitted report does. A product already requested at that site and still waiting (nothing of it assigned or
+ * bought yet) isn't requested twice: it's noted on that request (an "out" makes it urgent), and a quantity given now
+ * fills one that was "not sure". Once part of it is assigned or bought, a new report of it is a new need: a new
+ * request. Everything new gets the product's preferred supplier.
  */
-export function planSubmit(lines: DraftLine[], siteId: SiteId, open: { request: StockRequest; progress: Progress }[], products: Pick<Product, "id" | "supplierId">[]):
-  { create: (DraftLine & { supplierId?: string })[]; again: { requestId: string; line: DraftLine }[] } {
-  const create: (DraftLine & { supplierId?: string })[] = [], again: { requestId: string; line: DraftLine }[] = [];
+export function planSubmit(lines: DraftLine[], siteId: SiteId, open: { request: StockRequest; progress: Progress }[], products: Pick<Product, "id" | "supplierId">[]): SubmitPlan {
+  const plan: SubmitPlan = { create: [], again: [] };
   for (const l of lines) {
-    const existing = open.find((o) => o.request.siteId === siteId && o.request.productId === l.productId && !isClosed(o.progress));
-    if (existing) again.push({ requestId: existing.request.id, line: l });
-    else create.push({ ...l, supplierId: products.find((p) => p.id === l.productId)?.supplierId });
+    const existing = open.find((o) => o.request.siteId === siteId && o.request.productId === l.productId && !o.request.cancelledAt
+      && (o.progress.state === "waiting" || o.progress.state === "needs_qty"));
+    if (existing) plan.again.push({ requestId: existing.request.id, line: l, ...(existing.progress.wanted === undefined && l.qty !== undefined ? { setQty: l.qty } : {}) });
+    else plan.create.push({ ...l, supplierId: products.find((p) => p.id === l.productId)?.supplierId });
   }
-  return { create, again };
+  return plan;
 }
 
 /** Urgent: reported out, or the open request was reported out again. */
@@ -377,6 +380,7 @@ export function taskState(t: PurchaseTask, lines: TaskLine[], events: StockEvent
   if (t.cancelledAt) return "cancelled";
   const mine = lines.filter((l) => l.taskId === t.id);
   const ended = mine.filter((l) => lineEnd(l, events)).length;
+  if (mine.length && mine.every((l) => lineEnd(l, events)?.kind === "line_cancelled")) return "cancelled";
   if (mine.length && ended === mine.length) return "done";
   if (ended > 0 || events.some((e) => e.taskId === t.id && (e.kind === "picked" || e.kind === "packed"))) return "in_progress";
   if (events.some((e) => e.taskId === t.id && e.kind === "ordered")) return "ordered";

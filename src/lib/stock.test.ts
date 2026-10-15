@@ -220,6 +220,58 @@ describe("stock & purchasing: guard rails", () => {
   });
 });
 
+describe("stock & purchasing: after the review", () => {
+  it("a product already bought (not yet confirmed) and reported again is a new need, not lost", async () => {
+    const [lime] = (await report("EAS", "DEMO-BOH", [{ name: "Lime", level: "out", qty: 2 }])).created;
+    const { catalog } = await view();
+    const main = catalog.suppliers.find((s) => s.name === "Main Supplier (demo)")!;
+    const id = ((await db.createStockTask({ supplierId: main.id, method: "delivery", assigneeId: "DEMO-MGR", priority: "normal", createdBy: "DEMO-OWN" }, [{ requestId: lime.id, qty: 2 }])) as { value: string }).value;
+    expect((await db.orderPlaced(id, "DEMO-MGR", "ORD-1")).ok).toBe(true);
+    expect(await prog(lime)).toMatchObject({ state: "on_the_way", obtained: 2 });
+    const next = await report("EAS", "DEMO-FOH", [{ name: "Lime", level: "low", qty: 3 }]);
+    expect(next.created).toHaveLength(1);
+    expect(await prog(next.created[0])).toMatchObject({ state: "waiting", toPlan: 3 });
+  });
+
+  it("a quantity given in a later report fills one that was not sure", async () => {
+    const [tofu] = (await report("EAS", "DEMO-BOH", [{ name: "Tofu", level: "low" }])).created;
+    const r = await report("EAS", "DEMO-FOH", [{ name: "Tofu", level: "low", qty: 4 }]);
+    expect(r.created).toHaveLength(0);
+    expect(await prog(tofu)).toMatchObject({ state: "waiting", wanted: 4, toPlan: 4 });
+  });
+
+  it("routing to production twice doesn't plan it twice", async () => {
+    const [soup] = (await report("EAS", "DEMO-BOH", [{ name: "Soup", level: "out", qty: 6 }])).created;
+    const { catalog } = await view();
+    const prod = catalog.suppliers.find((s) => s.method === "production")!;
+    expect(await db.addToProductionOrder(prod.id, "EAS", "2026-10-16", [soup.id], "DEMO-OWN")).toBeUndefined(); // already all on the order
+    expect(await prog(soup)).toMatchObject({ planned: 6, toPlan: 0 });
+  });
+
+  it("an order placed records every open line bought, together", async () => {
+    const [a] = (await report("EAS", "DEMO-BOH", [{ name: "Z-Fold Tissue", level: "low", qty: 2 }, { name: "Blue Rolls", level: "low", qty: 1 }])).created;
+    const v = await view();
+    const amz = v.catalog.suppliers.find((s) => s.name === "Amazon (demo)")!;
+    const reqs = v.data.requests.filter((r) => r.supplierId === amz.id);
+    const id = ((await db.createStockTask({ supplierId: amz.id, method: "online", assigneeId: "DEMO-MGR", priority: "normal", createdBy: "DEMO-OWN" }, reqs.map((r) => ({ requestId: r.id, qty: wantedOf(r)! })))) as { value: string }).value;
+    await db.cancelStockTask(id, "DEMO-OWN", "wrong supplier");
+    expect((await db.orderPlaced(id, "DEMO-MGR")).ok).toBe(false);
+    const t2 = ((await db.createStockTask({ supplierId: amz.id, method: "online", assigneeId: "DEMO-MGR", priority: "normal", createdBy: "DEMO-OWN" }, reqs.map((r) => ({ requestId: r.id, qty: wantedOf(r)! })))) as { value: string }).value;
+    expect((await db.orderPlaced(t2, "DEMO-MGR", "205-1")).ok).toBe(true);
+    const d = (await db.stockTask(t2))!;
+    expect(taskState(d.tasks.find((t) => t.id === t2)!, d.lines, d.events)).toBe("done");
+    expect(await prog(a)).toMatchObject({ state: "on_the_way" });
+    const first = (await db.stockTask(id))!;
+    expect(taskState(first.tasks.find((t) => t.id === id)!, first.lines, first.events)).toBe("cancelled");
+  });
+
+  it("an old request still in hand stays on the dashboard", async () => {
+    const [w] = (await report("EAS", "DEMO-BOH", [{ name: "Wings", level: "low", qty: 2 }])).created;
+    const later = await stockView(db, NOW + 200 * 86_400_000);
+    expect(later.items.some((x) => x.request.id === w.id)).toBe(true);
+  });
+});
+
 describe("stock rules", () => {
   const P = (over: Partial<Product> = {}): Product => ({ id: "p", name: "Fish sauce", active: true, ...over });
   it("cleans report lines: known products, once each, quantity above 0 or not sure", () => {

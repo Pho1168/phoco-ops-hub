@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, progress, sameProduct, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, sameProduct, TERMINAL, withProgress,
   type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { SiteId } from "@/lib/domain/types";
 import type { StockData, StockStore } from "./stock-store";
@@ -110,11 +110,13 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
       return S().reports.filter((r) => r.submittedAt && siteIds.includes(r.siteId) && r.submittedAt >= since).sort((a, b) => b.submittedAt! - a.submittedAt!)
         .map((r) => ({ ...r, personName: deps.personName(r.personId) }));
     },
-    async submitStockReport(reportId, by, plan) {
+    async submitStockReport(reportId, by, lines, products) {
       const s = S();
       const rep = s.reports.find((r) => r.id === reportId);
       if (!rep || rep.submittedAt) return false;
       rep.submittedAt = Date.now(); rep.updatedAt = rep.submittedAt;
+      const ids = s.requests.filter((r) => r.siteId === rep.siteId && !r.cancelledAt && lines.some((l) => l.productId === r.productId)).map((r) => r.id);
+      const plan = planSubmit(lines, rep.siteId, withProgress(gather(ids, [])), products);
       const made: StockRequest[] = [];
       for (const l of plan.create) {
         const r: StockRequest = { id: randomUUID(), code: s.nextRequest++, siteId: rep.siteId, productId: l.productId, level: l.level, qty: l.qty, note: l.note, photoId: l.photoId,
@@ -124,13 +126,20 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
       for (const a of plan.again) {
         event({ by, kind: "reported_again", requestId: a.requestId, qty: a.line.qty, text: a.line.level, mediaId: a.line.photoId });
         if (a.line.note) event({ by, kind: "note", requestId: a.requestId, text: a.line.note });
+        if (a.setQty !== undefined) {
+          const r = s.requests.find((x) => x.id === a.requestId)!;
+          r.fixedQty = a.setQty;
+          event({ by, kind: "qty_changed", requestId: a.requestId, qty: a.setQty, text: "given in a later report" });
+        }
       }
-      return made;
+      return { created: made, again: plan.again.length };
     },
 
     async stockData(f) {
       const s = S();
-      const reqIds = s.requests.filter((r) => r.createdAt >= f.since && (!f.siteIds || f.siteIds.includes(r.siteId))).map((r) => r.id);
+      // Made since then, or still in hand however old (not cancelled, and not yet received in full).
+      const inHand = (r: StockRequest) => { if (r.cancelledAt) return false; const w = r.fixedQty ?? r.qty; return w === undefined || s.receipts.filter((x) => x.requestId === r.id).reduce((t, x) => t + x.qty, 0) < w; };
+      const reqIds = s.requests.filter((r) => (r.createdAt >= f.since || inHand(r)) && (!f.siteIds || f.siteIds.includes(r.siteId))).map((r) => r.id);
       const taskIds = f.siteIds ? [] : s.tasks.filter((t) => t.createdAt >= f.since).map((t) => t.id);
       const d = gather(reqIds, taskIds);
       if (!f.siteIds) return view(d);
@@ -156,8 +165,11 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
       if (t.assigneeId || t.driverId) event({ by: t.createdBy, kind: "assigned", taskId: task.id, text: "created" });
       return { ok: true, value: task.id };
     },
-    async addToProductionOrder(supplierId, destination, date, lines, by) {
+    async addToProductionOrder(supplierId, destination, date, requestIds, by) {
       const s = S();
+      const lines = withProgress(gather(requestIds, [])).filter((x) => requestIds.includes(x.request.id) && x.request.siteId === destination && x.request.supplierId === supplierId && x.progress.toPlan > 0)
+        .map((x) => ({ requestId: x.request.id, qty: x.progress.toPlan }));
+      if (!lines.length) return undefined;
       const open = s.tasks.filter((t) => t.method === "production" && t.supplierId === supplierId && t.destination === destination && t.requiredBy === date && !t.cancelledAt)
         .sort((a, b) => a.createdAt - b.createdAt)
         .find((t) => !s.lines.some((l) => l.taskId === t.id && s.events.some((e) => e.lineId === l.id && isEnd(e)))
@@ -169,6 +181,16 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
       }
       for (const l of lines) s.lines.push({ id: randomUUID(), taskId: id, requestId: l.requestId, qty: l.qty });
       return id;
+    },
+    async orderPlaced(taskId, by, ref, on) {
+      const s = S();
+      const t = s.tasks.find((x) => x.id === taskId);
+      if (!t || t.cancelledAt) return { ok: false, error: "That task has been cancelled" };
+      event({ by, kind: "ordered", taskId, ref, on });
+      for (const l of s.lines.filter((x) => x.taskId === taskId && !s.events.some((e) => e.lineId === x.id && isEnd(e)))) {
+        event({ by, kind: "bought", taskId, lineId: l.id, requestId: l.requestId, qty: l.qty, text: ref ? `order ${ref}` : "ordered" });
+      }
+      return { ok: true, value: undefined };
     },
     async updateStockTask(id, patch, by) {
       const t = S().tasks.find((x) => x.id === id && !x.cancelledAt);

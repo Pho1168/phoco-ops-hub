@@ -2,7 +2,7 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
-import { cleanLines, methodOf, needsEscalation, planSubmit, productLabel, reqCode, taskCode, withProgress, type Product, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
+import { cleanLines, methodOf, needsEscalation, productLabel, reqCode, taskCode, withProgress, type Product, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
 import { afterQuietHours, londonDate } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
 
@@ -32,29 +32,29 @@ export async function sendStockReport(db: Store, person: Pick<Person, "id">, sit
   if (!clean.ok) return clean;
   if (!clean.value.length && !draft.noIssues) return { ok: false, error: "Add what's low or out, or tap No stock issues today" };
   if (clean.value.length && draft.noIssues) await db.saveStockDraft(site.id, person.id, draft.date, clean.value, false);
-  const plan = planSubmit(clean.value, site.id, items, catalog.products);
-  const created = await db.submitStockReport(draft.id, person.id, plan);
-  if (!created) return { ok: false, error: "That report has already been sent" };
-  await routeProduction(db, created, person.id, now, catalog.suppliers);
-  return { ok: true, value: { created, again: plan.again.length, noIssues: !clean.value.length } };
+  void items;
+  const sent = await db.submitStockReport(draft.id, person.id, clean.value, catalog.products);
+  if (!sent) return { ok: false, error: "That report has already been sent" };
+  await routeProduction(db, sent.created, person.id, now, catalog.suppliers);
+  return { ok: true, value: { created: sent.created, again: sent.again, noIssues: !clean.value.length } };
 }
 
 /** Requests whose supplier is a production kitchen, with a quantity and nothing assigned: onto that kitchen's order for today. */
 export async function routeProduction(db: Store, requests: StockRequest[], by: string, now: number, suppliers?: Supplier[]): Promise<number> {
   const sups = suppliers ?? (await db.stockCatalog()).suppliers;
-  const groups = new Map<string, { supplierId: string; siteId: string; lines: { requestId: string; qty: number }[] }>();
-  const fresh = requests.length ? withProgress(await db.stockData({ since: Math.min(...requests.map((r) => r.createdAt)) - 1000, siteIds: [...new Set(requests.map((r) => r.siteId))] })) : [];
+  const groups = new Map<string, { supplierId: string; siteId: string; ids: string[] }>();
   for (const r of requests) {
     const sup = sups.find((s) => s.id === r.supplierId);
-    const p = fresh.find((x) => x.request.id === r.id)?.progress;
-    if (!sup || sup.method !== "production" || !p || p.toPlan <= 0 || r.siteId === sup.siteId) continue;
+    if (!sup || sup.method !== "production" || r.siteId === sup.siteId || r.cancelledAt) continue;
     const key = `${sup.id}|${r.siteId}`;
-    const g = groups.get(key) ?? { supplierId: sup.id, siteId: r.siteId, lines: [] };
-    g.lines.push({ requestId: r.id, qty: p.toPlan });
+    const g = groups.get(key) ?? { supplierId: sup.id, siteId: r.siteId, ids: [] };
+    g.ids.push(r.id);
     groups.set(key, g);
   }
-  for (const g of groups.values()) await db.addToProductionOrder(g.supplierId, g.siteId, londonDate(now), g.lines, by);
-  return groups.size;
+  let n = 0;
+  // What's still to plan is worked out by the store, inside its transaction.
+  for (const g of groups.values()) if (await db.addToProductionOrder(g.supplierId, g.siteId, londonDate(now), g.ids, by)) n++;
+  return n;
 }
 
 /** Tells whoever a task is given to (and its driver) that it's theirs. Once per task and person. */

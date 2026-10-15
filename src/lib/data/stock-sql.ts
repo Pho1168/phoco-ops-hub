@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, progress, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, TERMINAL, withProgress,
   type DraftLine, type EventKind, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import { londonDate } from "@/lib/domain/time";
 import { sql, withTx } from "./pg";
@@ -143,30 +143,43 @@ export const stockSql: StockStore = {
     const q = sql();
     return (await q<ReportRow[]>`${reportSelect(q)} where r.site_id = any(${siteIds}::text[]) and r.submitted_at >= ${new Date(since)} order by r.submitted_at desc limit 500`).map(toReport);
   },
-  async submitStockReport(reportId, by, plan) {
+  async submitStockReport(reportId, by, lines, products) {
     if (!UUID.test(reportId)) return false;
     return withTx(async (tx) => {
       const [rep] = await tx<{ site_id: string }[]>`update stock_reports set submitted_at = now(), updated_at = now() where id = ${reportId} and submitted_at is null returning site_id`;
       if (!rep) return false;
-      const ids: string[] = [];
+      // One sender at a time per site: what's already asked for is read after the others have finished.
+      await tx`select pg_advisory_xact_lock(hashtext(${"stock-report:" + rep.site_id}))`;
+      const ids = (await tx<{ id: string }[]>`select id from stock_requests where site_id = ${rep.site_id} and cancelled_at is null
+        and product_id = any(${lines.map((l) => l.productId)}::uuid[])`).map((r) => r.id);
+      const plan = planSubmit(lines, rep.site_id, withProgress(await gather(tx, ids, [])), products);
+      const made: string[] = [];
       for (const l of plan.create) {
         const [r] = await tx<{ id: string }[]>`insert into stock_requests (site_id, product_id, level, qty, note, photo_id, report_id, requested_by, supplier_id)
           values (${rep.site_id}, ${l.productId}, ${l.level}, ${l.qty ?? null}, ${l.note ?? null}, ${l.photoId ?? null}, ${reportId}, ${by}, ${l.supplierId ?? null}) returning id`;
-        ids.push(r.id);
+        made.push(r.id);
       }
       for (const a of plan.again) {
-        await tx`insert into stock_events (by, kind, request_id, qty, text, media_id) values (${by}, 'reported_again', ${a.requestId}, ${a.line.qty ?? null}, ${a.line.level},
-          ${a.line.photoId ?? null})`;
+        await tx`insert into stock_events (by, kind, request_id, qty, text, media_id) values (${by}, 'reported_again', ${a.requestId}, ${a.line.qty ?? null}, ${a.line.level}, ${a.line.photoId ?? null})`;
         if (a.line.note) await tx`insert into stock_events (by, kind, request_id, text) values (${by}, 'note', ${a.requestId}, ${a.line.note})`;
+        if (a.setQty !== undefined) {
+          await tx`update stock_requests set fixed_qty = ${a.setQty} where id = ${a.requestId}`;
+          await tx`insert into stock_events (by, kind, request_id, qty, text) values (${by}, 'qty_changed', ${a.requestId}, ${a.setQty}, ${"given in a later report"})`;
+        }
       }
-      return (await tx<RequestRow[]>`${requestSelect(tx)} where r.id = any(${ids}::uuid[]) order by r.code`).map(toRequest);
+      const created = (await tx<RequestRow[]>`${requestSelect(tx)} where r.id = any(${made}::uuid[]) order by r.code`).map(toRequest);
+      return { created, again: plan.again.length };
     });
   },
 
   async stockData(f) {
     const q = sql();
     const since = new Date(f.since);
-    const reqIds = (await q<{ id: string }[]>`select id from stock_requests where created_at >= ${since} ${f.siteIds ? q`and site_id = any(${f.siteIds}::text[])` : q``}`).map((r) => r.id);
+    // Made since then, or still in hand however old (not cancelled, and not yet received in full).
+    const reqIds = (await q<{ id: string }[]>`select r.id from stock_requests r
+      where (r.created_at >= ${since} or (r.cancelled_at is null and (coalesce(r.fixed_qty, r.qty) is null
+        or coalesce((select sum(x.qty) from stock_receipts x where x.request_id = r.id), 0) < coalesce(r.fixed_qty, r.qty))))
+      ${f.siteIds ? q`and r.site_id = any(${f.siteIds}::text[])` : q``}`).map((r) => r.id);
     const taskIds = f.siteIds ? [] : (await q<{ id: string }[]>`select id from stock_tasks where created_at >= ${since}`).map((r) => r.id);
     const d = await gather(q, reqIds, taskIds);
     if (!f.siteIds) return d;
@@ -197,9 +210,12 @@ export const stockSql: StockStore = {
       return { ok: true as const, value: row.id };
     });
   },
-  async addToProductionOrder(supplierId, destination, date, lines, by) {
+  async addToProductionOrder(supplierId, destination, date, requestIds, by) {
     return withTx(async (tx) => {
-      await lockRequests(tx, lines.map((l) => l.requestId));
+      const d = await lockRequests(tx, requestIds);
+      const lines = withProgress(d).filter((x) => x.request.siteId === destination && x.request.supplierId === supplierId && x.progress.toPlan > 0)
+        .map((x) => ({ requestId: x.request.id, qty: x.progress.toPlan }));
+      if (!lines.length) return undefined;
       await tx`select id from stock_suppliers where id = ${supplierId} for update`;
       const [open] = await tx<{ id: string }[]>`select t.id from stock_tasks t where t.method = 'production' and t.supplier_id = ${supplierId} and t.destination = ${destination}
         and t.required_by = ${date} and t.cancelled_at is null
@@ -210,6 +226,22 @@ export const stockSql: StockStore = {
         values (${supplierId}, 'production', ${date}, 'normal', ${destination}, ${by}) returning id`)[0].id;
       for (const l of lines) await tx`insert into stock_task_lines (task_id, request_id, qty) values (${id}, ${l.requestId}, ${l.qty})`;
       return id;
+    });
+  },
+  async orderPlaced(taskId, by, ref, on) {
+    if (!UUID.test(taskId)) return { ok: false, error: "That task isn't there" };
+    return withTx(async (tx) => {
+      const ids = (await tx<{ request_id: string }[]>`select request_id from stock_task_lines where task_id = ${taskId}`).map((r) => r.request_id);
+      await lockRequests(tx, ids);
+      const [t] = await tx<{ id: string }[]>`select id from stock_tasks where id = ${taskId} and cancelled_at is null for update`;
+      if (!t) return { ok: false as const, error: "That task has been cancelled" };
+      await tx`insert into stock_events (by, kind, task_id, ref, on_date) values (${by}, 'ordered', ${taskId}, ${ref ?? null}, ${on ?? null})`;
+      const open = await tx<{ id: string; request_id: string; qty: string }[]>`select l.id, l.request_id, l.qty::text from stock_task_lines l where l.task_id = ${taskId}
+        and not exists (select 1 from stock_events e where e.line_id = l.id and e.kind = any(${[...TERMINAL]}::text[]))`;
+      for (const l of open) {
+        await tx`insert into stock_events (by, kind, task_id, line_id, request_id, qty, text) values (${by}, 'bought', ${taskId}, ${l.id}, ${l.request_id}, ${l.qty}, ${ref ? `order ${ref}` : "ordered"})`;
+      }
+      return { ok: true as const, value: undefined };
     });
   },
   async updateStockTask(id, patch, by) {
@@ -228,6 +260,7 @@ export const stockSql: StockStore = {
   async cancelStockTask(id, by, reason) {
     if (!UUID.test(id)) return false;
     return withTx(async (tx) => {
+      await lockRequests(tx, (await tx<{ request_id: string }[]>`select request_id from stock_task_lines where task_id = ${id}`).map((r) => r.request_id));
       const [t] = await tx<{ id: string }[]>`select id from stock_tasks where id = ${id} and cancelled_at is null for update`;
       if (!t) return false;
       const open = await tx<{ id: string; request_id: string }[]>`select l.id, l.request_id from stock_task_lines l where l.task_id = ${id}
@@ -239,6 +272,7 @@ export const stockSql: StockStore = {
     });
   },
   async addStockEvent(e) {
+    for (const id of [e.lineId, e.taskId, e.requestId, e.mediaId]) if (id !== undefined && !UUID.test(id)) return { ok: false, error: "That isn't there any more" };
     return withTx(async (tx) => {
       if (e.lineId) {
         const [l] = await tx<LineRow[]>`select id, task_id, request_id, qty::text from stock_task_lines where id = ${e.lineId}`;
@@ -258,6 +292,7 @@ export const stockSql: StockStore = {
           values (${e.by}, ${e.kind}, ${e.taskId ?? null}, ${e.lineId ?? null}, ${e.requestId ?? null}, ${e.qty ?? null}, ${e.pence ?? null}, ${e.text ?? null}, ${e.mediaId ?? null}, ${e.ref ?? null}, ${e.on ?? null})`;
       } catch (err) {
         if ((err as { code?: string }).code === "23505") return { ok: false as const, error: "That's already been recorded" };
+        if ((err as { code?: string }).code === "23503") return { ok: false as const, error: "That photo or record isn't there any more. Try again" };
         throw err;
       }
       return { ok: true as const, value: undefined };

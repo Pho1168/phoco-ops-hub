@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { canPurchase, canReportAt, canSeeTask, cleanLines as cleanStockLines, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
-  reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode, TERMINAL as STOCK_TERMINAL } from "@/lib/domain/stock";
+  reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode } from "@/lib/domain/stock";
 import { notifyTask, routeProduction, sendStockReport, stockSince } from "@/lib/stock-service";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
@@ -2108,7 +2108,7 @@ export async function savePathway(section: string, inductionDays: number, allDay
 
 // ---------- editing checklists (the owner) ----------
 
-const ChecklistIdZ = z.string().regex(/^[A-Z]{3}-[A-Z]+-[A-Z0-9-]{1,40}$/);
+const ChecklistIdZ = z.string().regex(/^[A-Z]{2,5}-[A-Z]+-[A-Z0-9-]{1,40}$/);
 const checklistChanged = (id: string) => {
   for (const p of ["/manage/checklists", `/manage/checklists/${id}`, "/today", `/run/${id}`, "/shift", "/owner", "/manage"]) revalidatePath(p);
 };
@@ -2242,6 +2242,12 @@ async function purchasingOwner(): Promise<{ ok: true; ctx: Ctx } | { ok: false; 
   return who;
 }
 function revalidateStock() { revalidatePath("/stock", "layout"); }
+/** A photo the person uploaded for stock that's really there (and not erased). */
+async function photoOk(id?: string): Promise<boolean> {
+  if (!id) return true;
+  const m = await store().mediaInfo(id).catch(() => undefined);
+  return !!m && !m.erased;
+}
 
 /** Saves the person's unsent report at the site they're signed in at (a draft they can come back to). */
 export async function saveStockReport(input: { lines: unknown; noIssues: boolean }): Promise<ActionResult> {
@@ -2254,6 +2260,7 @@ export async function saveStockReport(input: { lines: unknown; noIssues: boolean
   const db = store();
   const clean = cleanStockLines(parsed.data.lines.map((l) => ({ ...l, qty: l.qty ?? undefined })), (await db.stockCatalog()).products);
   if (!clean.ok) return clean;
+  for (const l of clean.value) if (!(await photoOk(l.photoId))) return { ok: false, error: "A photo didn't upload properly. Take it again" };
   await db.saveStockDraft(ctx.site.id, ctx.person.id, londonDate(Date.now()), clean.value, parsed.data.noIssues && !clean.value.length);
   return { ok: true };
 }
@@ -2393,8 +2400,13 @@ export async function cancelTaskLine(lineId: string, reason: string): Promise<Ac
   const who = await purchasingOwner();
   if (!who.ok) return who;
   const why = reason?.trim().slice(0, 200) || "Taken off the task";
-  const r = await store().addStockEvent({ by: who.ctx.person.id, kind: "line_cancelled", lineId: StockIdZ.parse(lineId), text: why });
+  if (!StockIdZ.safeParse(lineId).success) return { ok: false, error: "That line isn't there any more" };
+  const d = await taskOfLine(lineId);
+  if (!d) return { ok: false, error: "That line isn't there any more" };
+  const db = store();
+  const r = await db.addStockEvent({ by: who.ctx.person.id, kind: "line_cancelled", lineId, text: why });
   if (!r.ok) return r;
+  await db.audit({ actorId: who.ctx.person.id, siteId: d.request?.siteId, action: "stock.line.cancel", detail: `${stockTaskCode(d.task)}${d.request ? ` ${stockReqCode(d.request)}` : ""}: taken off (${why})` });
   revalidateStock();
   return { ok: true };
 }
@@ -2437,6 +2449,7 @@ export async function recordStockLine(lineId: string, input: unknown): Promise<A
     return { ok: false, error: production ? "Production orders are picked, packed and dispatched" : "Use bought or not available" };
   }
   if ((p.data.kind === "substitute_ok" || p.data.kind === "substitute_no") && !runsPurchasing(who.ctx.person)) return { ok: false, error: "Only the owner approves a substitute" };
+  if (!(await photoOk(p.data.mediaId))) return { ok: false, error: "The photo didn't upload properly. Take it again" };
   const r = await db.addStockEvent({ by: who.ctx.person.id, kind: p.data.kind, lineId, qty: p.data.qty, text: p.data.text?.trim() || undefined, ref: p.data.ref?.trim() || undefined, on: p.data.on, mediaId: p.data.mediaId });
   if (!r.ok) return r;
   if (p.data.kind !== "note") await db.audit({ actorId: who.ctx.person.id, siteId: d.request?.siteId, action: `stock.${p.data.kind}`, detail: `${stockTaskCode(d.task)}${d.request ? ` ${stockReqCode(d.request)}` : ""}: ${p.data.kind.replace("_", " ")}${p.data.qty ? ` ${p.data.qty}` : ""}${p.data.text ? ` (${p.data.text.trim()})` : ""}` });
@@ -2465,14 +2478,12 @@ export async function recordStockTask(taskId: string, input: unknown): Promise<A
     pence = Math.round(n * 100);
   }
   if (p.data.kind === "ordered" && t.method === "production") return { ok: false, error: "Production orders are picked and dispatched" };
-  const r = await db.addStockEvent({ by: who.ctx.person.id, kind: p.data.kind, taskId, pence, text: p.data.text?.trim() || undefined, ref: p.data.ref?.trim() || undefined, on: p.data.on, mediaId: p.data.mediaId });
+  if (!(await photoOk(p.data.mediaId))) return { ok: false, error: "The photo didn't upload properly. Take it again" };
+  // Placing an order means it's bought: the order and each open line in full, in one step (record a line first if less was ordered).
+  const r = p.data.kind === "ordered" && p.data.allBought
+    ? await db.orderPlaced(taskId, who.ctx.person.id, p.data.ref?.trim() || undefined, p.data.on)
+    : await db.addStockEvent({ by: who.ctx.person.id, kind: p.data.kind, taskId, pence, text: p.data.text?.trim() || undefined, ref: p.data.ref?.trim() || undefined, on: p.data.on, mediaId: p.data.mediaId });
   if (!r.ok) return r;
-  // Placing an order means it's bought: each open line in full (change a line first if less was ordered).
-  if (p.data.kind === "ordered" && p.data.allBought) {
-    for (const l of d.lines.filter((x) => x.taskId === taskId && !d.events.some((e) => e.lineId === x.id && (STOCK_TERMINAL as readonly string[]).includes(e.kind)))) {
-      await db.addStockEvent({ by: who.ctx.person.id, kind: "bought", lineId: l.id, qty: l.qty, text: p.data.ref ? `order ${p.data.ref.trim()}` : "ordered" });
-    }
-  }
   if (p.data.kind !== "acknowledged" && p.data.kind !== "note") {
     await db.audit({ actorId: who.ctx.person.id, action: `stock.${p.data.kind}`, detail: `${stockTaskCode(t)}: ${p.data.kind}${pence !== undefined ? ` ${(pence / 100).toFixed(2)}` : ""}${p.data.ref ? ` ref ${p.data.ref.trim()}` : ""}` });
   }
