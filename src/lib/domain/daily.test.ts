@@ -97,6 +97,32 @@ describe("gas off at close", () => {
     expect(d.closers.sort()).toEqual(["a", "b"]);
     expect(gasDay("EAS", "2026-10-15", shifts)).toBeUndefined(); // no rota that day: nothing expected
   });
+  it("with a kitchen-close time, it's due then, for everyone still on shift", () => {
+    const d = gasDay("EAS", "2026-10-14", shifts, undefined, "21:30")!;
+    expect(d.closeAt).toBe(at("2026-10-14", "21:30"));
+    expect(d.kitchen).toBe(true);
+    expect(d.closers.sort()).toEqual(["a", "b"]); // c left at 15:00
+    expect(gasDay("EAS", "2026-10-14", [...shifts, sh("d", "17:00", "21:15")], undefined, "21:30")!.closers.sort()).toEqual(["a", "b", "d"]); // within 30 minutes of it
+    expect(gasDay("EAS", "2026-10-14", [...shifts, sh("e", "21:45", "23:00")], undefined, "21:30")!.closers).not.toContain("e"); // not started yet
+    expect(gasState(d, undefined, at("2026-10-14", "21:14"))).toBe("later");
+    expect(gasState(d, undefined, at("2026-10-14", "21:15"))).toBe("due");
+    expect(gasState(d, undefined, at("2026-10-14", "22:00"))).toBe("overdue");
+  });
+  it("a kitchen-close time after the last shift ends, or with nobody on then, falls back to the last shift", () => {
+    const early = gasDay("EAS", "2026-10-14", [sh("c", "11:00", "15:00")], undefined, "21:30")!;
+    expect(early.closeAt).toBe(at("2026-10-14", "15:00"));
+    expect(early.kitchen).toBeUndefined();
+    const gap = gasDay("EAS", "2026-10-14", [sh("x", "11:00", "16:00"), sh("y", "22:00", "23:00")], undefined, "21:30")!;
+    expect(gap.closeAt).toBe(at("2026-10-14", "21:30"));
+    expect(gap.closers).toEqual(["y"]); // nobody on at 21:30: those on until the end
+    const late = gasDay("EAS", "2026-10-14", [sh("z", "18:00", "02:00")], undefined, "00:30")!;
+    expect(late.closeAt).toBe(at("2026-10-15", "00:30")); // after midnight: the night after the business date
+  });
+  it("names the close in the managers' alert", () => {
+    const people = [{ id: "mgr", name: "Manager", status: "active" as const, access: [{ siteId: "EAS" as const, role: "manager" as const, sections: ["BOH" as const] }] }];
+    const d = gasDay("EAS", "2026-10-14", shifts, undefined, "21:30")!;
+    expect(gasMessages({ id: "EAS", name: "Eastcote" }, d, "overdue", people, at("2026-10-14", "22:01"))[0].body).toMatch(/^The kitchen closed at 21:30/);
+  });
   it("someone who said they can't make the closing shift isn't asked", () => {
     const withIds = shifts.map((x, i) => ({ ...x, id: `s${i}` }));
     expect(gasDay("EAS", "2026-10-14", withIds, new Set(["s1"]))!.closers).toEqual(["a"]);

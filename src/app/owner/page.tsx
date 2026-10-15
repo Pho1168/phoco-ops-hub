@@ -14,7 +14,7 @@ import { RemindersCard } from "./RemindersCard";
 import { RightNow } from "./RightNow";
 import { teamRowsView, teamToday } from "@/lib/team-today";
 import { gasFor, lastClose, readyFor, shiftsAround } from "@/lib/daily-service";
-import { readyShownUntil } from "@/lib/domain/daily";
+import { closeWords, readyShownUntil } from "@/lib/domain/daily";
 import { londonHM } from "@/lib/domain/time";
 import { accountsFor, canManageAccount, ROLE_SHORT } from "@/lib/domain/staff";
 import { activityFor } from "@/lib/domain/activity";
@@ -56,11 +56,11 @@ export default async function Owner() {
     const by = (c: { personName: string; createdAt: number; onTablet: boolean }) => `${c.personName} at ${londonHM(c.createdAt)}${c.onTablet ? " on the tablet" : " on their phone"}`;
     const gasLine = gas && gas.state !== "later" && gas.state !== "missed"
       ? gas.check ? { text: `Gas off: checked by ${by(gas.check)}`, tone: "good" as const }
-        : gas.state === "overdue" ? { text: `Gas check not done · last shift ended ${londonHM(gas.day.closeAt)}`, tone: "bad" as const }
-        : { text: `Gas check due now · last shift ends ${londonHM(gas.day.closeAt)}`, tone: "" as const }
+        : gas.state === "overdue" ? { text: `Gas check not done · ${closeWords(gas.day)} at ${londonHM(gas.day.closeAt)}`, tone: "bad" as const }
+        : { text: `Gas check due now · ${gas.day.kitchen ? "the kitchen closes" : "the last shift ends"} at ${londonHM(gas.day.closeAt)}`, tone: "" as const }
       : last ? last.check ? { text: `Last close: gas off, checked by ${by(last.check)}`, tone: "good" as const } : { text: "Last close: no gas-off check", tone: "bad" as const }
       : undefined;
-    return { id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason, lists: lists.length, signed, overdue, alerts, ready, gas: gasLine };
+    return { id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason, lists: lists.length, signed, overdue, alerts, ready, gas: gasLine, gasBy: s.gasBy };
   }));
   const names = new Map(everyone.map((p) => [p.id, p.name]));
   const order = { active: 0, frozen: 1, left: 2 } as const;

@@ -161,6 +161,19 @@ describe("the daily loop on the scheduler", () => {
     resetDemo();
   });
 
+  it("gas check at kitchen close: from 15 minutes before it, for everyone still on shift, managers alerted 30 minutes after", async () => {
+    resetDemo();
+    await rota();
+    await demoStore.setSiteGasBy("EAS", "21:30");
+    expect(await queueGasChecks(at("21:10"), demoStore)).toBe(0);
+    expect(await queueGasChecks(at("21:15"), demoStore)).toBe(1); // DEMO-FOH is on until 22:15; DEMO-BOH left at 15:00
+    expect(await queueGasChecks(at("22:00"), demoStore)).toBe(3);
+    expect((await demoStore.notices("DEMO-MGR", 10)).filter((n) => n.kind === "gas")[0].body).toMatch(/^The kitchen closed at 21:30/);
+    await demoStore.setSiteGasBy("EAS", null);
+    expect((await demoStore.site("EAS"))?.gasBy).toBeUndefined();
+    resetDemo();
+  });
+
   const usesChecklists = () => demoStore.addAnswer("EAS-FOH-OPEN", "2026-11-01", { itemId: "EAS-FOH-OPEN#1", value: "", outcome: "done", recordedBy: "DEMO-FOH", capturedAt: londonToUtc("2026-11-01", "11:00") });
 
   it("not ready at the ready time tells managers and the owner once; a day with no rota tells nobody", async () => {

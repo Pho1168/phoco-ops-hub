@@ -461,6 +461,11 @@ export const demoStore: Store = {
     });
   },
 
+  async setSiteGasBy(id, gasBy) {
+    const s = S().sites.find((x) => x.id === id);
+    if (s) s.gasBy = gasBy ?? undefined;
+  },
+
   async people() { return S().people; },
   async person(id) { return S().people.find((p) => p.id === id); },
   async updatePerson(id, patch) { const p = S().people.find((x) => x.id === id); if (p) withStarts([id], () => Object.assign(p, patch)); },
