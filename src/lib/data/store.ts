@@ -77,6 +77,8 @@ export interface Store {
   site(id: SiteId): Promise<Site | undefined>;
   /** Opens or closes a site. Reopening starts training again for the people who train there (see createPerson). */
   setSiteStatus(id: SiteId, status: Site["status"], reason?: string): Promise<void>;
+  /** The kitchen-close time ("HH:MM"), or null to go back to the end of the last shift. */
+  setSiteGasBy(id: SiteId, gasBy: string | null): Promise<void>;
 
   people(): Promise<Person[]>;
   person(id: string): Promise<Person | undefined>;

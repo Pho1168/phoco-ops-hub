@@ -180,8 +180,8 @@ function toPerson(r: PersonRow): Person {
   };
 }
 
-function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null; ready_by: string | null }): Site {
-  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason), readyBy: r.ready_by ?? undefined };
+function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null; ready_by: string | null; gas_by: string | null }): Site {
+  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason), readyBy: r.ready_by ?? undefined, gasBy: r.gas_by ?? undefined };
 }
 
 async function selectPeople(where: postgres.PendingQuery<postgres.Row[]> | null): Promise<Person[]> {
@@ -381,12 +381,12 @@ async function withStarts<T>(tx: postgres.ReservedSql, personIds: string[], chan
 export const sqlStore: Store = {
   async sites() {
     const q = sql();
-    return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by from sites order by case id when 'EAS' then 1 when 'WEM' then 2 else 3 end`)
+    return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by from sites order by case id when 'EAS' then 1 when 'WEM' then 2 else 3 end`)
       .map((r) => toSite(r as Parameters<typeof toSite>[0]));
   },
   async site(id) {
     const q = sql();
-    const [r] = await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by from sites where id = ${id}`;
+    const [r] = await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by from sites where id = ${id}`;
     return r ? toSite(r as Parameters<typeof toSite>[0]) : undefined;
   },
   async setSiteStatus(id, status, reason) {
@@ -397,6 +397,10 @@ export const sqlStore: Store = {
         else await tx`update sites set status = 'open', closed_reason = null, closed_at = null, closed_by = null where id = ${id}`;
       });
     });
+  },
+
+  async setSiteGasBy(id, gasBy) {
+    await sql()`update sites set gas_by = ${gasBy} where id = ${id}`;
   },
 
   async people() { return selectPeople(null); },

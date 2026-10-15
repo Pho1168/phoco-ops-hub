@@ -41,7 +41,7 @@ export function GasCheck({ siteId, siteName, state, closeAt, done, needsPin = fa
       <section className={`alert ${state === "overdue" ? "bad" : ""}`} aria-label="Gas check" style={{ flexWrap: "wrap" }}>
         <Icon name="flame" />
         <div className="grow stack" style={{ gap: 4, minWidth: 200 }}>
-          <div className="strong">{state === "overdue" ? `Gas check not done · last shift ended ${closeAt}` : `Gas check before you leave · ${siteName}`}</div>
+          <div className="strong">{state === "overdue" ? `Gas check not done · due at ${closeAt}` : `Gas check before you leave · ${siteName}`}</div>
           <div style={{ fontSize: 13 }}>Make sure every gas appliance and the gas supply are off, then tap the button.</div>
           {err && !asking && <div className="err" role="alert">{err}</div>}
         </div>

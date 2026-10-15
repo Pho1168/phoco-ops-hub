@@ -1,6 +1,6 @@
 import { canManage, isLead } from "./access";
-import { shiftEnd, type ReplyKind, type ShiftTimes } from "./reminders";
-import { londonHM, londonToUtc, shortDay } from "./time";
+import { shiftEnd, shiftStart, type ReplyKind, type ShiftTimes } from "./reminders";
+import { addDays, londonHM, londonToUtc, shortDay } from "./time";
 import type { Person, SiteId } from "./types";
 
 /**
@@ -92,19 +92,37 @@ export const GAS_ALERT_MIN = 30;
 /** ...and the check can still be done until this long after. */
 export const GAS_OPEN_HOURS = 6;
 
-export interface GasDay { siteId: SiteId; date: string; closeAt: number; closers: string[] }
+/** `kitchen`: closeAt is the site's kitchen-close time (`sites.gas_by`), not the end of the last shift. */
+export interface GasDay { siteId: SiteId; date: string; closeAt: number; closers: string[]; kitchen?: boolean }
+
+/** A kitchen-close time before 05:00 belongs to the night after the business date. */
+export const kitchenCloseAt = (date: string, gasBy: string) => londonToUtc(gasBy < "05:00" ? addDays(date, 1) : date, gasBy);
 
 /**
- * A site's close on a day: when its last published shift ends, and who's on until then (finishing within 30 minutes
- * of it). People who said they can't make that shift (`absent`, shift ids) aren't asked.
+ * A site's close on a day. Without a kitchen-close time (`gasBy`): when its last published shift ends, and who's on
+ * until then (finishing within 30 minutes of it). With one: the kitchen-close time on that day (never after the last
+ * shift ends), and everyone on shift then (started by it, finishing no more than 30 minutes before it); if nobody is,
+ * those on until the last shift ends. People who said they can't make that shift (`absent`, shift ids) aren't asked.
  */
-export function gasDay(siteId: SiteId, date: string, shifts: (ShiftTimes & { id?: string; personId: string; siteId: SiteId })[], absent: Set<string> = new Set()): GasDay | undefined {
+export function gasDay(siteId: SiteId, date: string, shifts: (ShiftTimes & { id?: string; personId: string; siteId: SiteId })[], absent: Set<string> = new Set(), gasBy?: string): GasDay | undefined {
   const day = shifts.filter((s) => s.siteId === siteId && s.date === date);
   if (!day.length) return undefined;
-  const closeAt = Math.max(...day.map(shiftEnd));
-  const closers = Array.from(new Set(day.filter((s) => shiftEnd(s) >= closeAt - 30 * 60_000 && !(s.id && absent.has(s.id))).map((s) => s.personId)));
-  return { siteId, date, closeAt, closers };
+  const lastEnd = Math.max(...day.map(shiftEnd));
+  const here = day.filter((s) => !(s.id && absent.has(s.id)));
+  const until = (at: number) => Array.from(new Set(here.filter((s) => shiftStart(s) <= at && shiftEnd(s) >= at - 30 * 60_000).map((s) => s.personId)));
+  const atEnd = Array.from(new Set(here.filter((s) => shiftEnd(s) >= lastEnd - 30 * 60_000).map((s) => s.personId)));
+  if (gasBy) {
+    const kitchen = kitchenCloseAt(date, gasBy);
+    if (kitchen < lastEnd) {
+      const on = until(kitchen);
+      return { siteId, date, closeAt: kitchen, closers: on.length ? on : atEnd, kitchen: true };
+    }
+  }
+  return { siteId, date, closeAt: lastEnd, closers: atEnd };
 }
+
+/** How the close is named in messages: "the kitchen closed at 21:30" or "the last shift ended at 22:15". */
+export const closeWords = (d: Pick<GasDay, "kitchen">) => d.kitchen ? "the kitchen closed" : "the last shift ended";
 
 /** The day the gas check went live. Closes before it aren't judged: there was nothing to tap then. */
 export const GAS_CHECKS_START = "2026-10-12";
@@ -145,7 +163,7 @@ export function gasMessages(site: { id: SiteId; name: string }, d: GasDay, state
     const names = people.filter((p) => d.closers.includes(p.id)).map((p) => p.name);
     return managersOf(people, site.id).map((p) => ({
       kind: "alert" as const, personId: p.id, title: `No gas-off check at ${site.name}`,
-      body: `The last shift ended at ${hm(d.closeAt)} and nobody has confirmed the gas is off.${names.length ? ` Closing: ${listOf(names)}.` : ""}`,
+      body: `${d.kitchen ? "The kitchen closed" : "The last shift ended"} at ${hm(d.closeAt)} and nobody has confirmed the gas is off.${names.length ? ` Closing: ${listOf(names)}.` : ""}`,
       dedupeKey: `gasalert|${site.id}|${d.date}|${p.id}`, url: urlFor(p),
     }));
   }

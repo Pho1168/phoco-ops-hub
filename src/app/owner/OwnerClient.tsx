@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { closeSite, logOutEverywhere, reopenSite, resolveAlert, setFrozen, switchSite } from "@/app/actions";
+import { closeSite, logOutEverywhere, reopenSite, resolveAlert, setFrozen, setKitchenClose, switchSite } from "@/app/actions";
 import { Icon } from "@/components/Icon";
 import { ReadyLight } from "@/components/ReadyLight";
 import type { Ready } from "@/lib/domain/daily";
@@ -15,6 +15,8 @@ export interface SiteSummary {
   ready?: Ready;
   /** The gas check: due, not done, or done (now, or at the last close). */
   gas?: { text: string; tone: "good" | "bad" | "" };
+  /** Kitchen closes ("21:30"): the gas check is due then. Unset: when the last shift ends. */
+  gasBy?: string;
 }
 /** `canEdit`: whoever is looking may change this account (an operations manager: staff and managers at their sites only). */
 export interface PersonRow { id: string; name: string; code: string; status: string; self: boolean; sites: string; canEdit: boolean }
@@ -59,6 +61,7 @@ export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, pe
                 <Icon name="flame" /><div className="grow" style={{ fontSize: 14 }}>{s.gas.text}</div>
               </div>
             )}
+            {lead === "owner" && !s.closed && <KitchenClose site={s} pending={pending} save={(v) => run(() => setKitchenClose(s.id, v), v ? `${s.name}: the kitchen closes at ${v}` : `${s.name}: the gas check follows the last shift again`)} />}
             <div className="row wrap" style={{ gap: 22 }}>
               <div><div className="stat">{s.signed}/{s.lists}</div><div className="muted">signed off</div></div>
               <div><div className="stat" style={{ color: s.overdue ? "var(--accent)" : undefined }}>{s.overdue}</div><div className="muted">overdue</div></div>
@@ -187,5 +190,18 @@ function ResolveModal({ err, pending, onCancel, onConfirm }: { err: string; pend
         <div className="row"><button type="button" className="btn ghost" onClick={onCancel}>Cancel</button><button className="btn grow" type="submit" disabled={pending}>Resolve</button></div>
       </form>
     </div>
+  );
+}
+
+/** The owner sets when the kitchen closes: the gas check is due then, for everyone still on shift. */
+function KitchenClose({ site, pending, save }: { site: SiteSummary; pending: boolean; save: (v: string) => void }) {
+  const [v, setV] = useState(site.gasBy ?? "");
+  return (
+    <form className="row wrap" style={{ gap: 8 }} onSubmit={(e) => { e.preventDefault(); save(v); }}>
+      <label className="row" style={{ gap: 8 }} htmlFor={`gas-by-${site.id}`}><Icon name="flame" /><span className="strong" style={{ fontSize: 14 }}>Kitchen closes</span></label>
+      <input id={`gas-by-${site.id}`} className="txt" type="time" step={900} value={v} onChange={(e) => setV(e.target.value)} style={{ width: 120 }} />
+      <button type="submit" className="btn ghost small" disabled={pending || v === (site.gasBy ?? "")}>Save</button>
+      <span className="muted" style={{ fontSize: 13, flexBasis: "100%" }}>{site.gasBy ? `The gas check is due at ${site.gasBy} every day, for everyone still on shift. Clear it to use the end of the last shift.` : "Not set: the gas check is due when the last shift on the rota ends."}</span>
+    </form>
   );
 }

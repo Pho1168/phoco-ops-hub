@@ -13,6 +13,8 @@ export interface Site {
   closedReason?: string;
   /** "12:00": the opening checks must be signed by then (ready to open). */
   readyBy?: string;
+  /** "21:30": the kitchen closes and the gas check is due (gas off at close). Unset: when the last shift ends. */
+  gasBy?: string;
 }
 
 export interface SiteAccess {

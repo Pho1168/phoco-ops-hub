@@ -523,6 +523,22 @@ export async function closeSite(siteId: string, typedName: string, reason: strin
   return { ok: true };
 }
 
+/** The owner sets when a site's kitchen closes ("HH:MM"), or clears it (""): the gas check is due then. */
+export async function setKitchenClose(siteId: string, value: string): Promise<ActionResult> {
+  const ctx = await requireOwner();
+  const db = store();
+  const site = await db.site(SiteIdZ.parse(siteId));
+  if (!site) return { ok: false, error: "Site not found" };
+  const parsed = z.union([z.literal(""), z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)]).safeParse(value.trim());
+  if (!parsed.success) return { ok: false, error: "Enter a time like 21:30" };
+  const next = parsed.data || null;
+  if (next === (site.gasBy ?? null)) return { ok: true };
+  await db.setSiteGasBy(site.id, next);
+  await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "site.kitchen_close", detail: next ? `Kitchen closes at ${next}${site.gasBy ? ` (was ${site.gasBy})` : " (was the end of the last shift)"}: the gas check is due then` : `Kitchen close time cleared (was ${site.gasBy}): the gas check is due when the last shift ends` });
+  revalidatePath("/owner");
+  return { ok: true };
+}
+
 export async function reopenSite(siteId: string): Promise<ActionResult> {
   const ctx = await requireOwner();
   const db = store();

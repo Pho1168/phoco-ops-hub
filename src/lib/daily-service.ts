@@ -80,27 +80,27 @@ export interface GasNow { day: GasDay; state: GasState; check?: GasCheck }
  * The site's gas check that's open now (today's, or last night's after midnight), with its state. Undefined outside
  * the window. People who said they can't make the closing shift aren't counted as closers.
  */
-export async function gasFor(site: Pick<Site, "id" | "status">, now = Date.now(), db: Store = store(), known: Pick<Known, "shifts"> = {}): Promise<GasNow | undefined> {
+export async function gasFor(site: Pick<Site, "id" | "status" | "gasBy">, now = Date.now(), db: Store = store(), known: Pick<Known, "shifts"> = {}): Promise<GasNow | undefined> {
   if (site.status !== "open") return undefined;
   const today = londonDate(now), yesterday = addDays(today, -1);
   const shifts = await siteShifts(site.id, [yesterday, today], db, known.shifts);
-  const open = openGasDay([gasDay(site.id, today, shifts), gasDay(site.id, yesterday, shifts)], now);
+  const open = openGasDay([gasDay(site.id, today, shifts, undefined, site.gasBy), gasDay(site.id, yesterday, shifts, undefined, site.gasBy)], now);
   if (!open) return undefined;
   const [replies, [check]] = await Promise.all([
     db.shiftReplies(shifts.filter((s) => s.date === open.date).map((s) => s.id)),
     db.gasChecks([site.id], open.date, open.date),
   ]);
   const absent = new Set(Array.from(latestReplies(replies).values()).filter((r) => r.kind === "cant_make_it").map((r) => r.shiftId));
-  const day = gasDay(site.id, open.date, shifts, absent)!;
+  const day = gasDay(site.id, open.date, shifts, absent, site.gasBy)!;
   return { day, state: gasState(day, check?.createdAt, now), check };
 }
 
 /** The site's last close whose gas check window is over, and whether the check was done. Undefined if there's none in the last 3 days. */
-export async function lastClose(site: Pick<Site, "id">, now = Date.now(), db: Store = store(), known: Pick<Known, "shifts"> = {}): Promise<{ date: string; check?: GasCheck } | undefined> {
+export async function lastClose(site: Pick<Site, "id" | "gasBy">, now = Date.now(), db: Store = store(), known: Pick<Known, "shifts"> = {}): Promise<{ date: string; check?: GasCheck } | undefined> {
   const today = londonDate(now);
   const dates = [addDays(today, -2), addDays(today, -1), today];
   const shifts = await siteShifts(site.id, dates, db, known.shifts);
-  const day = lastCloseDay(dates.map((d) => gasDay(site.id, d, shifts)), now);
+  const day = lastCloseDay(dates.map((d) => gasDay(site.id, d, shifts, undefined, site.gasBy)), now);
   if (!day) return undefined;
   const [check] = await db.gasChecks([site.id], day.date, day.date);
   return { date: day.date, check };
