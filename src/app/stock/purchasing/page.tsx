@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { store } from "@/lib/data";
 import { canPurchase, isUrgent, latestPrice, lineEnd, methodOf, onProductionTeam, pounds, spendOf, supplierGroups, TASK_LABEL, taskCode, taskState } from "@/lib/domain/stock";
-import { addDays, londonDate, shortDay } from "@/lib/domain/time";
+import { DOW, dowOf, isScheduled, nextRound } from "@/lib/domain/supplier-orders";
+import { addDays, londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { stockView } from "@/lib/stock-service";
 import { StockBar, StockNav } from "../Bar";
 import { ownerStockCtx } from "../load";
@@ -19,12 +20,17 @@ export default async function Purchasing(props: { searchParams: Promise<{ site?:
   const db = store();
   const now = Date.now();
   const today = londonDate(now);
-  const [{ catalog, data, items }, sites, people, purchasers] = await Promise.all([stockView(db, now), db.sites(), db.people(), db.purchaserIds()]);
+  const [{ catalog, data, items }, sites, people, purchasers, cfgs] = await Promise.all([stockView(db, now), db.sites(), db.people(), db.purchaserIds(), db.supplierOrders()]);
+  // Suppliers on order days (Surelygrow) are ordered from their own page, not handed out here.
+  const onDays = cfgs.filter(isScheduled);
+  const onDaysIds = new Set(onDays.map((c) => c.supplierId));
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   const site = sites.find((s) => s.id === sp.site)?.id;
   const shownItems = items.filter((x) => !site || x.request.siteId === site);
-  const groups = supplierGroups(shownItems, catalog.products, catalog.suppliers, data.events, catalog.prices)
+  const allGroups = supplierGroups(shownItems, catalog.products, catalog.suppliers, data.events, catalog.prices)
     .filter((g) => !sp.supplier || (g.supplier?.id ?? "none") === sp.supplier);
+  const groups = allGroups.filter((g) => !g.supplier || !onDaysIds.has(g.supplier.id));
+  const scheduledGroups = allGroups.filter((g) => g.supplier && onDaysIds.has(g.supplier.id));
 
   const liveTasks = data.tasks.filter((t) => !t.cancelledAt);
   const stateOf = new Map(liveTasks.map((t) => [t.id, taskState(t, data.lines, data.events)]));
@@ -36,7 +42,7 @@ export default async function Purchasing(props: { searchParams: Promise<{ site?:
   const supOfTask = (taskId: string) => catalog.suppliers.find((s) => s.id === data.tasks.find((t) => t.id === taskId)?.supplierId);
 
   // The cards.
-  const waiting = shownItems.filter((x) => x.progress.toPlan > 0 || x.progress.state === "needs_qty");
+  const waiting = shownItems.filter((x) => (x.progress.toPlan > 0 || x.progress.state === "needs_qty") && !onDaysIds.has(x.request.supplierId ?? ""));
   const urgentWaiting = waiting.filter((x) => isUrgent(x.request, data.events));
   const unassignedTasks = openTasks.filter((t) => !t.assigneeId && t.method !== "production");
   const awaitingPurchase = openLines.filter((l) => supOfTask(l.taskId)?.method !== "production" && data.tasks.find((t) => t.id === l.taskId)?.method !== "production").length;
@@ -111,7 +117,17 @@ export default async function Purchasing(props: { searchParams: Promise<{ site?:
 
         <section className="stack" id="board" aria-label="To give to someone">
           <h2 className="grp-h">To give to someone <span>grouped by supplier · each restaurant&apos;s share kept</span></h2>
-          {!board.length && <div className="card muted">Nothing waiting. New reports show here.</div>}
+          {scheduledGroups.map((g) => {
+            const cfg = onDays.find((c) => c.supplierId === g.supplier!.id)!;
+            const r = nextRound(cfg.days, now, today);
+            return (
+              <div key={g.supplier!.id} className="card row wrap" style={{ gap: 10 }}>
+                <span className="grow"><b>{g.supplier!.name}</b> is ordered on its order days: {g.rows.length} product{g.rows.length === 1 ? "" : "s"} waiting go on the next order{r ? ` (by ${DOW[dowOf(r.cutDate)].slice(0, 3)} ${londonHM(r.cutoffAt)})` : ""}.</span>
+                <Link className="btn ghost small" href={`/stock/orders/${g.supplier!.id}`}>Open the order</Link>
+              </div>
+            );
+          })}
+          {!board.length && !scheduledGroups.length && <div className="card muted">Nothing waiting. New reports show here.</div>}
           <GroupsBoard groups={board} people={assignable} tomorrow={addDays(today, 1)} />
         </section>
 

@@ -20,6 +20,8 @@ export interface StockCount {
   id: string; siteId: SiteId; countedBy: string; countedByName?: string; date: string;
   /** One per product counted. A product left out was not counted. */
   lines: CountLine[]; note?: string; createdAt: number;
+  /** A supplier's products counted on an order day. Unset: the kitchen's own production list. */
+  supplierId?: string;
 }
 /** The latest target for a product at a kitchen. No qty: the target was taken off. */
 export interface StockTarget { siteId: SiteId; productId: string; qty?: number; setBy: string; setByName?: string; setAt: number }

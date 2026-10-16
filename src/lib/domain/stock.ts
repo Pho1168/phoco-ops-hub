@@ -46,6 +46,8 @@ export interface Product {
   link?: string;
   /** The name it had in the order sheet it was imported from, kept so it can be traced. */
   importName?: string;
+  /** False: restaurants can't ask for it when its supplier delivers only to a kitchen (raw ingredients). Default true. */
+  forRestaurants?: boolean;
 }
 
 /** A reference price (pence, ex VAT) on a date: history, never a promise. */
@@ -179,8 +181,10 @@ export interface PurchaseTask {
   /** Collects an online order, or drives a production order over. */
   driverId?: string; driverName?: string;
   requiredBy?: string; priority: Priority; note?: string;
-  /** Production orders: the restaurant it's for. */
+  /** Production orders: the restaurant it's for. A scheduled supplier's order: the kitchen it's delivered to. */
   destination?: SiteId;
+  /** A scheduled supplier's order: its round (the cut-off moment). One order per supplier and round. */
+  roundAt?: number;
   createdBy: string; createdAt: number; cancelledAt?: number; cancelReason?: string;
 }
 export interface TaskLine { id: string; taskId: string; requestId: string; qty: number }
@@ -189,7 +193,9 @@ export type Terminal = (typeof TERMINAL)[number];
 export type EventKind = Terminal
   | "reported_again" | "qty_changed" | "supplier_changed" | "request_cancelled"
   | "assigned" | "acknowledged" | "ordered" | "cost" | "collected" | "delivered" | "task_cancelled"
-  | "picked" | "packed" | "substitute" | "substitute_ok" | "substitute_no" | "note";
+  | "picked" | "packed" | "substitute" | "substitute_ok" | "substitute_no" | "note"
+  /** A delivery brought less than was bought (short, not delivered, wrong): that much goes back to waiting. */
+  | "short";
 export interface StockEvent {
   id: string; at: number; by: string; byName?: string; kind: EventKind;
   taskId?: string; lineId?: string; requestId?: string;
@@ -234,6 +240,9 @@ export interface Progress {
   unavailable?: StockEvent;
 }
 
+/** What deliveries of a line didn't bring (recorded once the line was bought). */
+export const shortOf = (line: Pick<TaskLine, "id">, events: StockEvent[]) => events.filter((e) => e.lineId === line.id && e.kind === "short").reduce((s, e) => s + (e.qty ?? 0), 0);
+
 /** Where a request stands, from its lines (on tasks not cancelled), their events and its receipts. */
 export function progress(r: StockRequest, lines: TaskLine[], events: StockEvent[], receipts: Receipt[], tasks: Pick<PurchaseTask, "id" | "cancelledAt">[]): Progress {
   const live = new Set(tasks.filter((t) => !t.cancelledAt).map((t) => t.id));
@@ -242,7 +251,7 @@ export function progress(r: StockRequest, lines: TaskLine[], events: StockEvent[
   for (const l of lines.filter((x) => x.requestId === r.id)) {
     const end = lineEnd(l, events);
     if (end) {
-      obtained += end.qty;
+      obtained += Math.max(0, end.qty - shortOf(l, events));
       if (end.kind === "unavailable" && (!unavailable || end.event.at > unavailable.at)) unavailable = end.event;
     } else if (live.has(l.taskId)) planned += l.qty;
   }
