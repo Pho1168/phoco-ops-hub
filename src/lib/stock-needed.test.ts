@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
 import { cleanNewItems, lookAlikes, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
 import { buildPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
-import { addNewItem, deliversTo, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
+import { addNewItem, clearNeeded, deliversTo, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
 
 const NOW = Date.UTC(2026, 9, 16, 21, 0);
 
@@ -194,5 +194,26 @@ describe("new items: asked for but not in the catalogue", () => {
     expect(prod.rows[0]).toMatchObject({ qty: 2 });
     expect(prod.rows[0].lineIds).toHaveLength(1); // straight onto the kitchen's order
     expect((await db.stockNewItems({})).find((n) => n.id === items[2].id)).toMatchObject({ dismissed: "Not something we stock", decidedBy: "DEMO-OWN" });
+  });
+});
+
+describe("clearing Stock needed", () => {
+  it("cancels everything on it (drivers' lists too), keeps what's partly bought, and leaves the history", async () => {
+    const { created } = await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 2 }, { name: "Soup", qty: 6 }, { name: "Coconut Milk", qty: 4 }, { name: "Che Lychee", qty: 2 }]);
+    const wy = (await group("Wing Yip (demo)"))!;
+    const made = await giveToDriver(db, await owner(), wy.key, "DEMO-FLT", [wy.rows.find((r) => r.product.name === "Coconut Milk")!.product.id], NOW);
+    const task = (await db.stockTask((made as { value: string }).value))!;
+    // Che Lychee: half bought on another list, so it can't be cancelled.
+    const che = created.find((c) => c.productId === wy.rows.find((r) => r.product.name === "Che Lychee")!.product.id)!;
+    const t2 = await db.createStockTask({ supplierId: wy.supplier!.id, method: "shop", assigneeId: "DEMO-FLT", priority: "normal", createdBy: "DEMO-OWN" }, [{ requestId: che.id, qty: 1 }]);
+    const l2 = (await db.stockTask((t2 as { value: string }).value))!.lines[0];
+    await db.addStockEvent({ by: "DEMO-FLT", kind: "bought", lineId: l2.id, qty: 1 });
+    expect((await clearNeeded(db, (await db.person("DEMO-BOH"))!, NOW)).ok).toBe(false); // staff can't
+    const r = await clearNeeded(db, (await db.person("DEMO-OPS"))!, NOW);
+    expect(r).toMatchObject({ ok: true, value: { cancelled: 3, kept: 1, lists: 1 } });
+    expect((await db.stockTask(task.tasks[0].id))!.tasks[0].cancelledAt).toBeDefined();
+    const left = await groups();
+    expect(left.flatMap((g) => g.rows.map((x) => [x.product.name, x.qty]))).toEqual([["Che Lychee", 1]]);
+    expect(await state(created.find((c) => c.productId === (wy.rows.find((x) => x.product.name === "Coconut Milk")!.product.id))!.id)).toBe("cancelled");
   });
 });

@@ -6,6 +6,7 @@ import { StockBar, StockNav } from "../Bar";
 import { orderingStockCtx } from "../load";
 import { NeededBoard, type BoardGroup } from "./NeededBoard";
 import { NewItemsCard } from "./NewItemsCard";
+import { ClearNeeded } from "./ClearNeeded";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,8 @@ export default async function NeededPage() {
   const [{ groups, sites, items, siteIds, catalog }, people, purchasers] = await Promise.all([neededView(db, ctx.person, now), db.people(), db.purchaserIds()]);
   const newItems = await db.stockNewItems({ open: true, siteIds });
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
+  // What clearing would take off: every row and every item with a driver, and new items (the owner's to decide).
+  const clearable = groups.reduce((n, g) => n + g.rows.length + g.drivers.reduce((m, d) => m + d.open, 0), 0) + (runsPurchasing(ctx.person) ? newItems.length : 0);
   const drivers = people.filter((p) => canPurchase({ ...p, purchaser: purchasers.includes(p.id) }))
     .map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
   const board: BoardGroup[] = groups.map((g) => ({
@@ -48,6 +51,7 @@ export default async function NeededPage() {
             categories={[...new Set(catalog.products.map((p) => p.category).filter((c): c is string => !!c))].sort()} />
         )}
         <NeededBoard groups={board} drivers={drivers} />
+        {(clearable > 0) && <ClearNeeded count={clearable} />}
       </main>
       <StockNav ctx={ctx} onPhone={onPhone} />
     </>
