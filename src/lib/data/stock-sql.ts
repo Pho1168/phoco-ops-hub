@@ -2,7 +2,6 @@ import type postgres from "postgres";
 import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, TERMINAL, withProgress,
   type DraftLine, type EventKind, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { CountLine, StockCount } from "@/lib/domain/stock-count";
-import { checkDeliveryAgainst, OUTCOME_LABEL, planOrderLines, type OrderDay } from "@/lib/domain/supplier-orders";
 import { londonDate } from "@/lib/domain/time";
 import { sql, withTx } from "./pg";
 import type { StockData, StockStore } from "./stock-store";
@@ -379,67 +378,9 @@ export const stockSql: StockStore = {
     });
   },
 
-  async supplierOrders() {
-    const rows = await sql()<{ supplier_id: string; delivers_to: string | null; order_days: OrderDay[]; orderers: string[]; updated_at: Date }[]>`
-      select supplier_id, delivers_to, order_days, orderers, updated_at from stock_supplier_orders`;
-    return rows.map((r) => ({ supplierId: r.supplier_id, ...(r.delivers_to ? { deliversTo: r.delivers_to } : {}), days: r.order_days ?? [], orderers: r.orderers ?? [], updatedAt: r.updated_at.getTime() }));
-  },
-  async saveSupplierOrders(supplierId, cfg, by) {
-    const q = sql();
-    await q`insert into stock_supplier_orders (supplier_id, delivers_to, order_days, orderers, updated_by, updated_at)
-      values (${supplierId}, ${cfg.deliversTo ?? null}, ${q.json(cfg.days as unknown as postgres.JSONValue)}, ${cfg.orderers}::uuid[], ${by}, now())
-      on conflict (supplier_id) do update set delivers_to = excluded.delivers_to, order_days = excluded.order_days, orderers = excluded.orderers,
-        updated_by = excluded.updated_by, updated_at = now()`;
-  },
-  async generateSupplierOrder(o) {
-    if (!UUID.test(o.supplierId)) return { ok: false, error: "That supplier isn't there" };
-    return withTx(async (tx) => {
-      await tx`select id from stock_suppliers where id = ${o.supplierId} for update`;
-      const [dupe] = await tx<{ id: string }[]>`select id from stock_tasks where supplier_id = ${o.supplierId} and round_at = ${new Date(o.roundAt)} and cancelled_at is null`;
-      if (dupe) return { ok: false as const, error: "This delivery has already been ordered" };
-      const ids = (await tx<{ id: string }[]>`select id from stock_requests where site_id = ${o.siteId} and supplier_id = ${o.supplierId} and cancelled_at is null
-        and product_id = any(${o.lines.map((l) => l.productId)}::uuid[])`).map((r) => r.id);
-      const d = await lockRequests(tx, ids);
-      const plan = planOrderLines(o.lines, withProgress(d), o.siteId, o.supplierId);
-      const lines: { requestId: string; qty: number }[] = [];
-      for (const u of plan.use) {
-        if (u.setQty !== undefined) {
-          await tx`update stock_requests set fixed_qty = ${u.setQty} where id = ${u.requestId}`;
-          await tx`insert into stock_events (by, kind, request_id, qty, text) values (${o.by}, 'qty_changed', ${u.requestId}, ${u.setQty}, ${"was not sure: set by the order"})`;
-        }
-        lines.push({ requestId: u.requestId, qty: u.qty });
-      }
-      for (const c of plan.create) {
-        const level = o.lines.find((l) => l.productId === c.productId)?.level ?? "low";
-        const [r] = await tx<{ id: string }[]>`insert into stock_requests (site_id, product_id, level, qty, note, requested_by, supplier_id)
-          values (${o.siteId}, ${c.productId}, ${level}, ${c.qty}, ${"From the count"}, ${o.by}, ${o.supplierId}) returning id`;
-        lines.push({ requestId: r.id, qty: c.qty });
-      }
-      const [t] = await tx<{ id: string }[]>`insert into stock_tasks (supplier_id, method, assignee_id, required_by, priority, note, destination, created_by, round_at)
-        values (${o.supplierId}, 'delivery', ${o.assigneeId}, ${o.requiredBy}, 'normal', ${o.note ?? null}, ${o.siteId}, ${o.by}, ${new Date(o.roundAt)}) returning id`;
-      for (const l of lines) await tx`insert into stock_task_lines (task_id, request_id, qty) values (${t.id}, ${l.requestId}, ${l.qty})`;
-      await tx`insert into stock_events (by, kind, task_id, text) values (${o.by}, 'assigned', ${t.id}, ${"created"})`;
-      return { ok: true as const, value: t.id };
-    });
-  },
-  async confirmSupplierDelivery(taskId, by, lines, note) {
-    if (!UUID.test(taskId)) return { ok: false, error: "That order isn't there" };
-    return withTx(async (tx) => {
-      const [t] = await tx<{ id: string }[]>`select id from stock_tasks where id = ${taskId} and cancelled_at is null for update`;
-      if (!t) return { ok: false as const, error: "That order has been cancelled" };
-      const ids = (await tx<{ request_id: string }[]>`select request_id from stock_task_lines where task_id = ${taskId}`).map((r) => r.request_id);
-      const d = await lockRequests(tx, ids);
-      if (d.events.some((e) => e.taskId === taskId && e.kind === "delivered")) return { ok: false as const, error: "This delivery has already been confirmed" };
-      const mine = d.lines.filter((l) => l.taskId === taskId);
-      const check = checkDeliveryAgainst(mine, d, lines);
-      if (!check.ok) return check;
-      for (const l of check.value) {
-        if (l.arrived > 0) await tx`insert into stock_receipts (request_id, qty, by, note) values (${l.requestId}, ${l.arrived}, ${by}, ${l.missing > 0 ? OUTCOME_LABEL[l.outcome] : null})`;
-        if (l.missing > 0) await tx`insert into stock_events (by, kind, task_id, line_id, request_id, qty, text) values (${by}, 'short', ${taskId}, ${l.lineId}, ${l.requestId}, ${l.missing}, ${OUTCOME_LABEL[l.outcome]})`;
-      }
-      await tx`insert into stock_events (by, kind, task_id, text) values (${by}, 'delivered', ${taskId}, ${note ?? null})`;
-      return { ok: true as const, value: undefined };
-    });
+  async supplierDelivers() {
+    const rows = await sql()<{ supplier_id: string; delivers_to: string | null }[]>`select supplier_id, delivers_to from stock_supplier_orders`;
+    return rows.map((r) => ({ supplierId: r.supplier_id, ...(r.delivers_to ? { deliversTo: r.delivers_to } : {}) }));
   },
 };
 

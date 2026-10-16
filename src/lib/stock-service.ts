@@ -2,8 +2,7 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
-import { cleanLines, methodOf, needsEscalation, productionQueue, productLabel, reqCode, taskCode, withProgress, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
-import { supplierAt } from "@/lib/domain/supplier-orders";
+import { cleanLines, lineEnd, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
@@ -28,17 +27,14 @@ export async function stockView(db: Store, now: number, siteIds?: string[], days
  */
 export async function sendStockReport(db: Store, person: Pick<Person, "id">, site: Pick<Site, "id">, now: number): Promise<Done<{ created: StockRequest[]; again: number; noIssues: boolean }>> {
   const draft = await db.stockDraft(site.id, person.id);
-  if (!draft) return { ok: false, error: "There's nothing to send. Add what's low or out, or tap No stock issues today" };
+  if (!draft) return { ok: false, error: "There's nothing to send. Add what you need, or tap No stock issues today" };
   const { catalog, items } = await stockView(db, now, [site.id]);
   const clean = cleanLines(draft.lines, catalog.products);
   if (!clean.ok) return clean;
-  if (!clean.value.length && !draft.noIssues) return { ok: false, error: "Add what's low or out, or tap No stock issues today" };
+  if (!clean.value.length && !draft.noIssues) return { ok: false, error: "Add what you need, or tap No stock issues today" };
   if (clean.value.length && draft.noIssues) await db.saveStockDraft(site.id, person.id, draft.date, clean.value, false);
   void items;
-  // A supplier that delivers only to a kitchen supplies the restaurants through that kitchen (its production order).
-  const cfgs = await db.supplierOrders();
-  const routed = catalog.products.map((p) => ({ id: p.id, supplierId: supplierAt(p, site.id, cfgs, catalog.suppliers) }));
-  const sent = await db.submitStockReport(draft.id, person.id, clean.value, routed);
+  const sent = await db.submitStockReport(draft.id, person.id, clean.value, catalog.products);
   if (!sent) return { ok: false, error: "That report has already been sent" };
   await routeProduction(db, sent.created, person.id, now, catalog.suppliers);
   return { ok: true, value: { created: sent.created, again: sent.again, noIssues: !clean.value.length } };
@@ -77,7 +73,7 @@ export async function notifyTask(db: Store, taskId: string, now: number): Promis
     const what = first ? productLabel(products.find((p) => p.id === first.productId) ?? { name: "items" }) : "items";
     if (await db.queueNotice({ personId, kind: "stock", title: `${taskCode(t)}: ${sup?.name ?? "Purchasing"} · you're the ${role.toLowerCase()}`,
       body: `${n} item${n === 1 ? "" : "s"}${n ? `, starting with ${what}` : ""}${t.requiredBy ? `. Needed by ${t.requiredBy}` : ""}.`,
-      dedupeKey: `stocktask|${t.id}|${personId}|${role}`, sendAfter: t.priority === "urgent" ? afterQuietHours(now, true) : afterQuietHours(now), url: `/stock/tasks/${t.id}` })) sent++;
+      dedupeKey: `stocktask|${t.id}|${personId}|${role}`, sendAfter: t.priority === "urgent" ? afterQuietHours(now, true) : afterQuietHours(now), url: "/stock/tasks" })) sent++;
   }
   return sent;
 }
@@ -94,10 +90,111 @@ export async function queueStockEscalations(now = Date.now(), db: Store = store(
     for (const o of owners) {
       if (await db.queueNotice({ personId: o.id, kind: "stock", title: `Out of stock, nobody assigned · ${sites.get(r.siteId) ?? r.siteId}`,
         body: `${product ? productLabel(product) : "A product"} (${reqCode(r)}) was reported out and nobody has it yet.`,
-        dedupeKey: `stockurgent|${r.id}|${o.id}`, sendAfter: afterQuietHours(now, true), url: "/stock/purchasing" })) queued++;
+        dedupeKey: `stockurgent|${r.id}|${o.id}`, sendAfter: afterQuietHours(now, true), url: "/stock/needed" })) queued++;
     }
   }
   return queued;
+}
+
+// ---------- Stock needed ----------
+
+/** The Stock needed page for this person: every supplier's list at the sites they order for. */
+export async function neededView(db: Store, person: Pick<Person, "status" | "access">, now: number) {
+  const [{ catalog, data, items }, sites] = await Promise.all([stockView(db, now), db.sites()]);
+  const siteIds = orderingSites(person, sites.filter((s) => s.status === "open").map((s) => s.id));
+  const groups = neededGroups(items, data, catalog.products, catalog.suppliers, siteIds);
+  return { catalog, data, items, sites, siteIds, groups };
+}
+
+/** One supplier's group as it is now (the page sends its key), or undefined. */
+export async function neededGroup(db: Store, person: Pick<Person, "status" | "access">, key: string, now: number): Promise<{ group?: NeededGroup; siteIds: string[] }> {
+  const v = await neededView(db, person, now);
+  return { group: v.groups.find((g) => g.key === key), siteIds: v.siteIds };
+}
+
+const TICK_NOTE = "Ticked off on Stock needed";
+
+/**
+ * Ticks products off a supplier's list: done. Ordered or bought products become one task for the person ticking, with
+ * a line each, the order placed (bought in full) and arrived (a receipt), so nothing is left waiting. A production
+ * kitchen's products are sent (dispatched) and arrived. Only what's still needed now is ticked (two people at once
+ * can't tick the same thing twice: the task's lines are checked again in the store).
+ */
+export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productIds: string[], now: number): Promise<Done<{ ticked: number }>> {
+  let { group } = await neededGroup(db, person, key, now);
+  if (!group) return { ok: false, error: "That list has changed. Refresh and try again" };
+  // A production product asked for but not yet on the kitchen's order (it had no amount then): onto it first.
+  const unrouted = group.production ? group.rows.filter((r) => productIds.includes(r.product.id)).flatMap((r) => r.requestIds) : [];
+  if (unrouted.length) {
+    const reqs = (await db.stockData({ since: stockSince(now) })).requests.filter((r) => unrouted.includes(r.id));
+    await routeProduction(db, reqs, person.id, now);
+    group = (await neededGroup(db, person, key, now)).group;
+    if (!group) return { ok: false, error: "That list has changed. Refresh and try again" };
+  }
+  const rows = group.rows.filter((r) => productIds.includes(r.product.id));
+  if (!rows.length) return { ok: false, error: "Those are already done. Refresh to see the list as it is now" };
+  let ticked = 0;
+  if (group.production) {
+    const data = await db.stockData({ since: stockSince(now) });
+    for (const id of rows.flatMap((r) => r.lineIds)) {
+      const line = data.lines.find((l) => l.id === id);
+      if (!line || lineEnd(line, data.events)) continue;
+      const r = await db.addStockEvent({ by: person.id, kind: "dispatched", lineId: id, qty: line.qty, text: TICK_NOTE });
+      if (!r.ok) continue;
+      await db.addStockReceipt(line.requestId, line.qty, person.id, TICK_NOTE);
+      ticked++;
+    }
+    return ticked ? { ok: true, value: { ticked: rows.length } } : { ok: false, error: "Those have already been sent" };
+  }
+  const items = withProgress(await db.stockData({ since: stockSince(now) }));
+  const lines = rows.flatMap((r) => r.requestIds).flatMap((id) => {
+    const x = items.find((i) => i.request.id === id);
+    return x && x.progress.toPlan > 0 ? [{ requestId: id, qty: x.progress.toPlan }] : [];
+  });
+  if (!lines.length) return { ok: false, error: "Those are already done. Refresh to see the list as it is now" };
+  const method = group.supplier?.method ?? "shop";
+  const made = await db.createStockTask({ supplierId: group.supplier?.id, method, assigneeId: person.id, priority: "normal", note: TICK_NOTE, createdBy: person.id }, lines);
+  if (!made.ok) return made;
+  const placed = await db.orderPlaced(made.value, person.id, undefined, undefined);
+  if (!placed.ok) return placed;
+  for (const l of lines) await db.addStockReceipt(l.requestId, l.qty, person.id, TICK_NOTE);
+  return { ok: true, value: { ticked: rows.length } };
+}
+
+/** Gives what a supplier's list still needs (or some of it) to a driver: one task, theirs to tick off on their phone. */
+export async function giveToDriver(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, driverId: string, productIds: string[] | undefined, now: number): Promise<Done<string>> {
+  const { group } = await neededGroup(db, person, key, now);
+  if (!group || group.production) return { ok: false, error: "That list has changed. Refresh and try again" };
+  const items = withProgress(await db.stockData({ since: stockSince(now) }));
+  const lines = group.rows.filter((r) => !productIds || productIds.includes(r.product.id)).flatMap((r) => r.requestIds).flatMap((id) => {
+    const x = items.find((i) => i.request.id === id);
+    return x && x.progress.toPlan > 0 ? [{ requestId: id, qty: x.progress.toPlan }] : [];
+  });
+  if (!lines.length) return { ok: false, error: "There's nothing on this list to give out. Items without an amount need one first" };
+  const made = await db.createStockTask({ supplierId: group.supplier?.id, method: group.supplier?.method ?? "shop", assigneeId: driverId, priority: "normal", createdBy: person.id }, lines);
+  if (!made.ok) return made;
+  await notifyTask(db, made.value, now);
+  return made;
+}
+
+/** A driver ticks a line off: bought (and so arrived), or couldn't get it (it goes back on the Stock needed list). */
+export async function driverTick(db: Store, person: Pick<Person, "id">, lineId: string, got: boolean, now: number): Promise<Done> {
+  const data = await db.stockData({ since: stockSince(now) });
+  const line = data.lines.find((l) => l.id === lineId);
+  const task = line && data.tasks.find((t) => t.id === line.taskId);
+  if (!line || !task || task.cancelledAt) return { ok: false, error: "That isn't on your list any more" };
+  if (task.assigneeId !== person.id && task.driverId !== person.id) return { ok: false, error: "That isn't on your list" };
+  const r = await db.addStockEvent({ by: person.id, kind: got ? "bought" : "unavailable", lineId, qty: got ? line.qty : undefined, text: got ? "Ticked off" : "Couldn't get it" });
+  if (!r.ok) return r;
+  if (got) await db.addStockReceipt(line.requestId, line.qty, person.id, "Bought by the driver");
+  return { ok: true, value: undefined };
+}
+
+/** Where the supplier delivers (a production kitchen's name), for its order sheet. */
+export async function deliversTo(db: Store, supplierId: string | undefined): Promise<string | undefined> {
+  if (!supplierId) return undefined;
+  const d = (await db.supplierDelivers()).find((x) => x.supplierId === supplierId);
+  return d?.deliversTo ? (await db.site(d.deliversTo))?.name : undefined;
 }
 
 /** How far back the plan looks for the latest count (older than that: not counted). */

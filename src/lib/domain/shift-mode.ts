@@ -112,13 +112,6 @@ export interface ShiftInput {
   stockReport?: { closeAt: number; closer: boolean; sentBy?: string; sentAt?: number };
   /** The production count at close (a production kitchen), for the closers: done once anyone there has counted today. */
   productionCount?: { closeAt: number; closer: boolean; sentBy?: string; sentAt?: number };
-  /**
-   * Suppliers on order days delivering to this kitchen (Surelygrow): on a cut-off day the closers count its products
-   * by the cut-off (or close, if that's earlier); done once anyone has, or once it's ordered.
-   */
-  supplierCounts?: { supplierId: string; name: string; dueAt: number; closer: boolean; sentBy?: string; sentAt?: number; ordered: boolean }[];
-  /** On a delivery day, an order placed and not yet confirmed: the kitchen lanes confirm what arrived. */
-  supplierDeliveries?: { supplierId: string; taskId: string; name: string; dueAt: number; doneBy?: string; doneAt?: number }[];
   kitDown: KitDown[]; tasks: TaskToday[];
 }
 
@@ -194,7 +187,7 @@ export function shiftItems(x: ShiftInput): ShiftItem[] {
     const s = x.stockReport;
     const state: ItemState = s.sentAt ? "done" : now >= s.closeAt - STOCK_REPORT_FROM_MIN * 60_000 ? "now" : "later";
     out.push({ kind: "stock", id: "stock", title: "Stock report", href: "/stock/report", state, urgent: false, dueAt: s.closeAt, when: "before you go",
-      detail: s.sentAt ? `Sent${s.sentBy ? ` by ${s.sentBy}` : ""} at ${londonHM(s.sentAt)}` : "What's low or out, for the buyers", doneBy: s.sentBy, doneAt: s.sentAt });
+      detail: s.sentAt ? `Sent${s.sentBy ? ` by ${s.sentBy}` : ""} at ${londonHM(s.sentAt)}` : "What you need ordered, and how many", doneBy: s.sentBy, doneAt: s.sentAt });
   }
 
   if (x.productionCount && (x.productionCount.closer || !x.personId)) {
@@ -202,20 +195,6 @@ export function shiftItems(x: ShiftInput): ShiftItem[] {
     const state: ItemState = c.sentAt ? "done" : now >= c.closeAt - STOCK_REPORT_FROM_MIN * 60_000 ? "now" : "later";
     out.push({ kind: "stock", id: "count", title: "Count production stock", href: "/stock/count", state, urgent: false, dueAt: c.closeAt, when: "before you go",
       detail: c.sentAt ? `Counted${c.sentBy ? ` by ${c.sentBy}` : ""} at ${londonHM(c.sentAt)}` : "What's on the shelf, for tomorrow's plan", doneBy: c.sentBy, doneAt: c.sentAt });
-  }
-
-  for (const c of x.supplierCounts ?? []) {
-    if (!c.closer && x.personId) continue;
-    const done = !!c.sentAt || c.ordered;
-    const state: ItemState = done ? "done" : now > c.dueAt ? "late" : now >= c.dueAt - STOCK_REPORT_FROM_MIN * 60_000 ? "now" : "later";
-    out.push({ kind: "stock", id: `supcount-${c.supplierId}`, title: `Count ${c.name} stock`, href: `/stock/count?for=${c.supplierId}`, state, urgent: state === "late", dueAt: c.dueAt, when: `by ${londonHM(c.dueAt)}`,
-      detail: c.sentAt ? `Counted${c.sentBy ? ` by ${c.sentBy}` : ""} at ${londonHM(c.sentAt)}` : c.ordered ? "Already ordered" : `For tonight's ${c.name} order`, doneBy: c.sentBy, doneAt: c.sentAt });
-  }
-  if (x.window.lane !== "FOH" || !x.personId) for (const d of x.supplierDeliveries ?? []) {
-    const state: ItemState = d.doneAt ? "done" : now >= d.dueAt - 30 * 60_000 ? "now" : "later";
-    out.push({ kind: "stock", id: `supdel-${d.taskId}`, title: `${d.name} delivery`, href: d.doneAt ? `/stock/orders/${d.supplierId}/${d.taskId}` : `/stock/orders/${d.supplierId}/${d.taskId}/delivery`,
-      state, urgent: false, dueAt: d.dueAt, when: `due ${londonHM(d.dueAt)}`,
-      detail: d.doneAt ? `Confirmed${d.doneBy ? ` by ${d.doneBy}` : ""} at ${londonHM(d.doneAt)}` : "Check it against the order, then confirm", doneBy: d.doneBy, doneAt: d.doneAt });
   }
 
   for (const k of x.kitDown) out.push({ kind: "kit", id: k.id, title: `Not working: ${k.name}`, detail: k.body, href: `/equipment/${k.id}`, state: "now", urgent: true });

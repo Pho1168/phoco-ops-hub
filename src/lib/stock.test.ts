@@ -19,6 +19,14 @@ async function report(siteId: string, personId: string, lines: { name: string; l
   if (!r.ok) throw new Error(r.error);
   return r.value;
 }
+/** A report sent before amounts were asked for (some live requests have none): straight to the store, unchecked. */
+async function oldReport(siteId: string, personId: string, lines: { name: string; level: "low" | "out"; qty?: number }[]) {
+  const ls = await Promise.all(lines.map(async (l) => ({ productId: (await product(l.name)).id, level: l.level, qty: l.qty })));
+  const draft = await db.saveStockDraft(siteId, personId, "2026-10-16", ls, false);
+  const r = await db.submitStockReport(draft.id, personId, ls, (await db.stockCatalog()).products);
+  if (!r) throw new Error("not sent");
+  return r;
+}
 const view = () => stockView(db, NOW + 60_000);
 const prog = async (req: StockRequest) => (await view()).items.find((x) => x.request.id === req.id)!.progress;
 
@@ -187,12 +195,16 @@ describe("stock & purchasing: guard rails", () => {
     expect(checkLineEnd("unavailable", undefined, line, [])).toEqual({ ok: true, qty: 0 });
   });
 
-  it("not sure of the quantity: it waits for the owner, who sets one before it's bought", async () => {
-    const [t] = (await report("EAS", "DEMO-BOH", [{ name: "Tofu", level: "low" }])).created;
+  it("a report needs an amount for every item", async () => {
+    await expect(report("EAS", "DEMO-BOH", [{ name: "Tofu", level: "low" }])).rejects.toThrow("Say how many");
+  });
+
+  it("an old request with no amount waits until one is set, before it's bought", async () => {
+    const [t] = (await oldReport("EAS", "DEMO-BOH", [{ name: "Tofu", level: "low" }])).created;
     expect(await prog(t)).toMatchObject({ state: "needs_qty", toPlan: 0 });
     expect(wantedOf(t)).toBeUndefined();
     const { catalog } = await view();
-    const main = catalog.suppliers.find((s) => s.name === "Main Supplier (demo)")!;
+    const main = catalog.suppliers.find((s) => s.name === "Surelygrow (demo)")!;
     expect((await db.createStockTask({ supplierId: main.id, method: "delivery", priority: "normal", createdBy: "DEMO-OWN" }, [{ requestId: t.id, qty: 2 }])).ok).toBe(false);
     expect((await db.changeStockRequest(t.id, { fixedQty: 3 }, "DEMO-OWN")).ok).toBe(true);
     expect(await prog(t)).toMatchObject({ state: "waiting", wanted: 3, toPlan: 3 });
@@ -201,7 +213,7 @@ describe("stock & purchasing: guard rails", () => {
   it("cancelling a task puts its open lines back; a cancelled request can't be bought", async () => {
     const [l] = (await report("EAS", "DEMO-BOH", [{ name: "Lime", level: "low", qty: 2 }])).created;
     const { catalog } = await view();
-    const main = catalog.suppliers.find((s) => s.name === "Main Supplier (demo)")!;
+    const main = catalog.suppliers.find((s) => s.name === "Surelygrow (demo)")!;
     const id = ((await db.createStockTask({ supplierId: main.id, method: "delivery", assigneeId: "DEMO-MGR", priority: "normal", createdBy: "DEMO-OWN" }, [{ requestId: l.id, qty: 2 }])) as { value: string }).value;
     expect(await db.cancelStockTask(id, "DEMO-OWN", "ordered by phone instead")).toBe(true);
     expect(await prog(l)).toMatchObject({ state: "waiting", toPlan: 2 });
@@ -224,7 +236,7 @@ describe("stock & purchasing: after the review", () => {
   it("a product already bought (not yet confirmed) and reported again is a new need, not lost", async () => {
     const [lime] = (await report("EAS", "DEMO-BOH", [{ name: "Lime", level: "out", qty: 2 }])).created;
     const { catalog } = await view();
-    const main = catalog.suppliers.find((s) => s.name === "Main Supplier (demo)")!;
+    const main = catalog.suppliers.find((s) => s.name === "Surelygrow (demo)")!;
     const id = ((await db.createStockTask({ supplierId: main.id, method: "delivery", assigneeId: "DEMO-MGR", priority: "normal", createdBy: "DEMO-OWN" }, [{ requestId: lime.id, qty: 2 }])) as { value: string }).value;
     expect((await db.orderPlaced(id, "DEMO-MGR", "ORD-1")).ok).toBe(true);
     expect(await prog(lime)).toMatchObject({ state: "on_the_way", obtained: 2 });
@@ -233,8 +245,8 @@ describe("stock & purchasing: after the review", () => {
     expect(await prog(next.created[0])).toMatchObject({ state: "waiting", toPlan: 3 });
   });
 
-  it("a quantity given in a later report fills one that was not sure", async () => {
-    const [tofu] = (await report("EAS", "DEMO-BOH", [{ name: "Tofu", level: "low" }])).created;
+  it("a quantity given in a later report fills an old one with none", async () => {
+    const [tofu] = (await oldReport("EAS", "DEMO-BOH", [{ name: "Tofu", level: "low" }])).created;
     const r = await report("EAS", "DEMO-FOH", [{ name: "Tofu", level: "low", qty: 4 }]);
     expect(r.created).toHaveLength(0);
     expect(await prog(tofu)).toMatchObject({ state: "waiting", wanted: 4, toPlan: 4 });
@@ -274,12 +286,15 @@ describe("stock & purchasing: after the review", () => {
 
 describe("stock rules", () => {
   const P = (over: Partial<Product> = {}): Product => ({ id: "p", name: "Fish sauce", active: true, ...over });
-  it("cleans report lines: known products, once each, quantity above 0 or not sure", () => {
+  it("cleans report lines: known products, once each, an amount from 1 (a draft may not have one yet)", () => {
     const products = [P({ id: "a" }), P({ id: "b", active: false })];
     expect(cleanLines([{ productId: "a", level: "low", qty: 2.555 }, { productId: "a", level: "out" }], products)).toEqual({ ok: true, value: [{ productId: "a", level: "low", qty: 2.56 }] });
     expect(cleanLines([{ productId: "b", level: "low" }], products).ok).toBe(false);
     expect(cleanLines([{ productId: "a", level: "low", qty: 0 }], products).ok).toBe(false);
     expect(cleanLines([{ productId: "a", level: "gone" as "low" }], products).ok).toBe(false);
+    expect(cleanLines([{ productId: "a", level: "low" }], products)).toEqual({ ok: false, error: "Say how many you need of every item" });
+    expect(cleanLines([{ productId: "a", level: "low" }], products, { draft: true }).ok).toBe(true);
+    expect(cleanLines([{ productId: "a", level: "low", qty: 10_000 }], products).ok).toBe(false);
   });
   it("keeps different sizes and suppliers as different products", () => {
     const existing = [{ id: "x", name: "Basil Seed", size: "Bag Large", supplierId: "wy" }];

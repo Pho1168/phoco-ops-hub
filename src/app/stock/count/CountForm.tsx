@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { sendProductionCountNow, sendSupplierCountNow } from "@/app/actions";
+import { sendProductionCountNow } from "@/app/actions";
 
 interface P { id: string; name: string; size?: string; category?: string }
 type Kept = { values: Record<string, string>; note: string };
@@ -29,9 +29,7 @@ function forget(key: string) {
  * The count: every item the kitchen sends out, grouped as in the catalogue, a number for each in its own unit (0 when
  * there's none). A blank line wasn't counted. Kept in this tab while it's being done, sent once.
  */
-export function CountForm({ storeKey, siteName, products, last, canPlan, supplier }: { storeKey: string; siteName: string; products: P[]; last?: string; canPlan: boolean;
-  /** A supplier's products on an order day (otherwise the kitchen's production list). */
-  supplier?: { id: string; name: string; canOrder: boolean } }) {
+export function CountForm({ storeKey, siteName, products, last, canPlan }: { storeKey: string; siteName: string; products: P[]; last?: string; canPlan: boolean }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [restored, setRestored] = useState(false);
@@ -75,18 +73,10 @@ export function CountForm({ storeKey, siteName, products, last, canPlan, supplie
     if (bad) { setErr(`${bad.name}: put a number from 0, or leave it blank if you didn't count it`); return; }
     if (gaps && !confirmGaps) { setConfirmGaps(true); return; }
     start(async () => {
-      const input = { lines: products.map((p) => ({ productId: p.id, qty: parse(values[p.id]) })), note: note.trim() || undefined };
-      if (supplier) {
-        const r = await sendSupplierCountNow(supplier.id, input);
-        if (!r.ok) { setErr(r.error); return; }
-        forget(storeKey);
-        setSent({ make: r.toOrder ?? 0, below: 0, counted: r.counted ?? counted, of: r.of ?? products.length });
-      } else {
-        const r = await sendProductionCountNow(input);
-        if (!r.ok) { setErr(r.error); return; }
-        forget(storeKey);
-        setSent({ make: r.make ?? 0, below: r.below ?? 0, counted: r.counted ?? counted, of: r.of ?? products.length });
-      }
+      const r = await sendProductionCountNow({ lines: products.map((p) => ({ productId: p.id, qty: parse(values[p.id]) })), note: note.trim() || undefined });
+      if (!r.ok) { setErr(r.error); return; }
+      forget(storeKey);
+      setSent({ make: r.make ?? 0, below: r.below ?? 0, counted: r.counted ?? counted, of: r.of ?? products.length });
       window.scrollTo({ top: 0 });
     });
   };
@@ -96,20 +86,10 @@ export function CountForm({ storeKey, siteName, products, last, canPlan, supplie
       <main className="stack">
         <div className="card stack" style={{ gap: 10 }} role="status">
           <div className="strong" style={{ fontSize: 20 }}>Count sent</div>
-          {supplier ? (
-            <>
-              <div>{sent.counted} of {sent.of} {supplier.name} items counted at {siteName}. {sent.make ? `${sent.make} product${sent.make === 1 ? "" : "s"} suggested to order` : "Nothing suggested to order"}.</div>
-              <div className="muted">Whoever orders from {supplier.name} has been told.</div>
-            </>
-          ) : (
-            <>
-              <div>{sent.counted} of {sent.of} items counted at {siteName}. {sent.make ? `${sent.make} item${sent.make === 1 ? "" : "s"} to make` : "Nothing to make"}{sent.below ? `, ${sent.below} below target` : ""}.</div>
-              <div className="muted">Whoever plans the day has been told.</div>
-            </>
-          )}
+          <div>{sent.counted} of {sent.of} items counted at {siteName}. {sent.make ? `${sent.make} item${sent.make === 1 ? "" : "s"} to make` : "Nothing to make"}{sent.below ? `, ${sent.below} below target` : ""}.</div>
+          <div className="muted">Whoever plans the day has been told.</div>
           <div className="row wrap" style={{ gap: 8 }}>
-            {supplier?.canOrder && <Link className="btn" href={`/stock/orders/${supplier.id}`}>See the order</Link>}
-            {!supplier && canPlan && <Link className="btn" href="/stock/plan">See the plan</Link>}
+            {canPlan && <Link className="btn" href="/stock/plan">See the plan</Link>}
             <Link className="btn ghost" href="/stock">Back to Stock</Link>
           </div>
         </div>

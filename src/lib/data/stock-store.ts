@@ -1,6 +1,5 @@
 import type { DraftLine, Price, Product, PurchaseTask, Receipt, StockEvent, StockReport, StockRequest, Supplier, TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
-import type { Outcome, SupplierOrders } from "@/lib/domain/supplier-orders";
 import type { SiteId } from "@/lib/domain/types";
 
 /** Requests and what's happened to them: the raw records the stock rules (src/lib/domain/stock.ts) work from. */
@@ -70,19 +69,6 @@ export interface StockStore {
   /** Adds a target record for each of these (already checked and only the changed ones). Returns how many. */
   setStockTargets(siteId: SiteId, targets: { productId: string; qty?: number }[], by: string): Promise<number>;
 
-  /** Every supplier's order settings (order days, who orders, the kitchen it delivers to). */
-  supplierOrders(): Promise<SupplierOrders[]>;
-  saveSupplierOrders(supplierId: string, cfg: Omit<SupplierOrders, "supplierId" | "updatedAt">, by: string): Promise<void>;
-  /**
-   * Makes a round's order, once (refused if the round already has one): with the supplier locked, what's reported at
-   * the kitchen and still waiting is used first (`planOrderLines`), the rest become new requests, then one delivery
-   * task for the round with a line each, given to whoever orders.
-   */
-  generateSupplierOrder(o: { supplierId: string; siteId: SiteId; roundAt: number; requiredBy: string; assigneeId: string; by: string; note?: string;
-    lines: { productId: string; qty: number; level: "low" | "out" }[] }): Promise<Done<string>>;
-  /**
-   * The kitchen confirms what arrived, once, for every line together: a receipt for what came, a "short" event for
-   * what didn't (it goes back to waiting), then "delivered" on the order. Refused until the order is placed.
-   */
-  confirmSupplierDelivery(taskId: string, by: string, lines: { lineId: string; arrived: number; missing: number; outcome: Outcome }[], note?: string): Promise<Done>;
+  /** Where suppliers deliver, when it's a production kitchen rather than each restaurant (shown on the order sheet). */
+  supplierDelivers(): Promise<{ supplierId: string; deliversTo?: SiteId }[]>;
 }
