@@ -1,4 +1,5 @@
 import { isLead, isOwner, leadSites } from "./access";
+import { addDays, londonDate, londonToUtc } from "./time";
 import type { Person, Site, SiteId } from "./types";
 
 /**
@@ -265,6 +266,8 @@ export interface StockRequest {
   /** Who it's bought from: the product's preferred supplier when it was reported, unless the owner changed it. */
   supplierId?: string;
   cancelledAt?: number; cancelReason?: string;
+  /** Made by unticking that line: it puts back what the line ticked off. */
+  reopensLine?: string;
 }
 export type Priority = "normal" | "urgent";
 export interface PurchaseTask {
@@ -280,7 +283,9 @@ export interface PurchaseTask {
   roundAt?: number;
   createdBy: string; createdAt: number; cancelledAt?: number; cancelReason?: string;
 }
-export interface TaskLine { id: string; taskId: string; requestId: string; qty: number }
+export interface TaskLine { id: string; taskId: string; requestId: string; qty: number;
+  /** Made by unticking that line on a driver's list: it's back on the list. */
+  redoes?: string }
 export const TERMINAL = ["bought", "unavailable", "dispatched", "line_cancelled"] as const;
 export type Terminal = (typeof TERMINAL)[number];
 export type EventKind = Terminal
@@ -368,6 +373,33 @@ export function progress(r: StockRequest, lines: TaskLine[], events: StockEvent[
 
 /** Finished: received in full, or cancelled. Anything else is still in hand. */
 export const isClosed = (p: Pick<Progress, "state">) => p.state === "cancelled" || p.state === "received";
+
+// ---------- ticks and unticks ----------
+
+/** The note on what a tick on Stock needed makes (the task and its order; a production tick's dispatch). */
+export const TICK_NOTE = "Ticked off on Stock needed";
+/** A tick can be taken back until the working day ends (05:00 London), and stays on the list, crossed out, until then. */
+export const UNTICK_UNTIL = "05:00";
+/** When the working day that `now` is in began: today at 05:00 London, or yesterday's before then. */
+export function tickDayStart(now: number): number {
+  const today = londonDate(now);
+  const start = londonToUtc(today, UNTICK_UNTIL);
+  return now >= start ? start : londonToUtc(addDays(today, -1), UNTICK_UNTIL);
+}
+/** Lines whose tick has been taken back: a request (put back on Stock needed) or a line (back on a driver's list) was made from them. */
+export function untickedLines(d: { requests: Pick<StockRequest, "reopensLine">[]; lines: Pick<TaskLine, "redoes">[] }): Set<string> {
+  return new Set([...d.requests.map((r) => r.reopensLine), ...d.lines.map((l) => l.redoes)].filter((x): x is string => !!x));
+}
+/** Whether a ticked line can still be unticked: it ended (bought, sent or couldn't get) this working day and hasn't been already. */
+export function canUntick(line: Pick<TaskLine, "id">, events: StockEvent[], unticked: Set<string>, now: number): boolean {
+  const end = lineEnd(line as TaskLine, events);
+  return !!end && end.kind !== "line_cancelled" && !unticked.has(line.id) && end.event.at >= tickDayStart(now);
+}
+/** A tick on Stock needed (not a driver's): bought on a tick's task, or a production line sent by a tick. */
+export function isNeededTick(line: TaskLine, task: Pick<PurchaseTask, "note"> | undefined, events: StockEvent[]): boolean {
+  const end = lineEnd(line, events);
+  return !!end && ((end.kind === "bought" && task?.note === TICK_NOTE) || (end.kind === "dispatched" && end.event.text === TICK_NOTE));
+}
 
 // ---------- submitting a report ----------
 
@@ -576,22 +608,25 @@ export interface NeededRow {
   notes: string[]; photoIds: string[]; urgent: boolean;
 }
 export interface WithDriver { task: PurchaseTask; items: { name: string; qty: number }[]; open: number; done: number }
-export interface NeededGroup { key: string; supplier?: Supplier; rows: NeededRow[]; drivers: WithDriver[]; production: boolean }
+/** Ticked off this working day: stays on the card, crossed out, so a mistaken tick can be taken back. */
+export interface TickedRow { product: Product; qty: number; sites: { siteId: SiteId; qty: number }[]; lineIds: string[]; by: string[]; at: number }
+export interface NeededGroup { key: string; supplier?: Supplier; rows: NeededRow[]; drivers: WithDriver[]; production: boolean; ticked: TickedRow[] }
 
 /**
  * What's needed, by supplier, for these sites. A product from a supplier: what's still to order of its requests. A
  * production product: what's still to send on the kitchen's production orders (they're made as soon as it's asked
- * for). Shop runs given to a driver show under their supplier until the driver has ticked everything off.
+ * for). Shop runs given to a driver show under their supplier until the driver has ticked everything off. Given `now`,
+ * what was ticked off this working day (and not unticked) is listed under its supplier too (`ticked`).
  */
 export function neededGroups(items: { request: StockRequest; progress: Progress }[], data: { tasks: PurchaseTask[]; lines: TaskLine[]; events: StockEvent[]; requests: StockRequest[] },
-  products: Product[], suppliers: Supplier[], siteIds: SiteId[]): NeededGroup[] {
+  products: Product[], suppliers: Supplier[], siteIds: SiteId[], now?: number): NeededGroup[] {
   const groups = new Map<string, NeededGroup>();
   const group = (supplierId: string | undefined) => {
     const key = supplierId ?? "";
     let g = groups.get(key);
     if (!g) {
       const supplier = suppliers.find((s) => s.id === supplierId);
-      g = { key, supplier, rows: [], drivers: [], production: supplier?.method === "production" };
+      g = { key, supplier, rows: [], drivers: [], production: supplier?.method === "production", ticked: [] };
       groups.set(key, g);
     }
     return g;
@@ -636,9 +671,10 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
       const s = site(r, v.request.siteId); s.qty = round(s.qty + v.line.qty); add(r, v.request);
     }
   }
+  const unticked = untickedLines(data);
   // Shop runs and orders given to someone: theirs until every line is ticked off (bought, or couldn't get).
   for (const t of data.tasks.filter((x) => x.method !== "production" && !x.cancelledAt && x.assigneeId)) {
-    const views = taskLines(t, data.lines, data.requests, data.events).filter((v) => siteIds.includes(v.request.siteId));
+    const views = taskLines(t, data.lines, data.requests, data.events).filter((v) => siteIds.includes(v.request.siteId) && !unticked.has(v.line.id));
     const open = views.filter((v) => !v.end);
     if (!open.length) continue;
     const byName = new Map<string, number>();
@@ -649,12 +685,35 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
     }
     group(t.supplierId).drivers.push({ task: t, items: [...byName.entries()].map(([name, qty]) => ({ name, qty })), open: open.length, done: views.length - open.length });
   }
+  // Ticked off this working day, still to be seen (and unticked if it was a mistake).
+  if (now !== undefined) {
+    const from = tickDayStart(now);
+    for (const l of data.lines) {
+      const req = data.requests.find((r) => r.id === l.requestId);
+      const task = data.tasks.find((t) => t.id === l.taskId);
+      const end = lineEnd(l, data.events);
+      if (!req || !task || !end || !siteIds.includes(req.siteId) || unticked.has(l.id) || end.event.at < from || !isNeededTick(l, task, data.events)) continue;
+      const product = products.find((x) => x.id === req.productId);
+      if (!product) continue;
+      const g = group(task.supplierId);
+      let r = g.ticked.find((x) => x.product.id === product.id);
+      if (!r) { r = { product, qty: 0, sites: [], lineIds: [], by: [], at: 0 }; g.ticked.push(r); }
+      r.qty = round(r.qty + end.qty); r.lineIds.push(l.id); r.at = Math.max(r.at, end.event.at);
+      const name = end.event.byName?.split(" ")[0];
+      if (name && !r.by.includes(name)) r.by.push(name);
+      let s = r.sites.find((x) => x.siteId === req.siteId);
+      if (!s) { s = { siteId: req.siteId, qty: 0 }; r.sites.push(s); }
+      s.qty = round(s.qty + end.qty);
+    }
+  }
   for (const g of groups.values()) {
     g.rows.sort((a, b) => Number(b.urgent) - Number(a.urgent) || a.product.name.localeCompare(b.product.name));
+    g.ticked.sort((a, b) => a.product.name.localeCompare(b.product.name));
+    for (const r of g.ticked) r.sites.sort((a, b) => a.siteId.localeCompare(b.siteId));
     for (const r of g.rows) r.sites.sort((a, b) => a.siteId.localeCompare(b.siteId));
     g.drivers.sort((a, b) => a.task.createdAt - b.task.createdAt);
   }
-  return [...groups.values()].filter((g) => g.rows.length || g.drivers.length)
+  return [...groups.values()].filter((g) => g.rows.length || g.drivers.length || g.ticked.length)
     .sort((a, b) => Number(!a.supplier) - Number(!b.supplier) || Number(a.production) - Number(b.production) || (a.supplier?.name ?? "").localeCompare(b.supplier?.name ?? ""));
 }
 

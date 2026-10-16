@@ -1,6 +1,6 @@
 import { store } from "@/lib/data";
 import { buyFrom, canPurchase, lookAlikes, methodOf, runsPurchasing } from "@/lib/domain/stock";
-import { londonDate, shortDay } from "@/lib/domain/time";
+import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { neededView } from "@/lib/stock-service";
 import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "../Bar";
@@ -41,6 +41,11 @@ export default async function NeededPage() {
       buyFrom: g.production ? [] : buyFrom(r.product, catalog.suppliers).filter((s) => s.id !== g.supplier?.id).map((s) => ({ id: s.id, name: s.name })),
     })),
     drivers: g.drivers.map((d) => ({ taskId: d.task.id, name: d.task.assigneeName ?? "Someone", items: d.items, open: d.open, done: d.done })),
+    ticked: g.ticked.map((t) => ({
+      productId: t.product.id, name: t.product.name, pack: t.product.size, qty: t.qty,
+      sites: t.sites.map((s) => ({ name: siteName.get(s.siteId) ?? s.siteId, qty: s.qty })),
+      who: `${t.by.length ? `${t.by.join(", ")} · ` : ""}${londonHM(t.at)}`,
+    })),
   }));
   return (
     <>

@@ -2,7 +2,7 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
-import { buyFrom, cleanLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
+import { buyFrom, canUntick, cleanLines, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
@@ -154,7 +154,7 @@ export async function queueStockEscalations(now = Date.now(), db: Store = store(
 export async function neededView(db: Store, person: Pick<Person, "status" | "access">, now: number) {
   const [{ catalog, data, items }, sites] = await Promise.all([stockView(db, now), db.sites()]);
   const siteIds = orderingSites(person, sites.filter((s) => s.status === "open").map((s) => s.id));
-  const groups = neededGroups(items, data, catalog.products, catalog.suppliers, siteIds);
+  const groups = neededGroups(items, data, catalog.products, catalog.suppliers, siteIds, now);
   return { catalog, data, items, sites, siteIds, groups };
 }
 
@@ -163,8 +163,6 @@ export async function neededGroup(db: Store, person: Pick<Person, "status" | "ac
   const v = await neededView(db, person, now);
   return { group: v.groups.find((g) => g.key === key), siteIds: v.siteIds };
 }
-
-const TICK_NOTE = "Ticked off on Stock needed";
 
 /**
  * Ticks products off a supplier's list: done. Ordered or bought products become one task for the person ticking, with
@@ -211,6 +209,29 @@ export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status"
   if (!placed.ok) return placed;
   for (const l of lines) await db.addStockReceipt(l.requestId, l.qty, person.id, TICK_NOTE);
   return { ok: true, value: { ticked: rows.length } };
+}
+
+/**
+ * Unticks a product ticked off on a supplier's card this working day (a mistaken tap): each of its ticked lines is put
+ * back as a new request (the tick itself is kept, with a note), so it's on the list again. A production kitchen's goes
+ * back onto its order for that restaurant.
+ */
+export async function untickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productId: string, now: number): Promise<Done<{ unticked: number; name: string }>> {
+  const { group } = await neededGroup(db, person, key, now);
+  const row = group?.ticked.find((r) => r.product.id === productId);
+  if (!group || !row) return { ok: false, error: "That isn't ticked any more. Refresh to see the list as it is now" };
+  const made: string[] = [];
+  let error = "";
+  for (const id of row.lineIds) {
+    const r = await db.untickLine(id, person.id, "list");
+    if (r.ok) made.push(r.value.requestId); else error = r.error;
+  }
+  if (!made.length) return { ok: false, error: error || "That isn't ticked any more" };
+  if (group.production) {
+    const reqs = (await db.stockData({ since: stockSince(now) })).requests.filter((r) => made.includes(r.id));
+    await routeProduction(db, reqs, person.id, now);
+  }
+  return { ok: true, value: { unticked: made.length, name: row.product.name } };
 }
 
 const CLEAR_NOTE = "Cleared from Stock needed";
@@ -306,6 +327,18 @@ export async function driverTick(db: Store, person: Pick<Person, "id">, lineId: 
   if (!r.ok) return r;
   if (got) await db.addStockReceipt(line.requestId, line.qty, person.id, "Bought by the driver");
   return { ok: true, value: undefined };
+}
+
+/** A driver unticks a line they ticked this working day (bought, or couldn't get): it's back on their list. */
+export async function driverUntick(db: Store, person: Pick<Person, "id">, lineId: string, now: number): Promise<Done> {
+  const data = await db.stockData({ since: stockSince(now) });
+  const line = data.lines.find((l) => l.id === lineId);
+  const task = line && data.tasks.find((t) => t.id === line.taskId);
+  if (!line || !task || task.cancelledAt) return { ok: false, error: "That isn't on your list any more" };
+  if (task.assigneeId !== person.id && task.driverId !== person.id) return { ok: false, error: "That isn't on your list" };
+  if (!canUntick(line, data.events, untickedLines(data), now)) return { ok: false, error: "That can't be unticked now. Ask the owner" };
+  const r = await db.untickLine(lineId, person.id, "task");
+  return r.ok ? { ok: true, value: undefined } : r;
 }
 
 /** Where the supplier delivers (a production kitchen's name), for its order sheet. */

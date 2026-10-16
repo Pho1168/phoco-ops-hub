@@ -2,11 +2,11 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { buyFrom, cleanAlsoFrom, cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
+import { buyFrom, canUntick, tickDayStart, untickedLines, cleanAlsoFrom, cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
 import { buildPdf, checklistPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
-import { addNewItem, clearNeeded, deliversTo, moveNeeded, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
+import { addNewItem, clearNeeded, deliversTo, moveNeeded, driverTick, driverUntick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded, untickNeeded } from "@/lib/stock-service";
 
 const NOW = Date.UTC(2026, 9, 16, 21, 0);
 
@@ -62,7 +62,8 @@ describe("stock needed: one checklist by supplier", () => {
     expect(g.rows[0].lineIds).toHaveLength(1);
     expect((await tickNeeded(db, await owner(), g.key, [g.rows[0].product.id], NOW)).ok).toBe(true);
     expect(await state(created[0].id)).toBe("received");
-    expect((await groups()).find((x) => x.production)).toBeUndefined();
+    // Off the list; it stays on the card under "Sent today" until 05:00 (see unticking).
+    expect((await groups()).find((x) => x.production)?.rows ?? []).toEqual([]);
   });
 
   it("a shop list given to a driver: theirs to tick; what they couldn't get comes back", async () => {
@@ -293,5 +294,127 @@ describe("items sold at more than one shop", () => {
     expect((await driverTick(db, { id: "DEMO-FLT" }, lineFor("Coconut Milk").id, true, NOW, lidl.id)).ok).toBe(true);
     const after = (await db.stockTask(task.tasks[0].id))!;
     expect(after.events.find((e) => e.lineId === lineFor("Coconut Milk").id && e.kind === "bought")?.text).toBe("Bought at Lidl/Aldi (demo)");
+  });
+});
+
+describe("unticking a mistaken tick", () => {
+  // Records are dated by the clock: run these at NOW (21:00 London time on 16 October).
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+  afterEach(() => { vi.useRealTimers(); });
+  const at = (ms: number) => async (who = "DEMO-OWN") => (await neededView(db, (await db.person(who))!, ms)).groups;
+
+  it("the working day runs to 05:00 London", () => {
+    expect(new Date(tickDayStart(Date.UTC(2026, 9, 16, 21, 0))).toISOString()).toBe("2026-10-16T04:00:00.000Z");
+    expect(new Date(tickDayStart(Date.UTC(2026, 9, 17, 3, 59))).toISOString()).toBe("2026-10-16T04:00:00.000Z");
+    expect(new Date(tickDayStart(Date.UTC(2026, 9, 17, 4, 0))).toISOString()).toBe("2026-10-17T04:00:00.000Z");
+    expect(new Date(tickDayStart(Date.UTC(2026, 11, 1, 12, 0))).toISOString()).toBe("2026-12-01T05:00:00.000Z"); // GMT
+  });
+
+  it("a tick stays on its card, crossed out, and Untick puts it back as a new request (the tick is kept)", async () => {
+    const { created } = await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 2 }, { name: "Tofu", qty: 1 }]);
+    const g = (await group("Surelygrow (demo)"))!;
+    const lime = g.rows.find((r) => r.product.name === "Lime")!.product.id;
+    expect((await tickNeeded(db, await owner(), g.key, [lime], NOW)).ok).toBe(true);
+    const ticked = (await group("Surelygrow (demo)"))!;
+    expect(ticked.rows.map((r) => r.product.name)).toEqual(["Tofu"]);
+    expect(ticked.ticked).toMatchObject([{ product: { name: "Lime" }, qty: 2, sites: [{ siteId: "EAS", qty: 2 }], by: ["Owner"] }]);
+
+    const r = await untickNeeded(db, await owner(), g.key, lime, NOW);
+    expect(r).toEqual({ ok: true, value: { unticked: 1, name: "Lime" } });
+    const back = (await group("Surelygrow (demo)"))!;
+    expect(back.rows.map((x) => [x.product.name, x.qty])).toEqual([["Lime", 2], ["Tofu", 1]]);
+    expect(back.ticked).toEqual([]);
+    // The tick is kept as it was (done); the new request says what it puts back.
+    const v = await stockView(db, NOW);
+    const old = created.find((x) => x.productId === lime)!;
+    expect(v.items.find((x) => x.request.id === old.id)!.progress.state).toBe("received");
+    const again = v.items.find((x) => x.request.reopensLine)!;
+    expect(again.request).toMatchObject({ siteId: "EAS", productId: lime, qty: 2, requestedBy: "DEMO-BOH" });
+    expect(again.progress.state).toBe("waiting");
+    expect(v.data.events.filter((e) => e.kind === "note").map((e) => e.text)).toEqual(expect.arrayContaining([expect.stringMatching(/^Unticked: back on the list as SR-/)]));
+    // Once only.
+    expect((await untickNeeded(db, await owner(), g.key, lime, NOW)).ok).toBe(false);
+    expect((await db.untickLine(again.request.reopensLine!, "DEMO-OWN", "list")).ok).toBe(false);
+    // Ticked again: done again.
+    expect((await tickNeeded(db, await owner(), g.key, [lime], NOW)).ok).toBe(true);
+    expect((await group("Surelygrow (demo)"))!.ticked.map((t) => t.product.name)).toEqual(["Lime"]);
+  });
+
+  it("a production item unticked goes back onto the kitchen's order", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Soup", qty: 6 }]);
+    const g = (await groups()).find((x) => x.production)!;
+    const soup = g.rows[0].product.id;
+    expect((await tickNeeded(db, await owner(), g.key, [soup], NOW)).ok).toBe(true);
+    expect((await groups()).find((x) => x.production)!.ticked).toMatchObject([{ qty: 6 }]);
+    expect((await untickNeeded(db, await owner(), g.key, soup, NOW)).ok).toBe(true);
+    const back = (await groups()).find((x) => x.production)!;
+    expect(back.rows).toMatchObject([{ qty: 6 }]);
+    expect(back.rows[0].lineIds).toHaveLength(1);
+    expect(back.ticked).toEqual([]);
+  });
+
+  it("after 05:00 the next morning the tick is just done: off the card and can't be unticked", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 2 }]);
+    const g = (await group("Surelygrow (demo)"))!;
+    const lime = g.rows[0].product.id;
+    expect((await tickNeeded(db, await owner(), g.key, [lime], NOW)).ok).toBe(true);
+    const late = Date.UTC(2026, 9, 17, 3, 59), next = Date.UTC(2026, 9, 17, 4, 1);
+    expect((await at(late)()).find((x) => x.key === g.key)!.ticked).toHaveLength(1);
+    expect((await at(next)()).find((x) => x.key === g.key)).toBeUndefined();
+    expect((await untickNeeded(db, await owner(), g.key, lime, next)).ok).toBe(false);
+  });
+
+  it("only the owner and operations managers untick on Stock needed", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 2 }]);
+    const g = (await group("Surelygrow (demo)"))!;
+    const lime = g.rows[0].product.id;
+    await tickNeeded(db, await owner(), g.key, [lime], NOW);
+    expect((await untickNeeded(db, (await db.person("DEMO-MGR"))!, g.key, lime, NOW)).ok).toBe(false);
+    expect((await untickNeeded(db, (await db.person("DEMO-OPS"))!, g.key, lime, NOW)).ok).toBe(true);
+  });
+
+  it("a driver unticks bought or couldn't get: it's back on their list, once, and only theirs", async () => {
+    const { created } = await report("EAS", "DEMO-BOH", [{ name: "Coconut Milk", qty: 4 }, { name: "Che Lychee", qty: 2 }]);
+    const g = (await group("Wing Yip (demo)"))!;
+    const made = await giveToDriver(db, await owner(), g.key, "DEMO-FLT", undefined, NOW);
+    const taskId = (made as { value: string }).value;
+    const task = (await db.stockTask(taskId))!;
+    const idOf = (name: string) => g.rows.find((r) => r.product.name === name)!.product.id;
+    const lineOf = (name: string) => task.lines.find((l) => l.requestId === created.find((c) => c.productId === idOf(name))!.id)!;
+    const coco = lineOf("Coconut Milk").id, lychee = lineOf("Che Lychee").id;
+    await driverTick(db, { id: "DEMO-FLT" }, coco, true, NOW);
+    await driverTick(db, { id: "DEMO-FLT" }, lychee, false, NOW);
+    expect((await group("Wing Yip (demo)"))!.rows.map((r) => r.product.name)).toEqual(["Che Lychee"]);
+
+    expect((await driverUntick(db, { id: "DEMO-BOH" }, coco, NOW)).ok).toBe(false); // not theirs
+    expect((await driverUntick(db, { id: "DEMO-FLT" }, coco, NOW)).ok).toBe(true);
+    expect((await driverUntick(db, { id: "DEMO-FLT" }, coco, NOW)).ok).toBe(false); // once
+    expect((await driverUntick(db, { id: "DEMO-FLT" }, lychee, NOW)).ok).toBe(true);
+
+    const d = (await db.stockTask(taskId))!;
+    const gone = untickedLines(d);
+    expect([...gone].sort()).toEqual([coco, lychee].sort());
+    const open = d.lines.filter((l) => !gone.has(l.id));
+    expect(open).toHaveLength(2);
+    expect(open.every((l) => !canUntick(l, d.events, gone, NOW))).toBe(true); // not ticked yet
+    // Both are the driver's again; Stock needed shows them with the driver, not as rows.
+    const after = (await group("Wing Yip (demo)"))!;
+    expect(after.rows).toHaveLength(0);
+    expect(after.drivers[0]).toMatchObject({ open: 2, done: 0 });
+    // The bought one is kept as bought (and arrived); what puts it back is a new request on the same list.
+    expect(await state(created.find((c) => c.productId === idOf("Coconut Milk"))!.id)).toBe("received");
+    // Ticking the new line works as before.
+    const newCoco = open.find((l) => l.redoes === coco)!;
+    expect((await driverTick(db, { id: "DEMO-FLT" }, newCoco.id, true, NOW)).ok).toBe(true);
+  });
+
+  it("a couldn't-get that the owner has given out again since stays where it is", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Che Lychee", qty: 2 }]);
+    const g = (await group("Wing Yip (demo)"))!;
+    const first = (await giveToDriver(db, await owner(), g.key, "DEMO-FLT", undefined, NOW)) as { value: string };
+    const line = (await db.stockTask(first.value))!.lines[0].id;
+    await driverTick(db, { id: "DEMO-FLT" }, line, false, NOW);
+    expect((await tickNeeded(db, await owner(), g.key, [g.rows[0].product.id], NOW)).ok).toBe(true);
+    expect(await driverUntick(db, { id: "DEMO-FLT" }, line, NOW)).toMatchObject({ ok: false });
   });
 });

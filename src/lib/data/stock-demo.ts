@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, sameProduct, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, lineEnd, planSubmit, progress, reqCode, sameProduct, shortOf, TERMINAL, withProgress,
   type NewItem, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
 import type { SiteId } from "@/lib/domain/types";
@@ -280,6 +280,35 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
       if (!check.ok) return check;
       S().receipts.push({ id: randomUUID(), requestId, qty: check.qty, by, at: Date.now(), note });
       return { ok: true, value: undefined };
+    },
+    async untickLine(lineId, by, back) {
+      const s = S();
+      const line = s.lines.find((x) => x.id === lineId);
+      if (!line) return { ok: false, error: "That isn't there any more" };
+      const t = s.tasks.find((x) => x.id === line.taskId);
+      if (back === "task" && t?.cancelledAt) return { ok: false, error: "That list has been taken back" };
+      if (s.requests.some((r) => r.reopensLine === lineId) || s.lines.some((l) => l.redoes === lineId)) return { ok: false, error: "That's already been unticked" };
+      const d = gather([line.requestId], []);
+      const end = lineEnd(line, d.events);
+      const r = s.requests.find((x) => x.id === line.requestId);
+      if (!r || !end || end.kind === "line_cancelled") return { ok: false, error: "That isn't ticked" };
+      if (end.kind === "unavailable") {
+        if (back !== "task") return { ok: false, error: "That isn't ticked" };
+        const p = progress(r, d.lines, d.events, d.receipts, d.tasks);
+        if (r.cancelledAt || p.toPlan < line.qty) return { ok: false, error: "It's been ordered or given to someone since, so it stays where it is" };
+        s.lines.push({ id: randomUUID(), taskId: line.taskId, requestId: r.id, qty: line.qty, redoes: lineId });
+        event({ by, kind: "note", taskId: line.taskId, requestId: r.id, text: "Unticked: back on the list" });
+        return { ok: true, value: { requestId: r.id } };
+      }
+      const qty = Math.round(Math.max(0, end.qty - shortOf(line, d.events)) * 100) / 100;
+      if (!(qty > 0)) return { ok: false, error: "That isn't ticked" };
+      const n: StockRequest = { id: randomUUID(), code: s.nextRequest++, siteId: r.siteId, productId: r.productId, level: r.level, qty, note: r.note, photoId: r.photoId,
+        reportId: r.reportId, requestedBy: r.requestedBy, supplierId: r.supplierId ?? t?.supplierId, createdAt: Date.now(), reopensLine: lineId };
+      s.requests.push(n);
+      event({ by, kind: "note", requestId: r.id, text: `Unticked: back on the list as ${reqCode(n)}` });
+      event({ by, kind: "note", requestId: n.id, text: `Put back after an untick of ${reqCode(r)}` });
+      if (back === "task") s.lines.push({ id: randomUUID(), taskId: line.taskId, requestId: n.id, qty, redoes: lineId });
+      return { ok: true, value: { requestId: n.id } };
     },
     async changeStockRequest(id, change, by) {
       const s = S();
