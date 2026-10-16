@@ -67,6 +67,13 @@ export interface StockStore {
   /** Adds an event. Ending a line runs `checkLineEnd` first, inside the transaction. */
   addStockEvent(e: Omit<StockEvent, "id" | "at" | "byName">): Promise<Done>;
   addStockReceipt(requestId: string, qty: number, by: string, note?: string): Promise<Done>;
+  /**
+   * Takes a tick back, adding (never changing) what puts it back. Bought or sent: a new request for the same restaurant,
+   * product and amount, linked to the line (`reopensLine`); `back: "task"` also puts it on the same driver's list (a new
+   * line, `redoes`). Couldn't get (`back: "task"` only): a new line on the list for the same request, if it's still
+   * waiting. Refused if the line wasn't ticked or was unticked already (one each, also guarded by the database).
+   */
+  untickLine(lineId: string, by: string, back: "list" | "task"): Promise<Done<{ requestId: string }>>;
   /** The owner sets a quantity, changes the supplier, or cancels (each logged as an event with the reason). */
   changeStockRequest(id: string, change: { fixedQty: number } | { supplierId: string | null } | { cancel: string }, by: string): Promise<Done>;
 

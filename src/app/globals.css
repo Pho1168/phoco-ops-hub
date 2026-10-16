@@ -904,6 +904,9 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 .stock-group-head h3 { margin: 0; font-family: var(--display); font-size: 22px; text-transform: uppercase; color: var(--brand); letter-spacing: .3px; }
 .stock-row { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .stock-row.done { opacity: .7; }
+.stock-ticked-head { border-top: 1px dashed var(--line); padding-top: 10px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.stock-ticked-head + .stock-row { border-top: 0; padding-top: 0; }
+.tick.on { background: var(--brand); border-color: var(--brand); cursor: default; }
 .stock-row-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .stock-site { display: flex; align-items: center; gap: 10px; padding-left: 4px; flex-wrap: wrap; font-size: 15px; }
 .stock-site input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--brand); }

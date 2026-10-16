@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
-import { giveNeededToDriver, moveNeededAction, setNeededAmount, takeBackFromDriver, tickNeededAction } from "@/app/actions";
+import { useEffect, useState, useTransition } from "react";
+import { giveNeededToDriver, moveNeededAction, setNeededAmount, takeBackFromDriver, tickNeededAction, untickNeededAction } from "@/app/actions";
 import { Icon } from "@/components/Icon";
 
 export interface BoardRow {
@@ -17,56 +17,52 @@ export interface BoardGroup {
   key: string; name: string; method: string; methodLabel: string; production: boolean; pdf: boolean;
   rows: BoardRow[];
   drivers: { taskId: string; name: string; items: { name: string; qty: number }[]; open: number; done: number }[];
+  /** Ticked off this working day: crossed out, with Untick, until 05:00. */
+  ticked: { productId: string; name: string; pack?: string; qty: number; sites: { name: string; qty: number }[]; who: string }[];
 }
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
-/** How long a tick waits (with Undo) before it's saved. */
-const UNDO_MS = 4000;
+const forSites = (sites: { name: string; qty: number }[]) => (sites.length === 1 ? `For ${sites[0].name}` : sites.map((s) => `${s.name} ${fmt(s.qty)}`).join(" · "));
 
 /**
- * The Stock needed checklist. One card per supplier; tick a row when it's ordered or bought (production: sent). A
- * tick waits a few seconds with Undo, then is saved. Shops can be given to a driver; a delivery supplier downloads a PDF.
+ * The Stock needed checklist. One card per supplier; tick a row when it's ordered or bought (production: sent). A tick
+ * is saved at once and the item moves to "Ticked today" on the same card, crossed out, where Untick puts it back (a
+ * mistaken tap) until 05:00. Shops can be given to a driver; a delivery supplier downloads a PDF.
  */
 export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers: { id: string; name: string }[] }) {
   const router = useRouter();
-  const [pending, setPending] = useState<Record<string, string[]>>({});
-  const [saved, setSaved] = useState<Set<string>>(new Set());
+  /** Rows being ticked or unticked right now (shown at once, before the page refreshes). */
+  const [ticking, setTicking] = useState<Set<string>>(new Set());
+  const [unticking, setUnticking] = useState<Set<string>>(new Set());
   const [err, setErr] = useState("");
   const [busy, start] = useTransition();
-  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const pendingRef = useRef(pending);
-  pendingRef.current = pending;
+  // Fresh data from the server: forget what it now shows (a tick still on its way stays marked).
+  useEffect(() => {
+    const rows = new Set(groups.flatMap((g) => g.rows.map((r) => `${g.key}|${r.productId}`)));
+    const ticked = new Set(groups.flatMap((g) => g.ticked.map((r) => `${g.key}|${r.productId}`)));
+    setTicking((s) => new Set([...s].filter((k) => rows.has(k))));
+    setUnticking((s) => new Set([...s].filter((k) => ticked.has(k))));
+  }, [groups]);
 
-  const commit = (key: string) => {
-    const ids = pendingRef.current[key] ?? [];
-    delete timers.current[key];
-    if (!ids.length) return;
-    setPending((p) => ({ ...p, [key]: [] }));
-    setSaved((s) => new Set([...s, ...ids.map((id) => `${key}|${id}`)]));
+  const tick = (key: string, ids: string[]) => {
+    setErr("");
+    const keys = ids.map((id) => `${key}|${id}`);
+    setTicking((s) => new Set([...s, ...keys]));
     start(async () => {
       const r = await tickNeededAction(key, ids);
-      if (!r.ok) {
-        setErr(r.error);
-        setSaved((s) => new Set([...s].filter((x) => !ids.some((id) => x === `${key}|${id}`))));
-      }
+      if (!r.ok) { setErr(r.error); setTicking((s) => new Set([...s].filter((x) => !keys.includes(x)))); }
       router.refresh();
     });
   };
-  const tick = (key: string, ids: string[]) => {
+  const untick = (key: string, id: string) => {
     setErr("");
-    setPending((p) => ({ ...p, [key]: [...new Set([...(p[key] ?? []), ...ids])] }));
-    clearTimeout(timers.current[key]);
-    timers.current[key] = setTimeout(() => commit(key), UNDO_MS);
+    setUnticking((s) => new Set([...s, `${key}|${id}`]));
+    start(async () => {
+      const r = await untickNeededAction(key, id);
+      if (!r.ok) { setErr(r.error); setUnticking((s) => new Set([...s].filter((x) => x !== `${key}|${id}`))); }
+      router.refresh();
+    });
   };
-  const undo = (key: string, id: string) => setPending((p) => {
-    const left = (p[key] ?? []).filter((x) => x !== id);
-    if (!left.length) { clearTimeout(timers.current[key]); delete timers.current[key]; }
-    return { ...p, [key]: left };
-  });
-  // Leaving the page saves the ticks still waiting.
-  useEffect(() => () => { for (const k of Object.keys(timers.current)) { clearTimeout(timers.current[k]); commit(k); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // Fresh data from the server: forget what was saved (those rows have gone).
-  useEffect(() => { setSaved(new Set()); }, [groups]);
 
   const run = (f: () => Promise<{ ok: true } | { ok: false; error: string }>) => {
     setErr("");
@@ -84,37 +80,35 @@ export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers
   return (
     <div className="stack">
       <p className="muted lead" style={{ margin: 0 }}>
-        {total} item{total === 1 ? "" : "s"} asked for, by supplier. Tick each one once it&apos;s ordered or bought; it&apos;s then done. Production items: tick when sent.
+        {total} item{total === 1 ? "" : "s"} asked for, by supplier. Tick each one once it&apos;s ordered or bought (production: when sent). Ticked items stay at the bottom of the card, crossed out, until 5am: tap Untick if you ticked one by mistake.
       </p>
       {err && <div className="fix" role="alert" style={{ margin: 0 }}>{err}</div>}
       {groups.map((g) => {
-        const waiting = pending[g.key] ?? [];
-        const tickable = g.rows.filter((r) => r.qty > 0 && !saved.has(`${g.key}|${r.productId}`));
-        const notTicked = tickable.filter((r) => !waiting.includes(r.productId));
+        const tickable = g.rows.filter((r) => r.qty > 0 && !ticking.has(`${g.key}|${r.productId}`));
+        const ticked = g.ticked.filter((t) => !unticking.has(`${g.key}|${t.productId}`));
+        const count = g.rows.filter((r) => !ticking.has(`${g.key}|${r.productId}`)).length;
         return (
           <section key={g.key || "none"} className="stock-group" aria-label={g.name}>
             <div className="stock-group-head">
               <h3 className="grow">{g.name}</h3>
               <span className="chip">{g.production ? "Production" : g.methodLabel}</span>
-              {g.rows.length > 0 && <span className="chip late">{g.rows.length}</span>}
+              {count > 0 && <span className="chip late">{count}</span>}
             </div>
-            {g.rows.length > 0 && (
+            {tickable.length > 0 && (
               <div className="row wrap no-print" style={{ gap: 8 }}>
-                {notTicked.length > 1 && <button type="button" className="btn ghost small" disabled={busy} onClick={() => tick(g.key, notTicked.map((r) => r.productId))}>Tick all</button>}
-                {g.pdf && tickable.length > 0 && <a className="btn small" href={`/stock/needed/pdf?supplier=${encodeURIComponent(g.key)}`} download><Icon name="print" /> Download PDF</a>}
-                {!g.production && g.method === "shop" && tickable.length > 0 && <DriverPick drivers={drivers} busy={busy} onGive={(id) => run(() => giveNeededToDriver(g.key, id))} />}
+                {tickable.length > 1 && <button type="button" className="btn ghost small" disabled={busy} onClick={() => tick(g.key, tickable.map((r) => r.productId))}>Tick all</button>}
+                {g.pdf && <a className="btn small" href={`/stock/needed/pdf?supplier=${encodeURIComponent(g.key)}`} download><Icon name="print" /> Download PDF</a>}
+                {!g.production && g.method === "shop" && <DriverPick drivers={drivers} busy={busy} onGive={(id) => run(() => giveNeededToDriver(g.key, id))} />}
               </div>
             )}
             {g.rows.map((r) => {
-              const id = `${g.key}|${r.productId}`;
-              const isWaiting = waiting.includes(r.productId);
-              const done = isWaiting || saved.has(id);
+              const done = ticking.has(`${g.key}|${r.productId}`);
               return (
                 <div key={r.productId} className={`stock-row${done ? " done" : ""}`}>
                   <div className="stock-row-head">
                     {r.qty > 0 && (
-                      <button type="button" className="tick" aria-pressed={done} aria-label={`${done ? "Ticked" : "Tick"} ${r.name}`} disabled={saved.has(id)}
-                        onClick={() => (isWaiting ? undo(g.key, r.productId) : tick(g.key, [r.productId]))}>
+                      <button type="button" className="tick" aria-pressed={done} aria-label={`${done ? "Ticked" : "Tick"} ${r.name}`} disabled={done}
+                        onClick={() => tick(g.key, [r.productId])}>
                         {done && <Icon name="check" />}
                       </button>
                     )}
@@ -124,9 +118,9 @@ export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers
                       {r.pack && <span className="muted" style={{ fontSize: 13 }}>{r.pack}</span>}
                     </span>
                     {r.urgent && !done && <span className="chip bad">Urgent</span>}
-                    {isWaiting && <button type="button" className="btn ghost small" onClick={() => undo(g.key, r.productId)}>Undo</button>}
+                    {done && <span className="muted" style={{ fontSize: 13 }}>Saving…</span>}
                   </div>
-                  {r.sites.length > 0 && <div className="muted" style={{ fontSize: 14 }}>{r.sites.length === 1 ? `For ${r.sites[0].name}` : r.sites.map((s) => `${s.name} ${fmt(s.qty)}`).join(" · ")}</div>}
+                  {r.sites.length > 0 && <div className="muted" style={{ fontSize: 14 }}>{forSites(r.sites)}</div>}
                   {r.notes.length > 0 && <div style={{ fontSize: 14 }}>&ldquo;{r.notes.join("” · “")}&rdquo;</div>}
                   {r.photoIds.length > 0 && (
                     <div className="row wrap" style={{ gap: 6 }}>
@@ -157,6 +151,24 @@ export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers
                 <div className="muted" style={{ fontSize: 14 }}>{d.items.map((x) => `${fmt(x.qty)} × ${x.name}`).join(" · ")}</div>
               </div>
             ))}
+            {ticked.length > 0 && (
+              <>
+                <div className="stock-ticked-head muted">{g.production ? "Sent today" : "Ticked today"}</div>
+                {ticked.map((t) => (
+                  <div key={t.productId} className="stock-row done">
+                    <div className="stock-row-head">
+                      <span className="tick on" aria-hidden><Icon name="check" /></span>
+                      <span className="stock-qty">{fmt(t.qty)}</span>
+                      <span className="grow stack" style={{ gap: 2, minWidth: 0 }}>
+                        <span className="strong" style={{ textDecoration: "line-through", color: "var(--ink-2)" }}>{t.name}</span>
+                        <span className="muted" style={{ fontSize: 13 }}>{[t.pack, forSites(t.sites), t.who].filter(Boolean).join(" · ")}</span>
+                      </span>
+                      <button type="button" className="btn ghost small no-print" aria-label={`Untick ${t.name}`} onClick={() => untick(g.key, t.productId)}>Untick</button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </section>
         );
       })}

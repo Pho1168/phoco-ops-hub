@@ -1,5 +1,5 @@
 import { store } from "@/lib/data";
-import { buyFrom, lineEnd } from "@/lib/domain/stock";
+import { buyFrom, canUntick, lineEnd, untickedLines } from "@/lib/domain/stock";
 import { londonDate, shortDay } from "@/lib/domain/time";
 import { stockView } from "@/lib/stock-service";
 import { StockBar, StockNav } from "../Bar";
@@ -8,7 +8,10 @@ import { DriverList, type DriverStop } from "./DriverList";
 
 export const dynamic = "force-dynamic";
 
-/** My shopping list: the shop runs given to me, one card per shop, each item with where it goes. Tick when bought (today's finished lists stay). */
+/**
+ * My shopping list: the shop runs given to me, one card per shop, each item with where it goes. Tick when bought (saved
+ * at once; it stays, crossed out, with Untick until 05:00). Today's finished lists stay.
+ */
 export default async function MyShopping() {
   const { ctx, onPhone } = await stockCtx();
   const db = store();
@@ -16,10 +19,12 @@ export default async function MyShopping() {
   const [{ catalog, data }, sites] = await Promise.all([stockView(db, now), db.sites()]);
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   const mine = data.tasks.filter((t) => !t.cancelledAt && t.method !== "production" && (t.assigneeId === ctx.person.id || t.driverId === ctx.person.id));
+  // A line that was unticked is replaced by the one that put it back.
+  const unticked = untickedLines(data);
   const stops: DriverStop[] = [];
   for (const t of mine.sort((a, b) => a.createdAt - b.createdAt)) {
     // Lines taken off (the request was cancelled) aren't the driver's any more.
-    const lines = data.lines.filter((l) => l.taskId === t.id && lineEnd(l, data.events)?.kind !== "line_cancelled");
+    const lines = data.lines.filter((l) => l.taskId === t.id && lineEnd(l, data.events)?.kind !== "line_cancelled" && !unticked.has(l.id));
     const open = lines.filter((l) => !lineEnd(l, data.events));
     // Finished lists stay until the end of the day they were given, so the driver sees they're done.
     if (!lines.length || (!open.length && londonDate(t.createdAt) !== londonDate(now))) continue;
@@ -32,6 +37,7 @@ export default async function MyShopping() {
         const end = lineEnd(l, data.events);
         return { lineId: l.id, qty: l.qty, name: p?.name ?? "?", pack: p?.size, to: r ? siteName.get(r.siteId) ?? r.siteId : "", note: r?.note,
           end: end ? (end.kind === "unavailable" ? "missing" as const : "got" as const) : undefined,
+          canUntick: canUntick(l, data.events, unticked, now),
           boughtAt: end?.kind === "bought" && end.event.text?.startsWith("Bought at ") ? end.event.text.slice(10) : undefined,
           alsoAt: p ? buyFrom(p, catalog.suppliers).filter((x) => x.id !== t.supplierId).map((x) => ({ id: x.id, name: x.name })) : [] };
       }),

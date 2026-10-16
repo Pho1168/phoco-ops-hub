@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, lineEnd, planSubmit, progress, reqCode, shortOf, TERMINAL, withProgress,
   type DraftLine, type EventKind, type NewItem, type NewItemLine, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { CountLine, StockCount } from "@/lib/domain/stock-count";
 import { londonDate } from "@/lib/domain/time";
@@ -40,11 +40,12 @@ const countSelect = (q: Q) => q`select c.id, c.site_id, c.counted_by, p.display_
 interface TargetRow { site_id: string; product_id: string; qty: string | null; set_by: string; set_by_name: string | null; set_at: Date }
 
 interface RequestRow { id: string; code: number; site_id: string; product_id: string; level: "low" | "out"; qty: string | null; fixed_qty: string | null; note: string | null; photo_id: string | null; report_id: string | null;
-  requested_by: string; requested_by_name: string | null; supplier_id: string | null; created_at: Date; cancelled_at: Date | null; cancel_reason: string | null }
+  requested_by: string; requested_by_name: string | null; supplier_id: string | null; created_at: Date; cancelled_at: Date | null; cancel_reason: string | null; reopens_line: string | null }
 const toRequest = (r: RequestRow): StockRequest => ({ id: r.id, code: r.code, siteId: r.site_id, productId: r.product_id, level: r.level, qty: num(r.qty), fixedQty: num(r.fixed_qty), note: opt(r.note), photoId: opt(r.photo_id),
-  reportId: opt(r.report_id), requestedBy: r.requested_by, requestedByName: opt(r.requested_by_name), supplierId: opt(r.supplier_id), createdAt: r.created_at.getTime(), cancelledAt: r.cancelled_at?.getTime(), cancelReason: opt(r.cancel_reason) });
+  reportId: opt(r.report_id), requestedBy: r.requested_by, requestedByName: opt(r.requested_by_name), supplierId: opt(r.supplier_id), createdAt: r.created_at.getTime(), cancelledAt: r.cancelled_at?.getTime(), cancelReason: opt(r.cancel_reason),
+  ...(r.reopens_line ? { reopensLine: r.reopens_line } : {}) });
 const requestSelect = (q: Q) => q`select r.id, r.code, r.site_id, r.product_id, r.level, r.qty::text, r.fixed_qty::text, r.note, r.photo_id, r.report_id, r.requested_by, p.display_name as requested_by_name,
-  r.supplier_id, r.created_at, r.cancelled_at, r.cancel_reason from stock_requests r left join people p on p.id = r.requested_by`;
+  r.supplier_id, r.created_at, r.cancelled_at, r.cancel_reason, r.reopens_line from stock_requests r left join people p on p.id = r.requested_by`;
 
 interface TaskRow { id: string; code: number; supplier_id: string | null; method: PurchaseTask["method"]; assignee_id: string | null; assignee_name: string | null; driver_id: string | null; driver_name: string | null;
   required_by: string | null; priority: PurchaseTask["priority"]; note: string | null; destination: string | null; created_by: string; created_at: Date; cancelled_at: Date | null; cancel_reason: string | null;
@@ -56,8 +57,8 @@ const taskSelect = (q: Q) => q`select t.id, t.code, t.supplier_id, t.method, t.a
   to_char(t.required_by, 'YYYY-MM-DD') as required_by, t.priority, t.note, t.destination, t.created_by, t.created_at, t.cancelled_at, t.cancel_reason, t.round_at
   from stock_tasks t left join people a on a.id = t.assignee_id left join people d on d.id = t.driver_id`;
 
-interface LineRow { id: string; task_id: string; request_id: string; qty: string }
-const toLine = (r: LineRow): TaskLine => ({ id: r.id, taskId: r.task_id, requestId: r.request_id, qty: Number(r.qty) });
+interface LineRow { id: string; task_id: string; request_id: string; qty: string; redoes?: string | null }
+const toLine = (r: LineRow): TaskLine => ({ id: r.id, taskId: r.task_id, requestId: r.request_id, qty: Number(r.qty), ...(r.redoes ? { redoes: r.redoes } : {}) });
 interface EventRow { id: string; at: Date; by: string; by_name: string | null; kind: EventKind; task_id: string | null; line_id: string | null; request_id: string | null; qty: string | null; pence: number | null;
   text: string | null; media_id: string | null; ref: string | null; on_date: string | null }
 const toEvent = (r: EventRow): StockEvent => ({ id: r.id, at: r.at.getTime(), by: r.by, byName: opt(r.by_name), kind: r.kind, taskId: opt(r.task_id), lineId: opt(r.line_id), requestId: opt(r.request_id),
@@ -67,7 +68,7 @@ const toReceipt = (r: ReceiptRow): Receipt => ({ id: r.id, requestId: r.request_
 
 /** Everything about these requests and tasks: the lines of either, the other side of those lines, events, receipts. */
 async function gather(q: Q, requestIds: string[], taskIds: string[]): Promise<StockData> {
-  const lines = (await q<LineRow[]>`select id, task_id, request_id, qty::text from stock_task_lines
+  const lines = (await q<LineRow[]>`select id, task_id, request_id, qty::text, redoes from stock_task_lines
     where request_id = any(${requestIds}::uuid[]) or task_id = any(${taskIds}::uuid[])`).map(toLine);
   const reqIds = [...new Set([...requestIds, ...lines.map((l) => l.requestId)])];
   const tIds = [...new Set([...taskIds, ...lines.map((l) => l.taskId)])];
@@ -365,6 +366,44 @@ export const stockSql: StockStore = {
       await tx`insert into stock_receipts (request_id, qty, by, note) values (${requestId}, ${check.qty}, ${by}, ${note ?? null})`;
       return { ok: true as const, value: undefined };
     });
+  },
+  async untickLine(lineId, by, back) {
+    if (!UUID.test(lineId)) return { ok: false, error: "That isn't there any more" };
+    try {
+      return await withTx(async (tx) => {
+        const [l] = await tx<LineRow[]>`select id, task_id, request_id, qty::text, redoes from stock_task_lines where id = ${lineId}`;
+        if (!l) return { ok: false as const, error: "That isn't there any more" };
+        const d = await lockRequests(tx, [l.request_id]);
+        const [t] = await tx<{ supplier_id: string | null; cancelled_at: Date | null }[]>`select supplier_id, cancelled_at from stock_tasks where id = ${l.task_id} for update`;
+        if (back === "task" && t?.cancelled_at) return { ok: false as const, error: "That list has been taken back" };
+        const [again] = await tx`select 1 from stock_requests where reopens_line = ${lineId} union all select 1 from stock_task_lines where redoes = ${lineId} limit 1`;
+        if (again) return { ok: false as const, error: "That's already been unticked" };
+        const line = toLine(l);
+        const end = lineEnd(line, d.events);
+        const r = d.requests.find((x) => x.id === l.request_id);
+        if (!r || !end || end.kind === "line_cancelled") return { ok: false as const, error: "That isn't ticked" };
+        if (end.kind === "unavailable") {
+          if (back !== "task") return { ok: false as const, error: "That isn't ticked" };
+          const p = progress(r, d.lines, d.events, d.receipts, d.tasks);
+          if (r.cancelledAt || p.toPlan < line.qty) return { ok: false as const, error: "It's been ordered or given to someone since, so it stays where it is" };
+          await tx`insert into stock_task_lines (task_id, request_id, qty, redoes) values (${l.task_id}, ${r.id}, ${line.qty}, ${lineId})`;
+          await tx`insert into stock_events (by, kind, task_id, request_id, text) values (${by}, 'note', ${l.task_id}, ${r.id}, ${"Unticked: back on the list"})`;
+          return { ok: true as const, value: { requestId: r.id } };
+        }
+        const qty = Math.round(Math.max(0, end.qty - shortOf(line, d.events)) * 100) / 100;
+        if (!(qty > 0)) return { ok: false as const, error: "That isn't ticked" };
+        const [n] = await tx<{ id: string; code: number }[]>`insert into stock_requests (site_id, product_id, level, qty, note, photo_id, report_id, requested_by, supplier_id, reopens_line)
+          values (${r.siteId}, ${r.productId}, ${r.level}, ${qty}, ${r.note ?? null}, ${r.photoId ?? null}, ${r.reportId ?? null}, ${r.requestedBy}, ${r.supplierId ?? t?.supplier_id ?? null}, ${lineId})
+          returning id, code`;
+        await tx`insert into stock_events (by, kind, request_id, text) values (${by}, 'note', ${r.id}, ${`Unticked: back on the list as ${reqCode(n)}`})`;
+        await tx`insert into stock_events (by, kind, request_id, text) values (${by}, 'note', ${n.id}, ${`Put back after an untick of ${reqCode(r)}`})`;
+        if (back === "task") await tx`insert into stock_task_lines (task_id, request_id, qty, redoes) values (${l.task_id}, ${n.id}, ${qty}, ${lineId})`;
+        return { ok: true as const, value: { requestId: n.id } };
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code === "23505") return { ok: false, error: "That's already been unticked" };
+      throw err;
+    }
   },
   async changeStockRequest(id, change, by) {
     if (!UUID.test(id)) return { ok: false, error: "That request isn't there" };

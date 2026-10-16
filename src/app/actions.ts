@@ -7,7 +7,7 @@ import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode } from "@/lib/domain/stock";
-import { addNewItem, clearNeeded, driverTick, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded } from "@/lib/stock-service";
+import { addNewItem, clearNeeded, driverTick, driverUntick, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
 import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
@@ -2576,6 +2576,24 @@ export async function tickNeededAction(key: string, productIds: string[]): Promi
   return { ok: true, ticked: r.value.ticked };
 }
 
+/** Takes back a tick on Stock needed made this working day: the item is back on its supplier's card. */
+export async function untickNeededAction(key: string, productId: string): Promise<ActionResult> {
+  const who = await orderingLead();
+  if (!who.ok) return who;
+  const p = z.object({ key: KeyZ, id: StockIdZ }).safeParse({ key, id: productId });
+  if (!p.success) return { ok: false, error: "That isn't ticked any more" };
+  const db = store();
+  const now = Date.now();
+  const before = (await neededView(db, who.ctx.person, now)).groups.find((g) => g.key === p.data.key);
+  const row = before?.ticked.find((x) => x.product.id === p.data.id);
+  const r = await untickNeeded(db, who.ctx.person, p.data.key, p.data.id, now);
+  if (!r.ok) return r;
+  await db.audit({ actorId: who.ctx.person.id, action: "stock.untick",
+    detail: `${before?.supplier?.name ?? "No supplier"}: unticked ${row ? `${row.qty} × ${row.product.name}` : r.value.name}, back on Stock needed` });
+  revalidateStock();
+  return { ok: true };
+}
+
 /** Gives a supplier's list (or some of it) to a driver, who ticks it off on their phone. */
 export async function giveNeededToDriver(key: string, driverId: string, productIds?: string[]): Promise<ActionResult> {
   const who = await orderingLead();
@@ -2653,6 +2671,21 @@ export async function driverTickAction(lineId: string, got: boolean, at?: string
   const d = await taskOfLine(lineId);
   await db.audit({ actorId: who.ctx.person.id, siteId: d?.request?.siteId, action: got ? "stock.bought" : "stock.unavailable",
     detail: `${d ? stockTaskCode(d.task) : "List"}${d?.request ? ` ${stockReqCode(d.request)}` : ""}: ${got ? "bought" : "couldn't get it"}` });
+  revalidateStock();
+  return { ok: true };
+}
+
+/** A driver takes back a tick (bought or couldn't get) made this working day: it's back on their list. */
+export async function driverUntickAction(lineId: string): Promise<ActionResult> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  if (!StockIdZ.safeParse(lineId).success) return { ok: false, error: "That isn't on your list any more" };
+  const db = store();
+  const r = await driverUntick(db, who.ctx.person, lineId, Date.now());
+  if (!r.ok) return r;
+  const d = await taskOfLine(lineId);
+  await db.audit({ actorId: who.ctx.person.id, siteId: d?.request?.siteId, action: "stock.untick",
+    detail: `${d ? stockTaskCode(d.task) : "List"}${d?.request ? ` ${stockReqCode(d.request)}` : ""}: unticked, back on the list` });
   revalidateStock();
   return { ok: true };
 }
