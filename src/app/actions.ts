@@ -7,7 +7,7 @@ import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode } from "@/lib/domain/stock";
-import { addNewItem, driverTick, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded } from "@/lib/stock-service";
+import { addNewItem, clearNeeded, driverTick, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded } from "@/lib/stock-service";
 import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
@@ -2542,6 +2542,20 @@ export async function dismissNewStockItem(id: string, reason: string): Promise<A
   await db.audit({ actorId: who.ctx.person.id, siteId: item?.siteId, action: "stock.request", detail: `New item "${item?.name ?? "?"}" not needed: ${p.data.reason}` });
   revalidateStock();
   return { ok: true };
+}
+
+/** Clears Stock needed without ordering: everything on it is cancelled (kept in the history), drivers' lists taken back. */
+export async function clearNeededAction(): Promise<ActionResult & { cancelled?: number; kept?: number }> {
+  const who = await orderingLead();
+  if (!who.ok) return who;
+  const db = store();
+  const r = await clearNeeded(db, who.ctx.person, Date.now());
+  if (!r.ok) return r;
+  const v = r.value;
+  await db.audit({ actorId: who.ctx.person.id, action: "stock.clear",
+    detail: `Stock needed cleared: ${v.cancelled} request${v.cancelled === 1 ? "" : "s"} cancelled${v.lists ? `, ${v.lists} driver list${v.lists === 1 ? "" : "s"} taken back` : ""}${v.newItems ? `, ${v.newItems} new item${v.newItems === 1 ? "" : "s"} not needed` : ""}${v.kept ? `, ${v.kept} left (partly bought)` : ""}` });
+  revalidateStock();
+  return { ok: true, cancelled: v.cancelled, kept: v.kept };
 }
 
 /** Ticks products off a supplier's list (ordered or bought, so done; production: sent). */

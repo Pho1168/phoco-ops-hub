@@ -18,10 +18,11 @@ export default async function MyShopping() {
   const mine = data.tasks.filter((t) => !t.cancelledAt && t.method !== "production" && (t.assigneeId === ctx.person.id || t.driverId === ctx.person.id));
   const stops: DriverStop[] = [];
   for (const t of mine.sort((a, b) => a.createdAt - b.createdAt)) {
-    const lines = data.lines.filter((l) => l.taskId === t.id);
+    // Lines taken off (the request was cancelled) aren't the driver's any more.
+    const lines = data.lines.filter((l) => l.taskId === t.id && lineEnd(l, data.events)?.kind !== "line_cancelled");
     const open = lines.filter((l) => !lineEnd(l, data.events));
     // Finished lists stay until the end of the day they were given, so the driver sees they're done.
-    if (!open.length && londonDate(t.createdAt) !== londonDate(now)) continue;
+    if (!lines.length || (!open.length && londonDate(t.createdAt) !== londonDate(now))) continue;
     const sup = catalog.suppliers.find((s) => s.id === t.supplierId);
     stops.push({
       taskId: t.id, shop: sup?.name ?? "Shopping", note: t.note,

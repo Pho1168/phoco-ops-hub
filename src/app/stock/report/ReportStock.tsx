@@ -30,8 +30,9 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
   const [noIssues, setNoIssues] = useState(!!draft?.noIssues);
   const [extras, setExtras] = useState<Extra[]>(draft?.extras ?? []);
   const [adding, setAdding] = useState<Extra | undefined>();
+  const [clearing, setClearing] = useState(false);
   const [query, setQuery] = useState("");
-  const [cat, setCat] = useState<string>(frequent.length ? "frequent" : "all");
+  const [cat, setCat] = useState<string>("all");
   const [step, setStep] = useState<"pick" | "review" | "sent">("pick");
   const [openId, setOpenId] = useState<string | undefined>();
   const [saving, setSaving] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -80,6 +81,8 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
   const step1 = (l: Line, d: number) => setLine(l.productId, { qty: Math.max(1, Math.min(9999, (l.qty ?? 0) + d)) });
   const missing = lines.filter((l) => l.qty === undefined).length;
   const total = lines.length + extras.length;
+  // Clear all: empties the unsent report in one go (what's already been sent stays with the owner).
+  const clearAll = () => { setLines([]); setExtras([]); setNoIssues(false); setOpenId(undefined); setAdding(undefined); setClearing(false); setErr(""); };
   const addExtra = (x: Extra) => {
     setErr(""); setNoIssues(false);
     setExtras((xs) => [...xs.filter((o) => `${o.name}|${o.size ?? ""}`.toLowerCase() !== `${x.name}|${x.size ?? ""}`.toLowerCase()), x]);
@@ -160,11 +163,23 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
         <div className="stock-tools">
           <input className="txt" type="search" placeholder="Search, e.g. lime" aria-label="Search products" value={query} onChange={(e) => setQuery(e.target.value)} />
           <div className="chips stock-cats" role="group" aria-label="Show">
-            {frequent.length > 0 && <button type="button" className={`chip ${cat === "frequent" && !q ? "done" : ""}`} onClick={() => setCat("frequent")}>Usual</button>}
             <button type="button" className={`chip ${cat === "all" && !q ? "done" : ""}`} onClick={() => setCat("all")}>All</button>
+            {frequent.length > 0 && <button type="button" className={`chip ${cat === "frequent" && !q ? "done" : ""}`} onClick={() => setCat("frequent")}>Usual</button>}
             {cats.map((c) => <button key={c} type="button" className={`chip ${cat === c && !q ? "done" : ""}`} onClick={() => setCat(c)}>{c}</button>)}
           </div>
         </div>
+        {total > 0 && !q && (
+          <div className="row wrap" style={{ gap: 8, alignItems: "center" }}>
+            <span className="muted grow" style={{ fontSize: 14 }}>{total} item{total === 1 ? "" : "s"} picked, not sent yet</span>
+            {clearing
+              ? <>
+                  <span className="strong">Clear all {total}?</span>
+                  <button type="button" className="btn small" onClick={clearAll}>Yes, clear all</button>
+                  <button type="button" className="btn ghost small" onClick={() => setClearing(false)}>Keep them</button>
+                </>
+              : <button type="button" className="btn ghost small" onClick={() => setClearing(true)}>Clear all</button>}
+          </div>
+        )}
         {lines.length > 0 && !q && (
           <section className="stack" aria-label="In your report" style={{ gap: 8 }}>
             <h2 className="h-sec">In your report ({lines.length})</h2>

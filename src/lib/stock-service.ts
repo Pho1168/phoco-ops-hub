@@ -213,6 +213,41 @@ export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status"
   return { ok: true, value: { ticked: rows.length } };
 }
 
+const CLEAR_NOTE = "Cleared from Stock needed";
+
+/**
+ * Clears Stock needed without ordering anything: every list given to a driver is taken back, every request on the page
+ * is cancelled (kept, with the reason, in the history), and new items still waiting are marked not needed. A request
+ * that's partly bought already can't be cancelled; it's left on the list and counted.
+ */
+export async function clearNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, now: number): Promise<Done<{ cancelled: number; kept: number; lists: number; newItems: number }>> {
+  const v = await neededView(db, person, now);
+  if (!v.siteIds.length) return { ok: false, error: "Only the owner and operations managers order stock" };
+  let lists = 0;
+  for (const t of v.groups.flatMap((g) => g.drivers.map((d) => d.task))) if (await db.cancelStockTask(t.id, person.id, CLEAR_NOTE)) lists++;
+  const lineReq = new Map(v.data.lines.map((l) => [l.id, l.requestId]));
+  const ids = new Set<string>();
+  for (const g of v.groups) {
+    for (const r of g.rows) {
+      for (const id of [...r.requestIds, ...r.unknownIds]) ids.add(id);
+      for (const l of r.lineIds) { const id = lineReq.get(l); if (id) ids.add(id); }
+    }
+    for (const d of g.drivers) for (const l of v.data.lines.filter((x) => x.taskId === d.task.id)) ids.add(l.requestId);
+  }
+  let cancelled = 0, kept = 0;
+  for (const id of ids) {
+    const req = v.data.requests.find((r) => r.id === id);
+    if (!req || req.cancelledAt || !v.siteIds.includes(req.siteId)) continue;
+    const r = await db.changeStockRequest(id, { cancel: CLEAR_NOTE }, person.id);
+    if (r.ok) cancelled++; else kept++;
+  }
+  let newItems = 0;
+  if (runsPurchasing(person)) {
+    for (const n of await db.stockNewItems({ open: true, siteIds: v.siteIds })) if ((await db.decideNewItem(n.id, person.id, { dismiss: CLEAR_NOTE })).ok) newItems++;
+  }
+  return { ok: true, value: { cancelled, kept, lists, newItems } };
+}
+
 /** Gives what a supplier's list still needs (or some of it) to a driver: one task, theirs to tick off on their phone. */
 export async function giveToDriver(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, driverId: string, productIds: string[] | undefined, now: number): Promise<Done<string>> {
   const { group } = await neededGroup(db, person, key, now);
