@@ -2,6 +2,7 @@ import { store } from "@/lib/data";
 import { canPurchase, lookAlikes, methodOf, runsPurchasing } from "@/lib/domain/stock";
 import { londonDate, shortDay } from "@/lib/domain/time";
 import { neededView } from "@/lib/stock-service";
+import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "../Bar";
 import { orderingStockCtx } from "../load";
 import { NeededBoard, type BoardGroup } from "./NeededBoard";
@@ -43,6 +44,12 @@ export default async function NeededPage() {
     <>
       <StockBar ctx={ctx} onPhone={onPhone} title="Stock needed" back="/stock" eyebrow={`Stock · ${shortDay(londonDate(now))}`} />
       <main className="stack">
+        {(clearable > 0 || newItems.length > 0) && (
+          <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
+            <span className="muted grow" style={{ fontSize: 14 }}>Everything below on one page, with boxes to tick.</span>
+            <a className="btn small" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (PDF)</a>
+          </div>
+        )}
         {newItems.length > 0 && (
           <NewItemsCard owner={runsPurchasing(ctx.person)}
             items={newItems.map((n) => ({ id: n.id, name: n.name, size: n.size, qty: n.qty, note: n.note, site: siteName.get(n.siteId) ?? n.siteId,

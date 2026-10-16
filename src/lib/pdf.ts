@@ -7,8 +7,9 @@
 export const A4 = { w: 595.28, h: 841.89 };
 
 export type PdfOp =
-  | { t: "text"; x: number; y: number; size: number; bold?: boolean; text: string }
-  | { t: "line"; x1: number; y1: number; x2: number; y2: number; width?: number; grey?: number };
+  | { t: "text"; x: number; y: number; size: number; bold?: boolean; text: string; grey?: number }
+  | { t: "line"; x1: number; y1: number; x2: number; y2: number; width?: number; grey?: number }
+  | { t: "rect"; x: number; y: number; w: number; h: number; width?: number; grey?: number; fill?: number | [number, number, number] };
 
 /** Characters WinAnsi has outside Latin-1 (the rest of 0x20–0xFF map to themselves). */
 const CP1252: Record<string, number> = { "€": 0x80, "‘": 0x91, "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95, "–": 0x96, "—": 0x97, "…": 0x85 };
@@ -60,7 +61,10 @@ export function buildPdf(pages: PdfOp[][], title: string): Uint8Array {
   for (const ops of pages.length ? pages : [[]]) {
     const parts: string[] = [];
     for (const op of ops) {
-      if (op.t === "text") parts.push(`BT /${op.bold ? "F2" : "F1"} ${n(op.size)} Tf ${n(op.x)} ${n(op.y)} Td ${pdfString(op.text)} Tj ET`);
+      if (op.t === "text") parts.push(`${n(op.grey ?? 0)} g BT /${op.bold ? "F2" : "F1"} ${n(op.size)} Tf ${n(op.x)} ${n(op.y)} Td ${pdfString(op.text)} Tj ET 0 g`);
+      else if (op.t === "rect") parts.push(op.fill !== undefined
+        ? `${Array.isArray(op.fill) ? `${op.fill.map(n).join(" ")} rg` : `${n(op.fill)} g`} ${n(op.x)} ${n(op.y)} ${n(op.w)} ${n(op.h)} re f 0 g`
+        : `${n(op.grey ?? 0)} G ${n(op.width ?? 0.8)} w ${n(op.x)} ${n(op.y)} ${n(op.w)} ${n(op.h)} re S`);
       else parts.push(`${n(op.grey ?? 0)} G ${n(op.width ?? 0.5)} w ${n(op.x1)} ${n(op.y1)} m ${n(op.x2)} ${n(op.y2)} l S`);
     }
     const stream = parts.join("\n");
@@ -117,5 +121,76 @@ export function orderSheetPdf(o: { title: string; lines: string[]; rows: { qty: 
   ops.push({ t: "text", x: M, y: y - 10, size: 10, text: o.foot });
   pages.push(ops);
   pages.forEach((p, i) => p.push({ t: "text", x: right - 60, y: 30, size: 9, text: `Page ${i + 1} of ${pages.length}` }));
+  return buildPdf(pages, o.title);
+}
+
+export interface SheetRow { qty: string; item: string; detail?: string; flag?: string }
+export interface SheetGroup { heading: string; sub?: string; rows: SheetRow[]; notes?: string[] }
+
+/**
+ * A tick-off sheet: a heading, then groups (a supplier each) of rows with a box to tick, the quantity and the item, a
+ * small grey line under it when there is one, in two columns so a normal day fits on one A4 page; it runs on to more
+ * pages when it has to. Page numbers at the foot.
+ */
+export function checklistPdf(o: { title: string; lines: string[]; groups: SheetGroup[]; foot: string }): Uint8Array {
+  const M = 32, gap = 18, colW = (A4.w - 2 * M - gap) / 2, bottom = 44, top = A4.h - 40;
+  const pages: PdfOp[][] = [];
+  let ops: PdfOp[] = [];
+  let col = 0, y = 0, colTop = 0;
+  const x0 = () => M + col * (colW + gap);
+  const newPage = (first: boolean) => {
+    if (!first) pages.push(ops);
+    ops = []; col = 0;
+    y = top;
+    if (first) {
+      // The brand's deep teal (#2C6E63) behind the title.
+      ops.push({ t: "rect", x: M, y: y - 34, w: A4.w - 2 * M, h: 42, fill: [0.173, 0.431, 0.388] });
+      ops.push({ t: "text", x: M + 12, y: y - 13, size: 16, bold: true, text: o.title, grey: 1 });
+      ops.push({ t: "text", x: M + 12, y: y - 27, size: 9, text: o.lines.join("   \u00b7   "), grey: 1 });
+      y -= 52;
+    } else {
+      ops.push({ t: "text", x: M, y, size: 10, bold: true, text: `${o.title} (continued)` });
+      y -= 18;
+    }
+    colTop = y;
+  };
+  const room = (h: number) => {
+    if (y - h >= bottom) return;
+    if (col === 0) { col = 1; y = colTop; return; }
+    newPage(false);
+  };
+  newPage(true);
+  for (const g of o.groups) {
+    room(22 + 16);
+    const x = x0();
+    ops.push({ t: "text", x, y: y - 11, size: 11, bold: true, text: fitText(g.heading.toUpperCase(), 11, colW - 70, true) });
+    if (g.sub) ops.push({ t: "text", x: x + colW - textWidth(g.sub, 8), y: y - 11, size: 8, text: g.sub, grey: 0.35 });
+    ops.push({ t: "line", x1: x, y1: y - 15, x2: x + colW, y2: y - 15, width: 1 });
+    y -= 22;
+    for (const r of g.rows) {
+      const h = r.detail ? 22 : 14;
+      room(h);
+      const cx = x0();
+      ops.push({ t: "rect", x: cx, y: y - 9, w: 8.5, h: 8.5, width: 0.8 });
+      ops.push({ t: "text", x: cx + 14, y: y - 8, size: 9.5, bold: true, text: r.qty });
+      const flagW = r.flag ? textWidth(r.flag, 7.5, true) + 4 : 0;
+      ops.push({ t: "text", x: cx + 40, y: y - 8, size: 9.5, text: fitText(r.item, 9.5, colW - 42 - flagW) });
+      if (r.flag) ops.push({ t: "text", x: cx + colW - flagW + 4, y: y - 8, size: 7.5, bold: true, text: r.flag });
+      if (r.detail) ops.push({ t: "text", x: cx + 40, y: y - 17.5, size: 7.5, text: fitText(r.detail, 7.5, colW - 42), grey: 0.4 });
+      y -= h;
+    }
+    for (const nt of g.notes ?? []) {
+      room(11);
+      ops.push({ t: "text", x: x0(), y: y - 7, size: 7.5, text: fitText(nt, 7.5, colW), grey: 0.4 });
+      y -= 11;
+    }
+    y -= 8;
+  }
+  if (!o.groups.length) ops.push({ t: "text", x: M, y: y - 12, size: 11, text: "Nothing needed right now." });
+  pages.push(ops);
+  pages.forEach((p, i) => {
+    p.push({ t: "text", x: M, y: 24, size: 7.5, text: o.foot, grey: 0.45 });
+    p.push({ t: "text", x: A4.w - M - 52, y: 24, size: 7.5, text: `Page ${i + 1} of ${pages.length}`, grey: 0.45 });
+  });
   return buildPdf(pages, o.title);
 }
