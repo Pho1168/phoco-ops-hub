@@ -2,7 +2,7 @@ import Link from "next/link";
 import { store } from "@/lib/data";
 import { canSeeTask, isClosed, isUrgent, productionQueue, taskState } from "@/lib/domain/stock";
 import { londonDate } from "@/lib/domain/time";
-import { stockView } from "@/lib/stock-service";
+import { kitchenPlan, stockView } from "@/lib/stock-service";
 import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "./Bar";
 import { stockCtx } from "./load";
@@ -27,6 +27,10 @@ export default async function StockHome() {
   const myTasks = data.tasks.filter((t) => !t.cancelledAt && (t.assigneeId === ctx.person.id || t.driverId === ctx.person.id) && taskState(t, data.lines, data.events) !== "done");
   const prodRows = can.productionSites.length ? productionQueue(data.tasks.filter((t) => canSeeTask(ctx.person, t, catalog.suppliers.find((s) => s.id === t.supplierId))), data.lines, data.requests, data.events, catalog.products) : [];
   const prodOutstanding = prodRows.filter((r) => r.outstanding > 0).length;
+  // What to make at the kitchens this person plans, from each one's latest count.
+  const plans = await Promise.all(can.planSites.map((id) => kitchenPlan(db, id, now)));
+  const toMake = plans.reduce((n, p) => n + p.rows.filter((r) => (r.make ?? 0) > 0).length, 0);
+  const countedToday = can.count ? (await db.stockCounts(ctx.site.id, now - 86_400_000)).find((c) => c.date === londonDate(now)) : undefined;
   const waiting = items.filter((x) => x.progress.state === "waiting" || x.progress.state === "needs_qty" || x.progress.state === "part_bought" && x.progress.toPlan > 0);
   const urgent = waiting.filter((x) => isUrgent(x.request, data.events)).length;
 
@@ -63,10 +67,14 @@ export default async function StockHome() {
             <div className="tiles">{door("/stock/tasks", "cart", "My shopping list", myTasks.length ? `${myTasks.length} task${myTasks.length === 1 ? "" : "s"} for you` : "Nothing for you right now", { n: myTasks.length })}</div>
           </section>
         )}
-        {can.productionSites.length > 0 && (
+        {(can.productionSites.length > 0 || can.planSites.length > 0) && (
           <section className="stack" aria-label="Production">
             <h2 className="grp-h">Production kitchen</h2>
-            <div className="tiles">{door("/stock/production", "truck", "Production orders", prodOutstanding ? `${prodOutstanding} product${prodOutstanding === 1 ? "" : "s"} to prepare or send` : "Nothing waiting", { n: prodOutstanding })}</div>
+            <div className="tiles">
+              {door("/stock/production", "truck", "Production orders", prodOutstanding ? `${prodOutstanding} product${prodOutstanding === 1 ? "" : "s"} to prepare or send` : "Nothing waiting", { n: prodOutstanding })}
+              {can.count && door("/stock/count", "check", "Count production stock", countedToday ? `Counted today by ${countedToday.countedByName?.split(" ")[0] ?? "someone"}` : "What's on the shelf, at close")}
+              {can.planSites.length > 0 && door("/stock/plan", "report", "Production plan", plans.some((p) => p.latest) ? (toMake ? `${toMake} item${toMake === 1 ? "" : "s"} to make` : "Nothing to make") : "No count yet · set the targets", { n: toMake })}
+            </div>
           </section>
         )}
         {can.purchasing && (
@@ -79,7 +87,7 @@ export default async function StockHome() {
             </div>
           </section>
         )}
-        {!can.report && !can.purchasing && !can.productionSites.length && myTasks.length === 0 && (
+        {!can.report && !can.purchasing && !can.productionSites.length && !can.planSites.length && myTasks.length === 0 && (
           <div className="card muted">Nothing here for you at {ctx.site.name}.</div>
         )}
       </main>

@@ -1,4 +1,5 @@
 import type { DraftLine, Price, Product, PurchaseTask, Receipt, StockEvent, StockReport, StockRequest, Supplier, TaskLine } from "@/lib/domain/stock";
+import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
 import type { SiteId } from "@/lib/domain/types";
 
 /** Requests and what's happened to them: the raw records the stock rules (src/lib/domain/stock.ts) work from. */
@@ -58,4 +59,13 @@ export interface StockStore {
   addStockReceipt(requestId: string, qty: number, by: string, note?: string): Promise<Done>;
   /** The owner sets a quantity, changes the supplier, or cancels (each logged as an event with the reason). */
   changeStockRequest(id: string, change: { fixedQty: number } | { supplierId: string | null } | { cancel: string }, by: string): Promise<Done>;
+
+  /** Production counts at a kitchen from a time, newest first (with who counted). */
+  stockCounts(siteId: SiteId, since: number): Promise<StockCount[]>;
+  /** Adds a count (counts are never changed: a recount is another one). */
+  addStockCount(c: Omit<StockCount, "id" | "createdAt" | "countedByName">): Promise<StockCount>;
+  /** The target in use for each product at a kitchen (the latest set; none if it was taken off). */
+  stockTargets(siteId: SiteId): Promise<StockTarget[]>;
+  /** Adds a target record for each of these (already checked and only the changed ones). Returns how many. */
+  setStockTargets(siteId: SiteId, targets: { productId: string; qty?: number }[], by: string): Promise<number>;
 }

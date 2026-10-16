@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, TERMINAL, withProgress,
   type DraftLine, type EventKind, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
+import type { CountLine, StockCount } from "@/lib/domain/stock-count";
 import { londonDate } from "@/lib/domain/time";
 import { sql, withTx } from "./pg";
 import type { StockData, StockStore } from "./stock-store";
@@ -22,6 +23,13 @@ interface ReportRow { id: string; site_id: string; person_id: string; person_nam
 const toReport = (r: ReportRow): StockReport => ({ id: r.id, siteId: r.site_id, personId: r.person_id, personName: opt(r.person_name), date: day(r.business_date)!, lines: r.lines ?? [], noIssues: r.no_issues, submittedAt: r.submitted_at?.getTime(), updatedAt: r.updated_at.getTime() });
 const reportSelect = (q: Q) => q`select r.id, r.site_id, r.person_id, p.display_name as person_name, to_char(r.business_date, 'YYYY-MM-DD') as business_date, r.lines, r.no_issues, r.submitted_at, r.updated_at
   from stock_reports r left join people p on p.id = r.person_id`;
+
+interface CountRow { id: string; site_id: string; counted_by: string; counted_by_name: string | null; business_date: string; lines: CountLine[]; note: string | null; created_at: Date }
+const toCount = (r: CountRow): StockCount => ({ id: r.id, siteId: r.site_id, countedBy: r.counted_by, countedByName: opt(r.counted_by_name), date: r.business_date,
+  lines: (r.lines ?? []).map((l) => ({ productId: l.productId, qty: Number(l.qty) })), note: opt(r.note), createdAt: r.created_at.getTime() });
+const countSelect = (q: Q) => q`select c.id, c.site_id, c.counted_by, p.display_name as counted_by_name, to_char(c.business_date, 'YYYY-MM-DD') as business_date, c.lines, c.note, c.created_at
+  from stock_counts c left join people p on p.id = c.counted_by`;
+interface TargetRow { site_id: string; product_id: string; qty: string | null; set_by: string; set_by_name: string | null; set_at: Date }
 
 interface RequestRow { id: string; code: number; site_id: string; product_id: string; level: "low" | "out"; qty: string | null; fixed_qty: string | null; note: string | null; photo_id: string | null; report_id: string | null;
   requested_by: string; requested_by_name: string | null; supplier_id: string | null; created_at: Date; cancelled_at: Date | null; cancel_reason: string | null }
@@ -337,6 +345,31 @@ export const stockSql: StockStore = {
         await tx`update stock_requests set cancelled_at = now(), cancelled_by = ${by}, cancel_reason = ${change.cancel} where id = ${id}`;
       }
       return { ok: true as const, value: undefined };
+    });
+  },
+
+  async stockCounts(siteId, since) {
+    const q = sql();
+    return (await q<CountRow[]>`${countSelect(q)} where c.site_id = ${siteId} and c.created_at >= ${new Date(since)} order by c.created_at desc limit 200`).map(toCount);
+  },
+  async addStockCount(c) {
+    const q = sql();
+    const [r] = await q<{ id: string }[]>`insert into stock_counts (site_id, counted_by, business_date, lines, note)
+      values (${c.siteId}, ${c.countedBy}, ${c.date}, ${q.json(c.lines as unknown as postgres.JSONValue)}, ${c.note ?? null}) returning id`;
+    const [row] = await q<CountRow[]>`${countSelect(q)} where c.id = ${r.id}`;
+    return toCount(row);
+  },
+  async stockTargets(siteId) {
+    const q = sql();
+    const rows = await q<TargetRow[]>`select distinct on (t.product_id) t.site_id, t.product_id, t.qty::text, t.set_by, p.display_name as set_by_name, t.set_at
+      from stock_targets t left join people p on p.id = t.set_by where t.site_id = ${siteId} order by t.product_id, t.set_at desc, t.id desc`;
+    return rows.map((r) => ({ siteId: r.site_id, productId: r.product_id, qty: num(r.qty), setBy: r.set_by, setByName: opt(r.set_by_name), setAt: r.set_at.getTime() }));
+  },
+  async setStockTargets(siteId, targets, by) {
+    if (!targets.length) return 0;
+    return withTx(async (tx) => {
+      for (const t of targets) await tx`insert into stock_targets (site_id, product_id, qty, set_by) values (${siteId}, ${t.productId}, ${t.qty ?? null}, ${by})`;
+      return targets.length;
     });
   },
 };

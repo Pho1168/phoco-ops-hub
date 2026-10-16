@@ -110,6 +110,8 @@ export interface ShiftInput {
   gas?: GasToday; ready?: ReadyToday;
   /** The stock report at close (Stock & Purchasing), for the closers: done once anyone at the site has sent today's. */
   stockReport?: { closeAt: number; closer: boolean; sentBy?: string; sentAt?: number };
+  /** The production count at close (a production kitchen), for the closers: done once anyone there has counted today. */
+  productionCount?: { closeAt: number; closer: boolean; sentBy?: string; sentAt?: number };
   kitDown: KitDown[]; tasks: TaskToday[];
 }
 
@@ -186,6 +188,13 @@ export function shiftItems(x: ShiftInput): ShiftItem[] {
     const state: ItemState = s.sentAt ? "done" : now >= s.closeAt - STOCK_REPORT_FROM_MIN * 60_000 ? "now" : "later";
     out.push({ kind: "stock", id: "stock", title: "Stock report", href: "/stock/report", state, urgent: false, dueAt: s.closeAt, when: "before you go",
       detail: s.sentAt ? `Sent${s.sentBy ? ` by ${s.sentBy}` : ""} at ${londonHM(s.sentAt)}` : "What's low or out, for the buyers", doneBy: s.sentBy, doneAt: s.sentAt });
+  }
+
+  if (x.productionCount && (x.productionCount.closer || !x.personId)) {
+    const c = x.productionCount;
+    const state: ItemState = c.sentAt ? "done" : now >= c.closeAt - STOCK_REPORT_FROM_MIN * 60_000 ? "now" : "later";
+    out.push({ kind: "stock", id: "count", title: "Count production stock", href: "/stock/count", state, urgent: false, dueAt: c.closeAt, when: "before you go",
+      detail: c.sentAt ? `Counted${c.sentBy ? ` by ${c.sentBy}` : ""} at ${londonHM(c.sentAt)}` : "What's on the shelf, for tomorrow's plan", doneBy: c.sentBy, doneAt: c.sentAt });
   }
 
   for (const k of x.kitDown) out.push({ kind: "kit", id: k.id, title: `Not working: ${k.name}`, detail: k.body, href: `/equipment/${k.id}`, state: "now", urgent: true });

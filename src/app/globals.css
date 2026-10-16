@@ -915,4 +915,14 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 .stock-timeline li { display: flex; gap: 10px; }
 .stock-timeline time { color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .stock-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* Production count and plan */
+.count-list { display: flex; flex-direction: column; gap: 8px; }
+.count-row { background: var(--surface); border-radius: 14px; border: 2px solid transparent; padding: 10px 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.count-row.done { border-color: var(--teal); }
+.plan-scroll { overflow-x: auto; margin: 0 -4px; }
+table.plan-table { font-size: 15px; }
+table.plan-table td, table.plan-table th { vertical-align: middle; }
+table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.plan-target { width: 84px; text-align: right; min-height: 40px; }
+.plan-old { border: 2px solid var(--accent); }
 .stock-filter select { min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); padding: 0 10px; font: inherit; }
