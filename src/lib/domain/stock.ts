@@ -635,6 +635,32 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
     .sort((a, b) => Number(!a.supplier) - Number(!b.supplier) || Number(a.production) - Number(b.production) || (a.supplier?.name ?? "").localeCompare(b.supplier?.name ?? ""));
 }
 
+/** The tick-off sheet: new items first, then each supplier's card as rows (amount, item and pack, who it's for). */
+export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name" | "size" | "qty" | "siteId" | "note">[], siteName: (id: SiteId) => string):
+  { heading: string; sub?: string; rows: { qty: string; item: string; detail?: string; flag?: string }[]; notes?: string[] }[] {
+  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
+  const label = (name: string, size?: string) => (size ? `${name} \u00b7 ${size}` : name);
+  const out: ReturnType<typeof neededSheet> = [];
+  if (newItems.length) {
+    out.push({ heading: "New items", sub: "Not in the catalogue yet", rows: newItems.map((n) => ({
+      qty: fmt(n.qty), item: label(n.name, n.size), detail: [`For ${siteName(n.siteId)}`, n.note].filter(Boolean).join(" \u00b7 "), flag: "NEW" })) });
+  }
+  for (const g of groups) {
+    const rows = g.rows.map((r) => {
+      const sites = r.sites.filter((x) => x.qty > 0);
+      const where = sites.length === 1 ? `For ${siteName(sites[0].siteId)}` : sites.map((x) => `${siteName(x.siteId)} ${fmt(x.qty)}`).join(" \u00b7 ");
+      const unknown = r.sites.filter((x) => x.unknown > 0).map((x) => `${siteName(x.siteId)}: amount needed`);
+      return { qty: r.qty > 0 ? fmt(r.qty) : "?", item: label(r.product.name, r.product.size),
+        detail: [where, ...unknown, ...r.notes.map((t) => `\u201c${t}\u201d`)].filter(Boolean).join(" \u00b7 ") || undefined, flag: r.urgent ? "URGENT" : undefined };
+    });
+    const notes = g.drivers.map((d) => `With ${d.task.assigneeName?.split(" ")[0] ?? "a driver"}: ${d.items.map((x) => `${fmt(x.qty)} ${x.name}`).join(", ")}`);
+    if (!rows.length && !notes.length) continue;
+    const sub = g.production ? "Production: tick when sent" : g.supplier ? methodOf(g.supplier.method)?.label : "Set a supplier in the catalogue";
+    out.push({ heading: g.supplier?.name ?? "No supplier yet", sub, rows, notes });
+  }
+  return out;
+}
+
 /** How many things a group still needs ordering, giving out or sending (rows, plus items with drivers). */
 export const neededCount = (groups: NeededGroup[]) => groups.reduce((n, g) => n + g.rows.length, 0);
 

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { cleanNewItems, lookAlikes, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
-import { buildPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
+import { cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
+import { buildPdf, checklistPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
 import { addNewItem, clearNeeded, deliversTo, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
 
 const NOW = Date.UTC(2026, 9, 16, 21, 0);
@@ -227,5 +227,31 @@ describe("the Report stock tile", () => {
     expect(sentTodayLine([{ personName: "Anh B", submittedAt: at(12) }, { personName: "Vishal T", submittedAt: at(15) }, { personName: "Anh B", submittedAt: at(10) }], hm))
       .toBe("Sent today by Vishal, Anh · last at 15:30");
     expect(sentTodayLine([], hm)).toBeUndefined();
+  });
+});
+
+describe("the tick-off sheet", () => {
+  it("lists new items first, then each supplier's items with who they're for, urgent and drivers' lists", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 2 }, { name: "Coconut Milk", qty: 4, level: "out" }, { name: "Che Lychee", qty: 1 }]);
+    await report("WEM", "DEMO-PRD", [{ name: "Lime", qty: 3 }]);
+    const wy = (await group("Wing Yip (demo)"))!;
+    await giveToDriver(db, await owner(), wy.key, "DEMO-FLT", [wy.rows.find((r) => r.product.name === "Che Lychee")!.product.id], NOW);
+    const names: Record<string, string> = { EAS: "Eastcote", WEM: "Wembley" };
+    const sheet = neededSheet(await groups(), [{ name: "Gloves", size: "Box of 100", qty: 2, siteId: "EAS" }], (id) => names[id]);
+    expect(sheet[0]).toMatchObject({ heading: "New items", rows: [{ qty: "2", item: "Gloves \u00b7 Box of 100", detail: "For Eastcote", flag: "NEW" }] });
+    const sg = sheet.find((g) => g.heading === "Surelygrow (demo)")!;
+    expect(sg.rows[0]).toMatchObject({ qty: "5", item: "Lime \u00b7 Case", detail: "Eastcote 2 \u00b7 Wembley 3" });
+    const w = sheet.find((g) => g.heading === "Wing Yip (demo)")!;
+    expect(w.rows).toEqual([{ qty: "4", item: "Coconut Milk \u00b7 Can", detail: "For Eastcote", flag: "URGENT" }]);
+    expect(w.notes).toEqual(["With Floater: 1 Che Lychee \u00b7 Can"]);
+  });
+
+  it("is a valid PDF that runs on to more pages when the list is long", () => {
+    const groups = Array.from({ length: 8 }, (_, g) => ({ heading: `Supplier ${g}`, sub: "Shop trip", rows: Array.from({ length: 20 }, (_, i) => ({ qty: String(i + 1), item: `Item ${g}-${i}`, detail: i % 2 ? "For Eastcote" : undefined, flag: i === 3 ? "URGENT" : undefined })) }));
+    const one = Buffer.from(checklistPdf({ title: "PHO & CO stock needed", lines: ["Friday 16 October"], groups: groups.slice(0, 1), foot: "x" })).toString("latin1");
+    const many = Buffer.from(checklistPdf({ title: "PHO & CO stock needed", lines: ["Friday 16 October"], groups, foot: "x" })).toString("latin1");
+    expect(/\/Count (\d+)/.exec(one)![1]).toBe("1");
+    expect(Number(/\/Count (\d+)/.exec(many)![1])).toBeGreaterThan(1);
+    expect(many.trimEnd().endsWith("%%EOF")).toBe(true);
   });
 });
