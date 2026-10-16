@@ -5,9 +5,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
-import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
+import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode } from "@/lib/domain/stock";
-import { driverTick, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded } from "@/lib/stock-service";
+import { addNewItem, driverTick, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded } from "@/lib/stock-service";
 import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
@@ -2251,23 +2251,27 @@ async function photoOk(id?: string): Promise<boolean> {
 }
 
 /** Saves the person's unsent report at the site they're signed in at (a draft they can come back to). */
-export async function saveStockReport(input: { lines: unknown; noIssues: boolean }): Promise<ActionResult> {
+export async function saveStockReport(input: { lines: unknown; noIssues: boolean; extras?: unknown }): Promise<ActionResult> {
   const who = await stockWho();
   if (!who.ok) return who;
   const { ctx } = who;
   if (!canReportAt(ctx.person, ctx.site)) return { ok: false, error: `You can't report stock at ${ctx.site.name}` };
-  const parsed = z.object({ lines: z.array(z.object({ productId: StockIdZ, level: z.enum(["low", "out"]), qty: z.number().optional().nullable(), note: z.string().max(200).optional(), photoId: z.string().max(64).optional() })).max(200), noIssues: z.boolean() }).safeParse(input);
+  const parsed = z.object({ lines: z.array(z.object({ productId: StockIdZ, level: z.enum(["low", "out"]), qty: z.number().optional().nullable(), note: z.string().max(200).optional(), photoId: z.string().max(64).optional() })).max(200), noIssues: z.boolean(),
+    extras: z.array(z.object({ name: z.string().max(120), size: z.string().max(80).optional(), qty: z.number().optional().nullable(), note: z.string().max(300).optional() })).max(40).optional() }).safeParse(input);
   if (!parsed.success) return { ok: false, error: "Something in the report doesn't look right. Check it and try again" };
   const db = store();
   const clean = cleanStockLines(parsed.data.lines.map((l) => ({ ...l, qty: l.qty ?? undefined })), (await db.stockCatalog()).products, { draft: true });
   if (!clean.ok) return clean;
   for (const l of clean.value) if (!(await photoOk(l.photoId))) return { ok: false, error: "A photo didn't upload properly. Take it again" };
-  await db.saveStockDraft(ctx.site.id, ctx.person.id, londonDate(Date.now()), clean.value, parsed.data.noIssues && !clean.value.length);
+  const extras = parsed.data.extras ? cleanNewItems(parsed.data.extras.map((x) => ({ ...x, qty: x.qty ?? undefined })), { draft: true }) : undefined;
+  if (extras && !extras.ok) return extras;
+  const nothing = !clean.value.length && !(extras?.value.length);
+  await db.saveStockDraft(ctx.site.id, ctx.person.id, londonDate(Date.now()), clean.value, parsed.data.noIssues && nothing, extras?.value);
   return { ok: true };
 }
 
 /** Sends the report: new requests, notes on ones already open, production products to the kitchen. */
-export async function sendStockReportNow(): Promise<ActionResult & { created?: number; again?: number }> {
+export async function sendStockReportNow(): Promise<ActionResult & { created?: number; again?: number; newItems?: number }> {
   const who = await stockWho();
   if (!who.ok) return who;
   const { ctx } = who;
@@ -2276,9 +2280,9 @@ export async function sendStockReportNow(): Promise<ActionResult & { created?: n
   const r = await sendStockReport(db, ctx.person, ctx.site, Date.now());
   if (!r.ok) return r;
   await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "stock.report",
-    detail: r.value.noIssues ? "No stock issues today" : `Stock report: ${r.value.created.length} new request${r.value.created.length === 1 ? "" : "s"}${r.value.again ? `, ${r.value.again} already requested` : ""}` });
+    detail: r.value.noIssues ? "No stock issues today" : `Stock report: ${r.value.created.length} new request${r.value.created.length === 1 ? "" : "s"}${r.value.again ? `, ${r.value.again} already requested` : ""}${r.value.newItems.length ? `, ${r.value.newItems.length} not in the catalogue (${r.value.newItems.map((n) => n.name).join(", ")})` : ""}` });
   revalidateStock();
-  return { ok: true, created: r.value.created.length, again: r.value.again };
+  return { ok: true, created: r.value.created.length, again: r.value.again, newItems: r.value.newItems.length };
 }
 
 /** The person's last sent report at the site, back into their draft to check and send again. */
@@ -2501,6 +2505,44 @@ async function orderingLead(): Promise<{ ok: true; ctx: Ctx } | { ok: false; err
   return who;
 }
 const KeyZ = z.string().max(64);
+
+/**
+ * The owner adds an item staff asked for that isn't in the catalogue: as a new product (or one already there), then
+ * it's asked for at that restaurant, so it shows under its supplier on Stock needed and is on the list next time.
+ */
+export async function addNewStockItem(id: string, input: unknown): Promise<ActionResult & { created?: boolean }> {
+  const who = await purchasingOwner();
+  if (!who.ok) return who;
+  const p = z.union([
+    z.object({ productId: StockIdZ, qty: QtyZ }),
+    z.object({ name: z.string().max(120), size: z.string().max(80).optional(), category: z.string().max(80).optional(), supplierId: StockIdZ, qty: QtyZ }),
+  ]).safeParse(input);
+  if (!StockIdZ.safeParse(id).success || !p.success) return { ok: false, error: "Check the name, supplier and how many" };
+  const db = store();
+  const item = (await db.stockNewItems({ open: true })).find((n) => n.id === id);
+  const r = await addNewItem(db, who.ctx.person, id, p.data, Date.now());
+  if (!r.ok) return r;
+  const prod = (await db.stockCatalog()).products.find((x) => x.id === r.value.productId);
+  await db.audit({ actorId: who.ctx.person.id, siteId: item?.siteId, action: r.value.created ? "stock.product" : "stock.request",
+    detail: `New item "${item?.name ?? "?"}" ${r.value.created ? "added to the catalogue as" : "matched to"} ${prod ? `${prod.name}${prod.size ? ` (${prod.size})` : ""}` : "a product"}, ${p.data.qty} asked for` });
+  revalidateStock();
+  return { ok: true, created: r.value.created };
+}
+
+/** The owner says a new item isn't needed (it's kept, with the reason). */
+export async function dismissNewStockItem(id: string, reason: string): Promise<ActionResult> {
+  const who = await purchasingOwner();
+  if (!who.ok) return who;
+  const p = z.object({ id: StockIdZ, reason: z.string().trim().min(1).max(200) }).safeParse({ id, reason: reason || "Not needed" });
+  if (!p.success) return { ok: false, error: "Say why it isn't needed" };
+  const db = store();
+  const item = (await db.stockNewItems({ open: true })).find((n) => n.id === p.data.id);
+  const r = await db.decideNewItem(p.data.id, who.ctx.person.id, { dismiss: p.data.reason });
+  if (!r.ok) return r;
+  await db.audit({ actorId: who.ctx.person.id, siteId: item?.siteId, action: "stock.request", detail: `New item "${item?.name ?? "?"}" not needed: ${p.data.reason}` });
+  revalidateStock();
+  return { ok: true };
+}
 
 /** Ticks products off a supplier's list (ordered or bought, so done; production: sent). */
 export async function tickNeededAction(key: string, productIds: string[]): Promise<ActionResult & { ticked?: number }> {

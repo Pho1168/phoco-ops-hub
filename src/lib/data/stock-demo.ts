@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, sameProduct, TERMINAL, withProgress,
-  type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
+  type NewItem, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
 import type { SiteId } from "@/lib/domain/types";
 import type { StockData, StockStore } from "./stock-store";
@@ -15,6 +15,8 @@ interface StockState {
   counts: StockCount[]; targets: StockTarget[];
   /** Where a supplier delivers (a production kitchen), shown on its order sheet. */
   delivers: { supplierId: string; deliversTo?: SiteId }[];
+  /** Items asked for that aren't in the catalogue, for the owner. */
+  newItems: NewItem[];
 }
 
 function seed(): StockState {
@@ -44,7 +46,7 @@ function seed(): StockState {
   // Wembley's targets for its production products, so the plan has something to work from.
   const targets: StockTarget[] = [[0, 4], [1, 10], [2, 8], [3, 3]].map(([i, qty]) => ({ siteId: "WEM", productId: products[i].id, qty, setBy: "DEMO-OWN", setAt: Date.now() - 86_400_000 }));
   return { suppliers, products, prices, reports: [], requests: [], tasks: [], lines: [], events: [], receipts: [], purchasers: new Set(["DEMO-MGR", "DEMO-FLT"]), nextRequest: 1, nextTask: 1,
-    counts: [], targets,
+    counts: [], targets, newItems: [],
     // The main supplier delivers to the Wembley kitchen.
     delivers: [{ supplierId: main.id, deliversTo: "WEM" }] };
 }
@@ -108,20 +110,20 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
 
     async stockDraft(siteId, personId) {
       const r = S().reports.find((x) => x.siteId === siteId && x.personId === personId && !x.submittedAt);
-      return r && { ...r, personName: deps.personName(r.personId), lines: r.lines.map((l) => ({ ...l })) };
+      return r && { ...r, personName: deps.personName(r.personId), lines: r.lines.map((l) => ({ ...l })), extras: r.extras.map((x) => ({ ...x })) };
     },
-    async saveStockDraft(siteId, personId, date, lines, noIssues) {
+    async saveStockDraft(siteId, personId, date, lines, noIssues, extras) {
       const s = S();
       let r = s.reports.find((x) => x.siteId === siteId && x.personId === personId && !x.submittedAt);
-      if (!r) { r = { id: randomUUID(), siteId, personId, date, lines: [], noIssues: false, updatedAt: Date.now() }; s.reports.push(r); }
-      Object.assign(r, { date, lines: lines.map((l) => ({ ...l })), noIssues, updatedAt: Date.now() });
+      if (!r) { r = { id: randomUUID(), siteId, personId, date, lines: [], noIssues: false, updatedAt: Date.now(), extras: [] }; s.reports.push(r); }
+      Object.assign(r, { date, lines: lines.map((l) => ({ ...l })), noIssues, updatedAt: Date.now() }, extras ? { extras: extras.map((x) => ({ ...x })) } : {});
       return { ...r, personName: deps.personName(personId) };
     },
     async stockReports(siteIds, since) {
       return S().reports.filter((r) => r.submittedAt && siteIds.includes(r.siteId) && r.submittedAt >= since).sort((a, b) => b.submittedAt! - a.submittedAt!)
         .map((r) => ({ ...r, personName: deps.personName(r.personId) }));
     },
-    async submitStockReport(reportId, by, lines, products) {
+    async submitStockReport(reportId, by, lines, products, extras = []) {
       const s = S();
       const rep = s.reports.find((r) => r.id === reportId);
       if (!rep || rep.submittedAt) return false;
@@ -143,7 +145,31 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
           event({ by, kind: "qty_changed", requestId: a.requestId, qty: a.setQty, text: "given in a later report" });
         }
       }
-      return { created: made, again: plan.again.length };
+      const newItems: NewItem[] = [];
+      for (const x of extras) {
+        if (x.qty === undefined) continue;
+        const n: NewItem = { id: randomUUID(), siteId: rep.siteId, reportId, name: x.name, size: x.size, qty: x.qty, note: x.note, requestedBy: by, createdAt: Date.now() };
+        s.newItems.push(n); newItems.push({ ...n, requestedByName: deps.personName(by) });
+      }
+      return { created: made, again: plan.again.length, newItems };
+    },
+    async stockNewItems(f) {
+      return S().newItems.filter((n) => (!f.open || !n.decidedAt) && (f.since === undefined || n.createdAt >= f.since || !n.decidedAt) && (!f.siteIds || f.siteIds.includes(n.siteId)))
+        .sort((a, b) => a.createdAt - b.createdAt).map((n) => ({ ...n, requestedByName: deps.personName(n.requestedBy) }));
+    },
+    async decideNewItem(id, by, d) {
+      const s = S();
+      const n = s.newItems.find((x) => x.id === id);
+      if (!n) return { ok: false, error: "That new item isn't there" };
+      if (n.decidedAt) return { ok: false, error: "That new item has already been dealt with" };
+      if ("dismiss" in d) { Object.assign(n, { decidedAt: Date.now(), decidedBy: by, dismissed: d.dismiss }); return { ok: true, value: {} }; }
+      if (!s.products.some((p) => p.id === d.productId)) return { ok: false, error: "That product isn't in the catalogue" };
+      const r: StockRequest = { id: randomUUID(), code: s.nextRequest++, siteId: n.siteId, productId: d.productId, level: "low", qty: d.qty, note: n.note,
+        reportId: n.reportId, requestedBy: n.requestedBy, supplierId: d.supplierId, createdAt: Date.now() };
+      s.requests.push(r);
+      event({ by, kind: "note", requestId: r.id, text: "New item, added to the catalogue" });
+      Object.assign(n, { decidedAt: Date.now(), decidedBy: by, productId: d.productId, requestId: r.id });
+      return { ok: true, value: { request: { ...r, requestedByName: deps.personName(n.requestedBy) } } };
     },
 
     async stockData(f) {

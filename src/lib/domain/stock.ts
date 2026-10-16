@@ -138,7 +138,18 @@ export interface DraftLine { productId: string; level: StockLevel; qty?: number;
 export interface StockReport {
   id: string; siteId: SiteId; personId: string; personName?: string; date: string;
   lines: DraftLine[]; noIssues: boolean; submittedAt?: number; updatedAt: number;
+  /** Items not in the catalogue (new items for the owner to add). */
+  extras: NewItemLine[];
 }
+/** Something staff need that isn't in the catalogue: what it is, the pack or size if they know, how many. */
+export interface NewItemLine { name: string; size?: string; qty?: number; note?: string }
+/** A new item sent to the owner, and what they decided (added to the catalogue, or not needed). */
+export interface NewItem {
+  id: string; siteId: SiteId; reportId?: string; name: string; size?: string; qty: number; note?: string;
+  requestedBy: string; requestedByName?: string; createdAt: number;
+  decidedAt?: number; decidedBy?: string; productId?: string; requestId?: string; dismissed?: string;
+}
+export const NEW_ITEMS_MAX = 20;
 export const QTY_MAX = 9999;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -167,6 +178,43 @@ export function cleanLines(lines: DraftLine[], products: Pick<Product, "id" | "a
     out.push({ productId: l.productId, level: l.level, ...(qty !== undefined ? { qty } : {}), ...(note ? { note } : {}), ...(photoId ? { photoId } : {}) });
   }
   return { ok: true, value: out };
+}
+
+/**
+ * A report's new items, checked: a name (2–80 characters), an optional pack or size, how many (a draft may not say
+ * yet), a short note; the same name and size once; at most NEW_ITEMS_MAX.
+ */
+export function cleanNewItems(items: NewItemLine[], opts: { draft?: boolean } = {}): { ok: true; value: NewItemLine[] } | { ok: false; error: string } {
+  if (items.length > NEW_ITEMS_MAX) return { ok: false, error: `Up to ${NEW_ITEMS_MAX} new items in one report` };
+  const out: NewItemLine[] = [];
+  const key = (x: NewItemLine) => `${x.name.toLowerCase()}|${(x.size ?? "").toLowerCase()}`;
+  for (const i of items) {
+    const name = String(i.name ?? "").replace(/\s+/g, " ").trim();
+    if (name.length < 2 || name.length > 80) return { ok: false, error: "Give each new item a name (2 to 80 letters)" };
+    const size = String(i.size ?? "").replace(/\s+/g, " ").trim().slice(0, 40) || undefined;
+    let qty: number | undefined;
+    if (i.qty === undefined || i.qty === null) {
+      if (!opts.draft) return { ok: false, error: `Say how many you need of ${name}` };
+    } else {
+      qty = Number(i.qty);
+      if (!Number.isFinite(qty) || qty <= 0 || qty > QTY_MAX) return { ok: false, error: `Quantities are from 1 to ${QTY_MAX}` };
+      qty = Math.round(qty * 100) / 100;
+    }
+    const note = String(i.note ?? "").trim().slice(0, 200) || undefined;
+    const x: NewItemLine = { name, ...(size ? { size } : {}), ...(qty !== undefined ? { qty } : {}), ...(note ? { note } : {}) };
+    if (out.some((o) => key(o) === key(x))) continue;
+    out.push(x);
+  }
+  return { ok: true, value: out };
+}
+
+/** Catalogue products whose name looks like a new item's (so the owner can spot it's already there). */
+export function lookAlikes(name: string, products: Pick<Product, "id" | "name" | "size" | "active">[], n = 3): Pick<Product, "id" | "name" | "size">[] {
+  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  if (!words.length) return [];
+  return products.filter((p) => p.active)
+    .map((p) => ({ p, score: words.filter((w) => p.name.toLowerCase().includes(w)).length }))
+    .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || a.p.name.localeCompare(b.p.name)).slice(0, n).map((x) => x.p);
 }
 
 // ---------- requests, tasks, events ----------

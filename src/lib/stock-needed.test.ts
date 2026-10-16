@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
+import { cleanNewItems, lookAlikes, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
 import { buildPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
-import { deliversTo, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
+import { addNewItem, deliversTo, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
 
 const NOW = Date.UTC(2026, 9, 16, 21, 0);
 
@@ -133,5 +133,66 @@ describe("order sheet PDF", () => {
       for (const i of [1, 50, 100]) expect(out).toContain(`Item ${i}`);
       expect(out).toContain(`Page ${pages} of ${pages}`);
     }
+  });
+});
+
+describe("new items: asked for but not in the catalogue", () => {
+  const sendWith = async (extras: { name: string; size?: string; qty?: number; note?: string }[], lines: { name: string; qty: number }[] = []) => {
+    const { products } = await db.stockCatalog();
+    await db.saveStockDraft("EAS", "DEMO-BOH", "2026-10-16", lines.map((l) => ({ productId: products.find((p) => p.name === l.name)!.id, level: "low" as const, qty: l.qty })), false, extras);
+    return sendStockReport(db, { id: "DEMO-BOH" }, { id: "EAS" }, NOW);
+  };
+
+  it("are checked: a name, how many to send, once each", () => {
+    expect(cleanNewItems([{ name: "  Nitrile   gloves ", size: " Box of 100 ", qty: 2.555 }, { name: "nitrile gloves", size: "box of 100", qty: 1 }]))
+      .toEqual({ ok: true, value: [{ name: "Nitrile gloves", size: "Box of 100", qty: 2.56 }] });
+    expect(cleanNewItems([{ name: "x", qty: 1 }]).ok).toBe(false);
+    expect(cleanNewItems([{ name: "Bleach" }]).ok).toBe(false);
+    expect(cleanNewItems([{ name: "Bleach" }], { draft: true }).ok).toBe(true);
+    expect(cleanNewItems([{ name: "Bleach", qty: 0 }]).ok).toBe(false);
+    expect(cleanNewItems(Array.from({ length: 21 }, (_, i) => ({ name: `Item ${i}`, qty: 1 }))).ok).toBe(false);
+    expect(lookAlikes("Coconut cream", [{ id: "a", name: "Coconut Milk", active: true }, { id: "b", name: "Lime", active: true }]).map((p) => p.id)).toEqual(["a"]);
+  });
+
+  it("go to the owner with the report (a report of only new items is fine), and the owner is told", async () => {
+    const r = await sendWith([{ name: "Nitrile gloves", size: "Box of 100", qty: 2, note: "large" }]);
+    expect(r.ok && r.value.newItems).toHaveLength(1);
+    expect(r.ok && r.value.noIssues).toBe(false);
+    const open = await db.stockNewItems({ open: true });
+    expect(open[0]).toMatchObject({ siteId: "EAS", name: "Nitrile gloves", size: "Box of 100", qty: 2, note: "large", requestedBy: "DEMO-BOH" });
+    expect((await db.notices("DEMO-OWN", 10)).some((n) => n.title === "New item asked for · Eastcote" && n.url === "/stock/needed")).toBe(true);
+    expect((await sendWith([{ name: "Bleach" }])).ok).toBe(false); // no amount
+  });
+
+  it("the owner adds one to the catalogue: it's ordered under its supplier and on the list next time", async () => {
+    await sendWith([{ name: "Nitrile gloves", size: "Box of 100", qty: 2 }]);
+    const [item] = await db.stockNewItems({ open: true });
+    const lidl = (await db.stockCatalog()).suppliers.find((x) => x.name === "Lidl/Aldi (demo)")!;
+    expect((await addNewItem(db, (await db.person("DEMO-OPS"))!, item.id, { name: "Nitrile Gloves L", size: "Box of 100", supplierId: lidl.id, qty: 3 }, NOW)).ok).toBe(false); // owner only
+    const r = await addNewItem(db, await owner(), item.id, { name: "Nitrile Gloves L", size: "Box of 100", category: "Cleaning", supplierId: lidl.id, qty: 3 }, NOW);
+    expect(r).toMatchObject({ ok: true, value: { created: true } });
+    const product = (await db.stockCatalog()).products.find((p) => p.name === "Nitrile Gloves L")!;
+    expect(product).toMatchObject({ size: "Box of 100", category: "Cleaning", supplierId: lidl.id, active: true });
+    expect((await group("Lidl/Aldi (demo)"))!.rows.map((x) => [x.product.name, x.qty, x.sites[0].siteId])).toEqual([["Nitrile Gloves L", 3, "EAS"]]);
+    expect(await db.stockNewItems({ open: true })).toHaveLength(0);
+    expect((await addNewItem(db, await owner(), item.id, { productId: product.id, qty: 1 }, NOW)).ok).toBe(false); // once
+  });
+
+  it("one that's already in the catalogue is ordered as that product; production goes to the kitchen; one not needed is kept", async () => {
+    await sendWith([{ name: "Coconut cream", qty: 4 }, { name: "Pho soup", qty: 2 }, { name: "Glitter", qty: 1 }]);
+    const items = await db.stockNewItems({ open: true });
+    const { products } = await db.stockCatalog();
+    const coco = products.find((p) => p.name === "Coconut Milk")!, soup = products.find((p) => p.name === "Soup")!;
+    const before = products.length;
+    expect((await addNewItem(db, await owner(), items[0].id, { productId: coco.id, qty: 4 }, NOW))).toMatchObject({ ok: true, value: { created: false } });
+    expect((await addNewItem(db, await owner(), items[1].id, { productId: soup.id, qty: 2 }, NOW)).ok).toBe(true);
+    expect((await db.decideNewItem(items[2].id, "DEMO-OWN", { dismiss: "Not something we stock" })).ok).toBe(true);
+    expect((await db.decideNewItem(items[2].id, "DEMO-OWN", { dismiss: "again" })).ok).toBe(false);
+    expect((await db.stockCatalog()).products).toHaveLength(before);
+    expect((await group("Wing Yip (demo)"))!.rows[0]).toMatchObject({ qty: 4 });
+    const prod = (await groups()).find((g) => g.production)!;
+    expect(prod.rows[0]).toMatchObject({ qty: 2 });
+    expect(prod.rows[0].lineIds).toHaveLength(1); // straight onto the kitchen's order
+    expect((await db.stockNewItems({})).find((n) => n.id === items[2].id)).toMatchObject({ dismissed: "Not something we stock", decidedBy: "DEMO-OWN" });
   });
 });

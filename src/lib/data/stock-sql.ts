@@ -1,6 +1,6 @@
 import type postgres from "postgres";
 import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, TERMINAL, withProgress,
-  type DraftLine, type EventKind, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
+  type DraftLine, type EventKind, type NewItem, type NewItemLine, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { CountLine, StockCount } from "@/lib/domain/stock-count";
 import { londonDate } from "@/lib/domain/time";
 import { sql, withTx } from "./pg";
@@ -20,10 +20,17 @@ interface ProductRow { id: string; name: string; size: string | null; category: 
 const toProduct = (r: ProductRow): Product => ({ id: r.id, name: r.name, size: opt(r.size), category: opt(r.category), supplierId: opt(r.supplier_id), active: r.active, link: opt(r.link), importName: opt(r.import_name),
   ...(r.for_restaurants === false ? { forRestaurants: false } : {}) });
 
-interface ReportRow { id: string; site_id: string; person_id: string; person_name: string | null; business_date: string; lines: DraftLine[]; no_issues: boolean; submitted_at: Date | null; updated_at: Date }
-const toReport = (r: ReportRow): StockReport => ({ id: r.id, siteId: r.site_id, personId: r.person_id, personName: opt(r.person_name), date: day(r.business_date)!, lines: r.lines ?? [], noIssues: r.no_issues, submittedAt: r.submitted_at?.getTime(), updatedAt: r.updated_at.getTime() });
-const reportSelect = (q: Q) => q`select r.id, r.site_id, r.person_id, p.display_name as person_name, to_char(r.business_date, 'YYYY-MM-DD') as business_date, r.lines, r.no_issues, r.submitted_at, r.updated_at
+interface ReportRow { id: string; site_id: string; person_id: string; person_name: string | null; business_date: string; lines: DraftLine[]; no_issues: boolean; submitted_at: Date | null; updated_at: Date; extras: NewItemLine[] | null }
+const toReport = (r: ReportRow): StockReport => ({ id: r.id, siteId: r.site_id, personId: r.person_id, personName: opt(r.person_name), date: day(r.business_date)!, lines: r.lines ?? [], noIssues: r.no_issues, submittedAt: r.submitted_at?.getTime(), updatedAt: r.updated_at.getTime(), extras: r.extras ?? [] });
+const reportSelect = (q: Q) => q`select r.id, r.site_id, r.person_id, p.display_name as person_name, to_char(r.business_date, 'YYYY-MM-DD') as business_date, r.lines, r.no_issues, r.submitted_at, r.updated_at, r.extras
   from stock_reports r left join people p on p.id = r.person_id`;
+interface NewItemRow { id: string; site_id: string; report_id: string | null; name: string; size: string | null; qty: string; note: string | null; requested_by: string; requested_by_name: string | null;
+  created_at: Date; decided_at: Date | null; decided_by: string | null; product_id: string | null; request_id: string | null; dismissed: string | null }
+const toNewItem = (r: NewItemRow): NewItem => ({ id: r.id, siteId: r.site_id, reportId: opt(r.report_id), name: r.name, size: opt(r.size), qty: Number(r.qty), note: opt(r.note),
+  requestedBy: r.requested_by, requestedByName: opt(r.requested_by_name), createdAt: r.created_at.getTime(), decidedAt: r.decided_at?.getTime(), decidedBy: opt(r.decided_by),
+  productId: opt(r.product_id), requestId: opt(r.request_id), dismissed: opt(r.dismissed) });
+const newItemSelect = (q: Q) => q`select n.id, n.site_id, n.report_id, n.name, n.size, n.qty::text, n.note, n.requested_by, p.display_name as requested_by_name, n.created_at,
+  n.decided_at, n.decided_by, n.product_id, n.request_id, n.dismissed from stock_new_items n left join people p on p.id = n.requested_by`;
 
 interface CountRow { id: string; site_id: string; counted_by: string; counted_by_name: string | null; business_date: string; lines: CountLine[]; note: string | null; created_at: Date; supplier_id: string | null }
 const toCount = (r: CountRow): StockCount => ({ id: r.id, siteId: r.site_id, countedBy: r.counted_by, countedByName: opt(r.counted_by_name), date: r.business_date,
@@ -139,12 +146,14 @@ export const stockSql: StockStore = {
     const [r] = await q<ReportRow[]>`${reportSelect(q)} where r.site_id = ${siteId} and r.person_id = ${personId} and r.submitted_at is null`;
     return r ? toReport(r) : undefined;
   },
-  async saveStockDraft(siteId, personId, date, lines, noIssues) {
+  async saveStockDraft(siteId, personId, date, lines, noIssues, extras) {
     const q = sql();
+    const ex = q.json((extras ?? []) as unknown as postgres.JSONValue);
     const [r] = await q<{ id: string }[]>`
-      insert into stock_reports (site_id, person_id, business_date, lines, no_issues) values (${siteId}, ${personId}, ${date}, ${q.json(lines as unknown as postgres.JSONValue)}, ${noIssues})
+      insert into stock_reports (site_id, person_id, business_date, lines, no_issues, extras) values (${siteId}, ${personId}, ${date}, ${q.json(lines as unknown as postgres.JSONValue)}, ${noIssues}, ${ex})
       on conflict (site_id, person_id) where submitted_at is null
       do update set lines = excluded.lines, no_issues = excluded.no_issues, business_date = excluded.business_date, updated_at = now()
+        ${extras ? q`, extras = excluded.extras` : q``}
       returning id`;
     const [row] = await q<ReportRow[]>`${reportSelect(q)} where r.id = ${r.id}`;
     return toReport(row);
@@ -154,7 +163,7 @@ export const stockSql: StockStore = {
     const q = sql();
     return (await q<ReportRow[]>`${reportSelect(q)} where r.site_id = any(${siteIds}::text[]) and r.submitted_at >= ${new Date(since)} order by r.submitted_at desc limit 500`).map(toReport);
   },
-  async submitStockReport(reportId, by, lines, products) {
+  async submitStockReport(reportId, by, lines, products, extras = []) {
     if (!UUID.test(reportId)) return false;
     return withTx(async (tx) => {
       const [rep] = await tx<{ site_id: string }[]>`update stock_reports set submitted_at = now(), updated_at = now() where id = ${reportId} and submitted_at is null returning site_id`;
@@ -179,7 +188,43 @@ export const stockSql: StockStore = {
         }
       }
       const created = (await tx<RequestRow[]>`${requestSelect(tx)} where r.id = any(${made}::uuid[]) order by r.code`).map(toRequest);
-      return { created, again: plan.again.length };
+      const newIds: string[] = [];
+      for (const x of extras) {
+        if (x.qty === undefined) continue;
+        const [n] = await tx<{ id: string }[]>`insert into stock_new_items (site_id, report_id, name, size, qty, note, requested_by)
+          values (${rep.site_id}, ${reportId}, ${x.name}, ${x.size ?? null}, ${x.qty}, ${x.note ?? null}, ${by}) returning id`;
+        newIds.push(n.id);
+      }
+      const newItems = newIds.length ? (await tx<NewItemRow[]>`${newItemSelect(tx)} where n.id = any(${newIds}::uuid[]) order by n.created_at`).map(toNewItem) : [];
+      return { created, again: plan.again.length, newItems };
+    });
+  },
+
+  async stockNewItems(f) {
+    const q = sql();
+    return (await q<NewItemRow[]>`${newItemSelect(q)} where true
+      ${f.open ? q`and n.decided_at is null` : q``}
+      ${f.since !== undefined ? q`and (n.created_at >= ${new Date(f.since)} or n.decided_at is null)` : q``}
+      ${f.siteIds ? q`and n.site_id = any(${f.siteIds}::text[])` : q``}
+      order by n.created_at limit 500`).map(toNewItem);
+  },
+  async decideNewItem(id, by, d) {
+    if (!UUID.test(id)) return { ok: false, error: "That new item isn't there" };
+    return withTx(async (tx) => {
+      const [n] = await tx<{ site_id: string; report_id: string | null; qty: string; note: string | null; requested_by: string; decided_at: Date | null }[]>`
+        select site_id, report_id, qty::text, note, requested_by, decided_at from stock_new_items where id = ${id} for update`;
+      if (!n) return { ok: false as const, error: "That new item isn't there" };
+      if (n.decided_at) return { ok: false as const, error: "That new item has already been dealt with" };
+      if ("dismiss" in d) {
+        await tx`update stock_new_items set decided_at = now(), decided_by = ${by}, dismissed = ${d.dismiss} where id = ${id}`;
+        return { ok: true as const, value: {} };
+      }
+      const [r] = await tx<{ id: string }[]>`insert into stock_requests (site_id, product_id, level, qty, note, report_id, requested_by, supplier_id)
+        values (${n.site_id}, ${d.productId}, 'low', ${d.qty}, ${n.note}, ${n.report_id}, ${n.requested_by}, ${d.supplierId ?? null}) returning id`;
+      await tx`insert into stock_events (by, kind, request_id, text) values (${by}, 'note', ${r.id}, ${"New item, added to the catalogue"})`;
+      await tx`update stock_new_items set decided_at = now(), decided_by = ${by}, product_id = ${d.productId}, request_id = ${r.id} where id = ${id}`;
+      const [req] = (await tx<RequestRow[]>`${requestSelect(tx)} where r.id = ${r.id}`).map(toRequest);
+      return { ok: true as const, value: { request: req } };
     });
   },
 
