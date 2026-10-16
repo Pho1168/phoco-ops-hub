@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { frequent, isClosed, STATE_LABEL, typicalQty } from "@/lib/domain/stock";
 import { stockView } from "@/lib/stock-service";
+import { shownAt } from "@/lib/domain/supplier-orders";
 import { StockBar } from "../Bar";
 import { stockCtx } from "../load";
 import { ReportStock } from "./ReportStock";
@@ -20,7 +21,9 @@ export default async function ReportPage() {
   const history = items.map((x) => x.request);
   // A production kitchen doesn't order what it makes itself.
   const ownSupplier = new Set(catalog.suppliers.filter((s) => s.method === "production" && s.siteId === ctx.site.id).map((s) => s.id));
-  const products = catalog.products.filter((p) => p.active && !(p.supplierId && ownSupplier.has(p.supplierId)))
+  // Raw ingredients a kitchen-only supplier sends (not marked for restaurants) don't show at the restaurants.
+  const cfgs = await db.supplierOrders();
+  const products = catalog.products.filter((p) => p.active && !(p.supplierId && ownSupplier.has(p.supplierId)) && shownAt(p, ctx.site.id, cfgs))
     .map((p) => ({ id: p.id, name: p.name, size: p.size, category: p.category, typical: typicalQty(history, p.id, ctx.site.id) }));
   const open = items.filter((x) => !isClosed(x.progress)).map((x) => ({ productId: x.request.productId, state: STATE_LABEL[x.progress.state] }));
   return (

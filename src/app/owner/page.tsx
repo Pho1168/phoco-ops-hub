@@ -12,6 +12,9 @@ import { ManageTiles, NeedsYou } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { RightNow } from "./RightNow";
+import { SupplierOrdersCard } from "./SupplierOrdersCard";
+import { supplierView } from "@/lib/supplier-order-service";
+import { canOrder, isScheduled } from "@/lib/domain/supplier-orders";
 import { teamRowsView, teamToday } from "@/lib/team-today";
 import { gasFor, lastClose, readyFor, shiftsAround } from "@/lib/daily-service";
 import { closeWords, readyShownUntil } from "@/lib/domain/daily";
@@ -103,6 +106,10 @@ export default async function Owner() {
   const prepSites = (await db.prepEnabledSites()).filter((id) => openSites.some((s) => s.id === id));
   const prepOpen = (await Promise.all(prepSites.map((id) => db.prepOutstanding(id)))).flat();
   const withReady = summaries.filter((s) => s.ready);
+  // Suppliers on order days: owners see them all; an operations manager those delivering to their sites.
+  const supCfgs = (await db.supplierOrders()).filter(isScheduled).filter((c) => ctx.isOwner || ctx.leads.includes(c.deliversTo));
+  const supViews = (await Promise.all(supCfgs.map((c) => supplierView(db, c.supplierId, now)))).filter((v) => v !== undefined);
+
   const rightNow = (
     <RightNow urgent={counts.urgent ?? 0}
       ready={withReady.length ? { green: withReady.filter((s) => s.ready!.light === "green").length, of: withReady.length } : undefined}
@@ -116,7 +123,8 @@ export default async function Owner() {
         {ctx.site.status === "open" && <Link className="pill-btn top-extra" href="/shift?view=lanes">Lanes at {ctx.site.name}</Link>}
       </TopBar>
       <OwnerClient lead={lead} rightNow={rightNow} needs={<NeedsYou counts={counts} />} tools={<ManageTiles counts={counts} owner={ctx.isOwner} />}
-        reminders={<RemindersCard rows={team} active={active.length} pushOn={active.length - missing.length} missing={missing} />} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
+        reminders={<><RemindersCard rows={team} active={active.length} pushOn={active.length - missing.length} missing={missing} />
+          <SupplierOrdersCard views={supViews} names={new Map(everyone.map((p) => [p.id, p.name]))} opens={new Set(supCfgs.filter((c) => canOrder(ctx.person, c)).map((c) => c.supplierId))} now={now} /></>} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
         rota={<RotaCard rows={rota} canConnect={ctx.isOwner} />}
         devices={<DevicesCard devices={devices} demo={DEMO_MODE} sites={sites.filter((s) => s.status === "open").map((s) => ({ id: s.id, name: s.name }))} />} />
       <BottomNav ctx={ctx} current="owner" />
