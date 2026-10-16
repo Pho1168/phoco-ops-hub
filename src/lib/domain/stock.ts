@@ -49,6 +49,8 @@ export interface Product {
   importName?: string;
   /** False: restaurants can't ask for it when its supplier delivers only to a kitchen (raw ingredients). Default true. */
   forRestaurants?: boolean;
+  /** Other suppliers that also sell it (not the preferred one), for buying it wherever suits the run. */
+  alsoFrom?: string[];
 }
 
 /** A reference price (pence, ex VAT) on a date: history, never a promise. */
@@ -84,6 +86,27 @@ export function cleanProduct(input: { name: string; size?: string; category?: st
   return { ok: true, value: { name, size, category, supplierId, link } };
 }
 const norm = (s?: string) => (s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+export const ALSO_FROM_MAX = 6;
+/** A product's other suppliers, checked: active, not a production kitchen, not the preferred one, once each, at most ALSO_FROM_MAX. */
+export function cleanAlsoFrom(ids: string[], preferredId: string | undefined, suppliers: Pick<Supplier, "id" | "method" | "active">[]): { ok: true; value: string[] } | { ok: false; error: string } {
+  const out: string[] = [];
+  for (const id of ids) {
+    if (!id || id === preferredId || out.includes(id)) continue;
+    const s = suppliers.find((x) => x.id === id);
+    if (!s || !s.active) return { ok: false, error: "One of the other suppliers isn't in the list" };
+    if (s.method === "production") return { ok: false, error: "A production kitchen can't be another supplier" };
+    out.push(id);
+  }
+  if (out.length > ALSO_FROM_MAX) return { ok: false, error: `Up to ${ALSO_FROM_MAX} other suppliers` };
+  return { ok: true, value: out };
+}
+
+/** Where a product can be bought: its preferred supplier, then the others that also sell it (active, no production kitchens). */
+export function buyFrom(product: Pick<Product, "supplierId" | "alsoFrom">, suppliers: Supplier[]): Supplier[] {
+  const ids = [product.supplierId, ...(product.alsoFrom ?? [])].filter((x): x is string => !!x);
+  return [...new Set(ids)].map((id) => suppliers.find((s) => s.id === id)).filter((s): s is Supplier => !!s && s.active && s.method !== "production");
+}
+
 export const sameProduct = (a: Pick<Product, "name" | "size" | "supplierId">, b: Pick<Product, "name" | "size" | "supplierId">) =>
   norm(a.name) === norm(b.name) && norm(a.size) === norm(b.size) && (a.supplierId ?? "") === (b.supplierId ?? "");
 
@@ -636,7 +659,7 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
 }
 
 /** The tick-off sheet: new items first, then each supplier's card as rows (amount, item and pack, who it's for). */
-export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name" | "size" | "qty" | "siteId" | "note">[], siteName: (id: SiteId) => string):
+export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name" | "size" | "qty" | "siteId" | "note">[], siteName: (id: SiteId) => string, supplierName: (id: string) => string | undefined = () => undefined):
   { heading: string; sub?: string; rows: { qty: string; item: string; detail?: string; flag?: string }[]; notes?: string[] }[] {
   const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
   const label = (name: string, size?: string) => (size ? `${name} \u00b7 ${size}` : name);
@@ -650,8 +673,9 @@ export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name
       const sites = r.sites.filter((x) => x.qty > 0);
       const where = sites.length === 1 ? `For ${siteName(sites[0].siteId)}` : sites.map((x) => `${siteName(x.siteId)} ${fmt(x.qty)}`).join(" \u00b7 ");
       const unknown = r.sites.filter((x) => x.unknown > 0).map((x) => `${siteName(x.siteId)}: amount needed`);
+      const also = g.production ? [] : (r.product.alsoFrom ?? []).filter((id) => id !== g.supplier?.id).map(supplierName).filter((n): n is string => !!n);
       return { qty: r.qty > 0 ? fmt(r.qty) : "?", item: label(r.product.name, r.product.size),
-        detail: [where, ...unknown, ...r.notes.map((t) => `\u201c${t}\u201d`)].filter(Boolean).join(" \u00b7 ") || undefined, flag: r.urgent ? "URGENT" : undefined };
+        detail: [where, ...unknown, ...r.notes.map((t) => `\u201c${t}\u201d`), ...(also.length ? [`also at ${also.join(", ")}`] : [])].filter(Boolean).join(" \u00b7 ") || undefined, flag: r.urgent ? "URGENT" : undefined };
     });
     const notes = g.drivers.map((d) => `With ${d.task.assigneeName?.split(" ")[0] ?? "a driver"}: ${d.items.map((x) => `${fmt(x.qty)} ${x.name}`).join(", ")}`);
     if (!rows.length && !notes.length) continue;

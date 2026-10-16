@@ -21,7 +21,8 @@ export async function GET() {
   const { groups, sites, siteIds } = await neededView(db, ctx.person, now);
   const newItems = await db.stockNewItems({ open: true, siteIds });
   const name = new Map(sites.map((s) => [s.id, s.name]));
-  const sheet = neededSheet(groups, newItems, (id) => name.get(id) ?? id);
+  const supplierName = new Map((await db.stockCatalog()).suppliers.filter((s) => s.active).map((s) => [s.id, s.name]));
+  const sheet = neededSheet(groups, newItems, (id) => name.get(id) ?? id, (id) => supplierName.get(id));
   const items = neededCount(groups) + newItems.length;
   const suppliers = groups.filter((g) => g.rows.length).length;
   const today = londonDate(now);

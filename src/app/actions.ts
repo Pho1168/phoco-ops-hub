@@ -5,9 +5,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
-import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
+import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode } from "@/lib/domain/stock";
-import { addNewItem, clearNeeded, driverTick, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded } from "@/lib/stock-service";
+import { addNewItem, clearNeeded, driverTick, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded } from "@/lib/stock-service";
 import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
@@ -2627,13 +2627,28 @@ export async function setNeededAmount(requestId: string, qty: number): Promise<A
   return { ok: true };
 }
 
-/** The driver ticks an item off their list: got it (done), or couldn't (back on Stock needed). */
-export async function driverTickAction(lineId: string, got: boolean): Promise<ActionResult> {
+/** Moves an item on Stock needed to another supplier that also sells it (before a shop run). */
+export async function moveNeededAction(key: string, productId: string, supplierId: string): Promise<ActionResult & { kept?: number }> {
+  const who = await orderingLead();
+  if (!who.ok) return who;
+  const p = z.object({ key: KeyZ, product: StockIdZ, supplier: StockIdZ }).safeParse({ key, product: productId, supplier: supplierId });
+  if (!p.success) return { ok: false, error: "Choose where to buy it" };
+  const db = store();
+  const r = await moveNeeded(db, who.ctx.person, p.data.key, p.data.product, p.data.supplier, Date.now());
+  if (!r.ok) return r;
+  const prod = (await db.stockCatalog()).products.find((x) => x.id === p.data.product);
+  await db.audit({ actorId: who.ctx.person.id, action: "stock.request", detail: `${prod?.name ?? "Item"} moved to ${r.value.to} (${r.value.moved} request${r.value.moved === 1 ? "" : "s"})${r.value.kept ? `, ${r.value.kept} left (partly bought)` : ""}` });
+  revalidateStock();
+  return { ok: true, kept: r.value.kept };
+}
+
+/** The driver ticks an item off their list: got it (done; at another shop that sells it, if so), or couldn't (back on Stock needed). */
+export async function driverTickAction(lineId: string, got: boolean, at?: string): Promise<ActionResult> {
   const who = await stockWho();
   if (!who.ok) return who;
-  if (!StockIdZ.safeParse(lineId).success) return { ok: false, error: "That isn't on your list any more" };
+  if (!StockIdZ.safeParse(lineId).success || (at !== undefined && !StockIdZ.safeParse(at).success)) return { ok: false, error: "That isn't on your list any more" };
   const db = store();
-  const r = await driverTick(db, who.ctx.person, lineId, got === true, Date.now());
+  const r = await driverTick(db, who.ctx.person, lineId, got === true, Date.now(), at);
   if (!r.ok) return r;
   const d = await taskOfLine(lineId);
   await db.audit({ actorId: who.ctx.person.id, siteId: d?.request?.siteId, action: got ? "stock.bought" : "stock.unavailable",
@@ -2667,17 +2682,21 @@ export async function saveStockSupplier(id: string | undefined, input: { name: s
 }
 
 /** The owner keeps the product catalogue: name, size, category, preferred supplier, link, on or off. */
-export async function saveStockProduct(id: string | undefined, input: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean }): Promise<ActionResult> {
+export async function saveStockProduct(id: string | undefined, input: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean; alsoFrom?: string[] }): Promise<ActionResult> {
   const who = await purchasingOwner();
   if (!who.ok) return who;
   const db = store();
   const { suppliers, products } = await db.stockCatalog();
   const clean = cleanProduct(input, suppliers, products, id);
   if (!clean.ok) return clean;
-  const saved = await db.saveProduct(id, clean.value, input.active !== false);
+  const also = input.alsoFrom ? cleanAlsoFrom(z.array(StockIdZ).max(20).catch([]).parse(input.alsoFrom), clean.value.supplierId, suppliers) : undefined;
+  if (also && !also.ok) return also;
+  const saved = await db.saveProduct(id, { ...clean.value, ...(also ? { alsoFrom: also.value } : {}) }, input.active !== false);
   if (!saved) return { ok: false, error: "That product is already in the catalogue" };
   const before = id ? products.find((p) => p.id === id) : undefined;
-  await db.audit({ actorId: who.ctx.person.id, action: "stock.product", detail: `${id ? "Changed" : "Added"} ${clean.value.name}${before && before.supplierId !== clean.value.supplierId ? `: supplier now ${suppliers.find((s) => s.id === clean.value.supplierId)?.name ?? "none"}` : ""}${input.active === false ? " (off)" : ""}` });
+  const alsoNames = also?.value.map((x) => suppliers.find((s) => s.id === x)?.name).filter(Boolean).join(", ");
+  const alsoChanged = also && (before?.alsoFrom ?? []).join() !== also.value.join();
+  await db.audit({ actorId: who.ctx.person.id, action: "stock.product", detail: `${id ? "Changed" : "Added"} ${clean.value.name}${before && before.supplierId !== clean.value.supplierId ? `: supplier now ${suppliers.find((s) => s.id === clean.value.supplierId)?.name ?? "none"}` : ""}${alsoChanged ? `; also sold by: ${alsoNames || "none"}` : ""}${input.active === false ? " (off)" : ""}` });
   revalidateStock();
   return { ok: true };
 }

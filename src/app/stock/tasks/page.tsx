@@ -1,5 +1,5 @@
 import { store } from "@/lib/data";
-import { lineEnd } from "@/lib/domain/stock";
+import { buyFrom, lineEnd } from "@/lib/domain/stock";
 import { londonDate, shortDay } from "@/lib/domain/time";
 import { stockView } from "@/lib/stock-service";
 import { StockBar, StockNav } from "../Bar";
@@ -31,7 +31,9 @@ export default async function MyShopping() {
         const p = r && catalog.products.find((x) => x.id === r.productId);
         const end = lineEnd(l, data.events);
         return { lineId: l.id, qty: l.qty, name: p?.name ?? "?", pack: p?.size, to: r ? siteName.get(r.siteId) ?? r.siteId : "", note: r?.note,
-          end: end ? (end.kind === "unavailable" ? "missing" as const : "got" as const) : undefined };
+          end: end ? (end.kind === "unavailable" ? "missing" as const : "got" as const) : undefined,
+          boughtAt: end?.kind === "bought" && end.event.text?.startsWith("Bought at ") ? end.event.text.slice(10) : undefined,
+          alsoAt: p ? buyFrom(p, catalog.suppliers).filter((x) => x.id !== t.supplierId).map((x) => ({ id: x.id, name: x.name })) : [] };
       }),
     });
   }

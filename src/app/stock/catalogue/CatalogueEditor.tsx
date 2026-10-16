@@ -58,6 +58,7 @@ export function CatalogueEditor({ suppliers, products, productionSites, sites, p
                     <span className="strong grow">{p.name}{p.size ? ` · ${p.size}` : ""}</span>
                     {!p.active && <span className="chip">Off</span>}
                     <span className="chip">{p.supplierId ? supName.get(p.supplierId) : "No supplier"}</span>
+                    {(p.alsoFrom ?? []).length > 0 && <span className="chip">also {(p.alsoFrom ?? []).map((id) => supName.get(id)).filter(Boolean).join(", ")}</span>}
                   </span>
                   <span className="muted" style={{ fontSize: 13 }}>{p.category ?? "No category"} · {p.price ?? "no price"}{p.importName && p.importName !== p.name ? ` · from the sheet as "${p.importName}"` : ""}</span>
                 </button>
@@ -113,13 +114,15 @@ export function CatalogueEditor({ suppliers, products, productionSites, sites, p
 
 function ProductForm({ p, suppliers, pending, today, onSave, onCancel, onPrice }: {
   p?: P; suppliers: Supplier[]; pending: boolean; today?: string;
-  onSave: (v: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean }) => void; onCancel: () => void;
+  onSave: (v: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean; alsoFrom: string[] }) => void; onCancel: () => void;
   onPrice?: (v: { pounds: string; on: string; note?: string }) => void;
 }) {
-  const [v, setV] = useState({ name: p?.name ?? "", size: p?.size ?? "", category: p?.category ?? "", supplierId: p?.supplierId ?? "", link: p?.link ?? "", active: p?.active ?? true });
+  const [v, setV] = useState({ name: p?.name ?? "", size: p?.size ?? "", category: p?.category ?? "", supplierId: p?.supplierId ?? "", link: p?.link ?? "", active: p?.active ?? true, alsoFrom: p?.alsoFrom ?? [] });
+  // Other shops that can sell it: any active supplier but a production kitchen and the preferred one.
+  const others = suppliers.filter((s) => s.active && s.method !== "production" && s.id !== v.supplierId);
   const [price, setPrice] = useState({ pounds: "", on: today ?? "", note: "" });
   return (
-    <form className="card stack" onSubmit={(e) => { e.preventDefault(); onSave({ ...v, size: v.size || undefined, category: v.category || undefined, supplierId: v.supplierId || undefined, link: v.link || undefined }); }}>
+    <form className="card stack" onSubmit={(e) => { e.preventDefault(); onSave({ ...v, size: v.size || undefined, category: v.category || undefined, supplierId: v.supplierId || undefined, link: v.link || undefined, alsoFrom: v.alsoFrom.filter((id) => id !== v.supplierId) }); }}>
       <div className="row wrap" style={{ gap: 8 }}>
         <input className="txt grow" maxLength={80} placeholder="Name" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} aria-label="Name" required />
         <input className="txt" maxLength={40} placeholder="Size, e.g. Case x 14" value={v.size} onChange={(e) => setV({ ...v, size: e.target.value })} aria-label="Size" />
@@ -130,6 +133,19 @@ function ProductForm({ p, suppliers, pending, today, onSave, onCancel, onPrice }
           <option value="">No supplier</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </div>
+      {others.length > 0 && (
+        <fieldset className="stack" style={{ gap: 6, border: 0, padding: 0, margin: 0 }}>
+          <legend className="strong" style={{ fontSize: 14, marginBottom: 4 }}>Also sold at (optional)</legend>
+          <div className="row wrap" style={{ gap: 6 }}>
+            {others.map((s) => {
+              const on = v.alsoFrom.includes(s.id);
+              return <button key={s.id} type="button" className={`chip ${on ? "done" : ""}`} aria-pressed={on}
+                onClick={() => setV({ ...v, alsoFrom: on ? v.alsoFrom.filter((x) => x !== s.id) : [...v.alsoFrom, s.id] })}>{on ? "✓ " : ""}{s.name}</button>;
+            })}
+          </div>
+          <span className="muted" style={{ fontSize: 13 }}>Stock needed can move it to one of these before a shop run, and drivers can tick it as bought there.</span>
+        </fieldset>
+      )}
       <input className="txt" maxLength={300} placeholder="Product page (https://…, optional)" value={v.link} onChange={(e) => setV({ ...v, link: e.target.value })} aria-label="Product page" />
       <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} style={{ width: 22, height: 22 }} /><span>On the list (staff can report it)</span></label>
       <div className="muted" style={{ fontSize: 13 }}>Changing the supplier changes new requests only; requests already sent keep theirs (change those on the request).</div>

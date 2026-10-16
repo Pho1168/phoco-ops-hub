@@ -16,7 +16,8 @@ export interface StockStore {
   stockCatalog(): Promise<{ suppliers: Supplier[]; products: Product[]; prices: Price[] }>;
   saveSupplier(id: string | undefined, s: Omit<Supplier, "id" | "active">, active: boolean): Promise<string>;
   /** False when that name, size and supplier is already another product. */
-  saveProduct(id: string | undefined, p: Pick<Product, "name" | "size" | "category" | "supplierId" | "link" | "forRestaurants">, active: boolean): Promise<string | false>;
+  /** Adds or changes a product. `alsoFrom` given: its other suppliers are set; left out: they stay as they are. */
+  saveProduct(id: string | undefined, p: Pick<Product, "name" | "size" | "category" | "supplierId" | "link" | "forRestaurants" | "alsoFrom">, active: boolean): Promise<string | false>;
   addPrice(p: Price, by: string): Promise<void>;
   purchaserIds(): Promise<string[]>;
   setPurchaser(personId: string, on: boolean): Promise<void>;

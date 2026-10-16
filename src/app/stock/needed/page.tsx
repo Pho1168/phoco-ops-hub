@@ -1,5 +1,5 @@
 import { store } from "@/lib/data";
-import { canPurchase, lookAlikes, methodOf, runsPurchasing } from "@/lib/domain/stock";
+import { buyFrom, canPurchase, lookAlikes, methodOf, runsPurchasing } from "@/lib/domain/stock";
 import { londonDate, shortDay } from "@/lib/domain/time";
 import { neededView } from "@/lib/stock-service";
 import { Icon } from "@/components/Icon";
@@ -37,6 +37,8 @@ export default async function NeededPage() {
         const siteId = items.find((x) => x.request.id === id)?.request.siteId;
         return { requestId: id, site: siteId ? siteName.get(siteId) ?? siteId : undefined };
       }),
+      // Other shops that sell it, to move it to before a run (not for a production kitchen's items).
+      buyFrom: g.production ? [] : buyFrom(r.product, catalog.suppliers).filter((s) => s.id !== g.supplier?.id).map((s) => ({ id: s.id, name: s.name })),
     })),
     drivers: g.drivers.map((d) => ({ taskId: d.task.id, name: d.task.assigneeName ?? "Someone", items: d.items, open: d.open, done: d.done })),
   }));
