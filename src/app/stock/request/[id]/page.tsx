@@ -40,7 +40,7 @@ export default async function RequestPage(props: { params: Promise<{ id: string 
 
   return (
     <>
-      <StockBar ctx={ctx} onPhone={onPhone} title={product ? product.name : "Request"} eyebrow={`${reqCode(r)} · ${site?.name ?? r.siteId}`} back={can.purchasing ? "/stock/purchasing" : "/stock/requests"} />
+      <StockBar ctx={ctx} onPhone={onPhone} title={product ? product.name : "Request"} eyebrow={`${reqCode(r)} · ${site?.name ?? r.siteId}`} back={can.purchasing ? "/stock/needed" : "/stock/report"} />
       <main className="stack">
         <section className="card stack" aria-label="Where it stands">
           <div className="row wrap" style={{ gap: 10 }}>

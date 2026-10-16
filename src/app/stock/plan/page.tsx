@@ -69,7 +69,7 @@ export default async function PlanPage({ searchParams }: { searchParams: Promise
             <p className="muted" style={{ margin: 0 }}>Still to send is what the restaurants have ordered on {site.name}&apos;s production orders and hasn&apos;t gone in the van yet.</p>
             <div className="row wrap" style={{ gap: 8 }}>
               {can.count && ctx.site.id === siteId && <Link className="btn small" href="/stock/count">Count now</Link>}
-              <Link className="btn ghost small" href="/stock/production">Production orders</Link>
+              {can.ordering && <Link className="btn ghost small" href="/stock/needed">Stock needed</Link>}
             </div>
             <h2 className="grp-h" style={{ marginTop: 8 }}>Recent counts</h2>
             {!counts.length && <div className="muted">None in the last 30 days.</div>}

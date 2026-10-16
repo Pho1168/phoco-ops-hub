@@ -1,7 +1,5 @@
 import { store } from "@/lib/data";
 import { isKitchen } from "@/lib/domain/stock-count";
-import { isScheduled } from "@/lib/domain/supplier-orders";
-import { supplierView } from "@/lib/supplier-order-service";
 import type { Store } from "@/lib/data/store";
 import { readyFor, gasFor, type DayShift, type GasNow } from "@/lib/daily-service";
 import { periodAt, periodBounds } from "@/lib/domain/assign";
@@ -92,26 +90,6 @@ async function gather(site: Site, window: ShiftWindow, person: Person | undefine
       productionCount = { closeAt: day.closeAt, closer: !!person && day.closers.includes(person.id), sentBy: counted?.countedByName, sentAt: counted?.createdAt };
     }
   }
-  // Suppliers on order days delivering here: today's count (by the cut-off) and today's delivery.
-  let supplierCounts: ShiftInput["supplierCounts"];
-  let supplierDeliveries: ShiftInput["supplierDeliveries"];
-  if (isKitchen(site) && site.status === "open") {
-    const cfgs = (await db.supplierOrders()).filter((c) => isScheduled(c) && c.deliversTo === site.id);
-    const views = (await Promise.all(cfgs.map((c) => supplierView(db, c.supplierId, now)))).filter((v) => v !== undefined);
-    const day = gasDay(site.id, today, known.shifts, undefined, site.gasBy);
-    supplierCounts = views.flatMap((v) => {
-      const r = [v.last, v.next].find((x) => x?.round.cutDate === today);
-      if (!r || !day) return [];
-      return [{ supplierId: v.supplier.id, name: v.supplier.name, dueAt: Math.min(r.round.cutoffAt, day.closeAt), closer: !!person && day.closers.includes(person.id),
-        sentBy: r.count?.countedByName, sentAt: r.count?.createdAt, ordered: !!r.task }];
-    });
-    supplierDeliveries = views.flatMap((v) => {
-      const r = [v.last, v.next].find((x) => x?.round.delDate === today && x.task && x.state !== "generated" && x.state !== "missed");
-      if (!r?.task) return [];
-      const done = v.events.find((e) => e.taskId === r.task!.id && e.kind === "delivered");
-      return [{ supplierId: v.supplier.id, taskId: r.task.id, name: v.supplier.name, dueAt: r.round.deliveryAt, doneBy: done?.byName, doneAt: done?.at }];
-    });
-  }
   const kitDown = kit.flatMap((eq) => {
     const f = faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down");
     return f.length ? [{ id: eq.id, name: eq.name, body: f[f.length - 1].fault.body, since: Math.min(...f.map((x) => x.fault.createdAt)) }] : [];
@@ -132,8 +110,6 @@ async function gather(site: Site, window: ShiftWindow, person: Person | undefine
     ready: ready ? { light: ready.light, readyBy: ready.readyBy, headline: readyHeadline(ready) } : undefined,
     stockReport,
     productionCount,
-    supplierCounts,
-    supplierDeliveries,
     kitDown,
     tasks: openTasks.map((t) => ({ id: t.id, title: t.title, priority: t.priority, dueOn: t.dueOn, forName: person ? undefined : t.assigneeName ?? (t.section ? undefined : "anyone on shift") })),
   };

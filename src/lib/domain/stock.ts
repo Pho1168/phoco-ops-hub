@@ -1,12 +1,13 @@
-import { isOwner } from "./access";
+import { isLead, isOwner, leadSites } from "./access";
 import type { Person, Site, SiteId } from "./types";
 
 /**
- * Stock & Purchasing. Staff report what's low or out (a report of lines); each line becomes a request with a
- * permanent code (SR-…). The owner groups what's still needed by supplier and gives it to someone as a purchase task
- * (PT-…) of lines: one line per request and quantity, so a combined buy keeps each restaurant's share. What happens
- * next is a log of events that are only ever added (bought, unavailable, dispatched, cost, …), and the restaurant
- * confirms what arrived (receipts). Quantities are never mixed up: wanted, planned, obtained, received.
+ * Stock & Purchasing. Staff say what they need and how many (a report of lines); each line becomes a request (SR-…).
+ * The owner and operations managers see it all on one page, Stock needed, grouped by supplier, and tick it off when
+ * it's ordered or bought, or give a shop run to a driver, who ticks it off on their phone. Behind a tick is a purchase
+ * task (PT-…) of lines, one per request, and a log of events that are only ever added (bought, unavailable,
+ * dispatched, …); a tick also records it as arrived (a receipt), so it's done. Quantities are never mixed up:
+ * wanted, planned, obtained, received.
  *
  * Products that come from a production kitchen (a supplier whose method is "production") skip the owner: they go
  * straight onto that kitchen's production order for the restaurant, where the team picks, packs and dispatches them.
@@ -116,8 +117,12 @@ export function priceAge(on: string, today: string): string {
 export const canReportAt = (p: Pick<Person, "status" | "access">, site: Pick<Site, "id" | "status">) =>
   p.status === "active" && site.status === "open" && p.access.some((a) => a.siteId === site.id);
 
-/** The purchasing dashboard, catalogue, suppliers and assignments: the owner only. */
+/** The catalogue, suppliers and prices: the owner only. */
 export const runsPurchasing = (p: Pick<Person, "status" | "access">) => p.status === "active" && isOwner(p);
+
+/** Stock needed (tick off, give to a driver, the order sheet): owners, and operations managers for their sites. */
+export const runsOrdering = (p: Pick<Person, "status" | "access">) => p.status === "active" && isLead(p);
+export const orderingSites = (p: Pick<Person, "status" | "access">, all: SiteId[]): SiteId[] => (runsOrdering(p) ? leadSites(p, all) : []);
 
 /** The production team at a production kitchen: production staff there, its managers, and owners. */
 export const onProductionTeam = (p: Pick<Person, "status" | "access">, siteId: SiteId) =>
@@ -137,8 +142,11 @@ export interface StockReport {
 export const QTY_MAX = 9999;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A report's lines, checked: known active products, once each, a quantity above 0 or none ("not sure"), short notes. */
-export function cleanLines(lines: DraftLine[], products: Pick<Product, "id" | "active">[]): { ok: true; value: DraftLine[] } | { ok: false; error: string } {
+/**
+ * A report's lines, checked: known active products, once each, how many are needed (above 0), short notes. A draft may
+ * still have a line without an amount (it's being filled in); sending needs every amount.
+ */
+export function cleanLines(lines: DraftLine[], products: Pick<Product, "id" | "active">[], opts: { draft?: boolean } = {}): { ok: true; value: DraftLine[] } | { ok: false; error: string } {
   if (lines.length > 200) return { ok: false, error: "That's too many lines for one report" };
   const out: DraftLine[] = [];
   for (const l of lines) {
@@ -147,9 +155,11 @@ export function cleanLines(lines: DraftLine[], products: Pick<Product, "id" | "a
     if (out.some((o) => o.productId === l.productId)) continue;
     if (l.level !== "low" && l.level !== "out") return { ok: false, error: "Choose low or out for every product" };
     let qty: number | undefined;
-    if (l.qty !== undefined && l.qty !== null) {
+    if (l.qty === undefined || l.qty === null) {
+      if (!opts.draft) return { ok: false, error: "Say how many you need of every item" };
+    } else {
       qty = Number(l.qty);
-      if (!Number.isFinite(qty) || qty <= 0 || qty > QTY_MAX) return { ok: false, error: "Quantities are above 0, or leave it as not sure" };
+      if (!Number.isFinite(qty) || qty <= 0 || qty > QTY_MAX) return { ok: false, error: `Quantities are from 1 to ${QTY_MAX}` };
       qty = Math.round(qty * 100) / 100;
     }
     const note = l.note?.trim().slice(0, 200) || undefined;
@@ -221,8 +231,8 @@ export function lineEnd(line: TaskLine, events: StockEvent[]): { kind: Terminal;
 
 export type RequestState = "cancelled" | "needs_qty" | "waiting" | "part_assigned" | "assigned" | "part_bought" | "on_the_way" | "part_received" | "received";
 export const STATE_LABEL: Record<RequestState, string> = {
-  cancelled: "Cancelled", needs_qty: "Needs a quantity", waiting: "Waiting to be assigned", part_assigned: "Partly assigned",
-  assigned: "Assigned", part_bought: "Partly bought", on_the_way: "Bought, on its way", part_received: "Partly received", received: "Received",
+  cancelled: "Cancelled", needs_qty: "Needs a quantity", waiting: "Asked for", part_assigned: "Partly with a driver",
+  assigned: "With a driver", part_bought: "Partly done", on_the_way: "Ordered", part_received: "Partly done", received: "Done",
 };
 export interface Progress {
   wanted?: number;
@@ -467,6 +477,110 @@ export function productionQueue(tasks: PurchaseTask[], lines: TaskLine[], reques
   }
   return rows.filter((r) => r.outstanding > 0 || r.sites.some((s) => s.lines.some((l) => l.view.end?.kind === "dispatched")))
     .sort((a, b) => Number(b.outstanding > 0) - Number(a.outstanding > 0) || a.product.name.localeCompare(b.product.name));
+}
+
+// ---------- Stock needed: one page for the owner and operations managers ----------
+
+export interface NeededRow {
+  product: Product;
+  /** Still to order, added up across the restaurants (only the same product is ever added up). */
+  qty: number;
+  sites: { siteId: SiteId; qty: number; unknown: number }[];
+  /** Requests still to order (a tick orders these) and, for a production kitchen, its open order lines (a tick sends these). */
+  requestIds: string[]; lineIds: string[];
+  /** Requests sent with no amount (from before amounts were asked for): an amount is set first. */
+  unknownIds: string[];
+  notes: string[]; photoIds: string[]; urgent: boolean;
+}
+export interface WithDriver { task: PurchaseTask; items: { name: string; qty: number }[]; open: number; done: number }
+export interface NeededGroup { key: string; supplier?: Supplier; rows: NeededRow[]; drivers: WithDriver[]; production: boolean }
+
+/**
+ * What's needed, by supplier, for these sites. A product from a supplier: what's still to order of its requests. A
+ * production product: what's still to send on the kitchen's production orders (they're made as soon as it's asked
+ * for). Shop runs given to a driver show under their supplier until the driver has ticked everything off.
+ */
+export function neededGroups(items: { request: StockRequest; progress: Progress }[], data: { tasks: PurchaseTask[]; lines: TaskLine[]; events: StockEvent[]; requests: StockRequest[] },
+  products: Product[], suppliers: Supplier[], siteIds: SiteId[]): NeededGroup[] {
+  const groups = new Map<string, NeededGroup>();
+  const group = (supplierId: string | undefined) => {
+    const key = supplierId ?? "";
+    let g = groups.get(key);
+    if (!g) {
+      const supplier = suppliers.find((s) => s.id === supplierId);
+      g = { key, supplier, rows: [], drivers: [], production: supplier?.method === "production" };
+      groups.set(key, g);
+    }
+    return g;
+  };
+  const row = (g: NeededGroup, product: Product) => {
+    let r = g.rows.find((x) => x.product.id === product.id);
+    if (!r) { r = { product, qty: 0, sites: [], requestIds: [], lineIds: [], unknownIds: [], notes: [], photoIds: [], urgent: false }; g.rows.push(r); }
+    return r;
+  };
+  const site = (r: NeededRow, siteId: SiteId) => {
+    let x = r.sites.find((s) => s.siteId === siteId);
+    if (!x) { x = { siteId, qty: 0, unknown: 0 }; r.sites.push(x); }
+    return x;
+  };
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const add = (r: NeededRow, req: StockRequest) => {
+    if (req.note && !r.notes.includes(req.note)) r.notes.push(req.note);
+    if (req.photoId && !r.photoIds.includes(req.photoId)) r.photoIds.push(req.photoId);
+    r.urgent ||= isUrgent(req, data.events);
+  };
+  for (const { request: req, progress: p } of items) {
+    if (!siteIds.includes(req.siteId) || p.state === "cancelled") continue;
+    const product = products.find((x) => x.id === req.productId);
+    if (!product) continue;
+    if (p.state === "needs_qty") {
+      const r = row(group(req.supplierId), product);
+      r.unknownIds.push(req.id); site(r, req.siteId).unknown++; add(r, req);
+    } else if (p.toPlan > 0) {
+      const r = row(group(req.supplierId), product);
+      r.qty = round(r.qty + p.toPlan); r.requestIds.push(req.id);
+      const s = site(r, req.siteId); s.qty = round(s.qty + p.toPlan); add(r, req);
+    }
+  }
+  // Production orders: what's still to send, per product and restaurant.
+  for (const t of data.tasks.filter((x) => x.method === "production" && !x.cancelledAt)) {
+    for (const v of taskLines(t, data.lines, data.requests, data.events)) {
+      if (v.end || !siteIds.includes(v.request.siteId)) continue;
+      const product = products.find((x) => x.id === v.request.productId);
+      if (!product) continue;
+      const r = row(group(t.supplierId), product);
+      r.qty = round(r.qty + v.line.qty); r.lineIds.push(v.line.id);
+      const s = site(r, v.request.siteId); s.qty = round(s.qty + v.line.qty); add(r, v.request);
+    }
+  }
+  // Shop runs and orders given to someone: theirs until every line is ticked off (bought, or couldn't get).
+  for (const t of data.tasks.filter((x) => x.method !== "production" && !x.cancelledAt && x.assigneeId)) {
+    const views = taskLines(t, data.lines, data.requests, data.events).filter((v) => siteIds.includes(v.request.siteId));
+    const open = views.filter((v) => !v.end);
+    if (!open.length) continue;
+    const byName = new Map<string, number>();
+    for (const v of open) {
+      const product = products.find((x) => x.id === v.request.productId);
+      const name = product ? productLabel(product) : "?";
+      byName.set(name, round((byName.get(name) ?? 0) + v.line.qty));
+    }
+    group(t.supplierId).drivers.push({ task: t, items: [...byName.entries()].map(([name, qty]) => ({ name, qty })), open: open.length, done: views.length - open.length });
+  }
+  for (const g of groups.values()) {
+    g.rows.sort((a, b) => Number(b.urgent) - Number(a.urgent) || a.product.name.localeCompare(b.product.name));
+    for (const r of g.rows) r.sites.sort((a, b) => a.siteId.localeCompare(b.siteId));
+    g.drivers.sort((a, b) => a.task.createdAt - b.task.createdAt);
+  }
+  return [...groups.values()].filter((g) => g.rows.length || g.drivers.length)
+    .sort((a, b) => Number(!a.supplier) - Number(!b.supplier) || Number(a.production) - Number(b.production) || (a.supplier?.name ?? "").localeCompare(b.supplier?.name ?? ""));
+}
+
+/** How many things a group still needs ordering, giving out or sending (rows, plus items with drivers). */
+export const neededCount = (groups: NeededGroup[]) => groups.reduce((n, g) => n + g.rows.length, 0);
+
+/** The order sheet's lines for a supplier: each product's total and pack, what's still to order (rows with an amount). */
+export function orderSheetLines(g: NeededGroup): { qty: number; name: string; pack?: string }[] {
+  return g.rows.filter((r) => r.qty > 0 && r.requestIds.length).map((r) => ({ qty: r.qty, name: r.product.name, pack: r.product.size }));
 }
 
 // ---------- help and nudges ----------

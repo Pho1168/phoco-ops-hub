@@ -903,6 +903,7 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 .stock-group-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .stock-group-head h3 { margin: 0; font-family: var(--display); font-size: 22px; text-transform: uppercase; color: var(--brand); letter-spacing: .3px; }
 .stock-row { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.stock-row.done { opacity: .7; }
 .stock-row-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .stock-site { display: flex; align-items: center; gap: 10px; padding-left: 4px; flex-wrap: wrap; font-size: 15px; }
 .stock-site input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--brand); }
@@ -925,24 +926,7 @@ table.plan-table td, table.plan-table th { vertical-align: middle; }
 table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .plan-target { width: 84px; text-align: right; min-height: 40px; }
 .plan-old { border: 2px solid var(--accent); }
-/* Scheduled supplier orders */
-.chip.sup-now { background: #FCBA63; color: var(--ink); }
-.chip.sup-brand { background: var(--brand); color: var(--brand-ink); }
-.sup-when { font-family: var(--display); font-weight: 700; font-size: 36px; line-height: 1; color: var(--brand); text-transform: uppercase; }
-.sup-left { color: var(--accent-soft-ink); font-weight: 700; }
-.sup-count { border: 2px solid var(--teal-tint); border-radius: 14px; padding: 12px 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.sup-count.wait { border-color: var(--accent); }
-.sup-dot { width: 36px; height: 36px; border-radius: 50%; background: var(--teal-tint); color: var(--teal-ink); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
-.sup-count.wait .sup-dot { background: var(--accent-soft); color: var(--accent-soft-ink); }
-.sup-note { background: var(--surface); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
-table.plan-table td.sup-group { font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: .8px; text-transform: uppercase; color: var(--brand); padding-top: 16px; }
-.sup-text { background: var(--bg); border-radius: 14px; padding: 16px 18px; font-size: 15px; white-space: pre-wrap; line-height: 1.6; margin: 0; font-family: var(--body); }
-.del-line { background: var(--surface); border-radius: 14px; border: 2px solid transparent; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-.del-line.ok { border-color: var(--teal-tint); }
-.del-line.short { border-color: var(--accent); }
-.del-line.missing { border-color: var(--bad); }
 @media print {
   .no-print, .top, nav.nav, .sticky-foot { display: none !important; }
-  .sup-text { background: none; padding: 0; font-size: 13pt; }
 }
 .stock-filter select { min-height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); padding: 0 10px; font: inherit; }

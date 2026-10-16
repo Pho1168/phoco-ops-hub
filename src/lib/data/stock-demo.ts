@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, sameProduct, TERMINAL, withProgress,
   type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
-import { checkDeliveryAgainst, OUTCOME_LABEL, planOrderLines, type SupplierOrders } from "@/lib/domain/supplier-orders";
 import type { SiteId } from "@/lib/domain/types";
 import type { StockData, StockStore } from "./stock-store";
 
@@ -14,15 +13,15 @@ interface StockState {
   purchasers: Set<string>; nextRequest: number; nextTask: number;
   /** Production counts and every target ever set (the latest per product counts). */
   counts: StockCount[]; targets: StockTarget[];
-  /** Suppliers' order settings. */
-  orders: SupplierOrders[];
+  /** Where a supplier delivers (a production kitchen), shown on its order sheet. */
+  delivers: { supplierId: string; deliversTo?: SiteId }[];
 }
 
 function seed(): StockState {
   const sup = (name: string, method: Supplier["method"], extra: Partial<Supplier> = {}): Supplier => ({ id: randomUUID(), name, method, active: true, ...extra });
   const suppliers = [
     sup("Production (demo)", "production", { siteId: "WEM", note: "The Wembley production kitchen" }),
-    sup("Main Supplier (demo)", "delivery"), sup("Wing Yip (demo)", "shop"), sup("Lidl/Aldi (demo)", "shop"),
+    sup("Surelygrow (demo)", "delivery"), sup("Wing Yip (demo)", "shop"), sup("Lidl/Aldi (demo)", "shop"),
     sup("Amazon (demo)", "online", { link: "https://www.amazon.co.uk" }),
   ];
   const [prod, main, wy, lidl, amz] = suppliers;
@@ -46,9 +45,8 @@ function seed(): StockState {
   const targets: StockTarget[] = [[0, 4], [1, 10], [2, 8], [3, 3]].map(([i, qty]) => ({ siteId: "WEM", productId: products[i].id, qty, setBy: "DEMO-OWN", setAt: Date.now() - 86_400_000 }));
   return { suppliers, products, prices, reports: [], requests: [], tasks: [], lines: [], events: [], receipts: [], purchasers: new Set(["DEMO-MGR", "DEMO-FLT"]), nextRequest: 1, nextTask: 1,
     counts: [], targets,
-    // In demo mode the main supplier delivers to Wembley twice a week and the ops manager orders (not under the tests).
-    orders: process.env.VITEST ? [] : [{ supplierId: main.id, deliversTo: "WEM", orderers: ["DEMO-OPS"], updatedAt: Date.now(),
-      days: [{ cutDow: 4, cutHm: "20:00", delDow: 5, delHm: "08:00" }, { cutDow: 0, cutHm: "20:00", delDow: 1, delHm: "08:00" }] }] };
+    // The main supplier delivers to the Wembley kitchen.
+    delivers: [{ supplierId: main.id, deliversTo: "WEM" }] };
 }
 
 const g = globalThis as unknown as { __phocoStockDemo?: StockState };
@@ -303,51 +301,6 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
       return targets.length;
     },
 
-    async supplierOrders() { return S().orders.map((o) => ({ ...o, days: o.days.map((d) => ({ ...d })), orderers: [...o.orderers] })); },
-    async saveSupplierOrders(supplierId, cfg) {
-      const s = S();
-      s.orders = [...s.orders.filter((o) => o.supplierId !== supplierId), { supplierId, ...cfg, days: cfg.days.map((d) => ({ ...d })), orderers: [...cfg.orderers], updatedAt: Date.now() }];
-    },
-    async generateSupplierOrder(o) {
-      const s = S();
-      if (s.tasks.some((t) => t.supplierId === o.supplierId && t.roundAt === o.roundAt && !t.cancelledAt)) return { ok: false, error: "This delivery has already been ordered" };
-      const ids = s.requests.filter((r) => r.siteId === o.siteId && r.supplierId === o.supplierId && !r.cancelledAt && o.lines.some((l) => l.productId === r.productId)).map((r) => r.id);
-      const plan = planOrderLines(o.lines, withProgress(gather(ids, [])), o.siteId, o.supplierId);
-      const lines: { requestId: string; qty: number }[] = [];
-      for (const u of plan.use) {
-        if (u.setQty !== undefined) {
-          s.requests.find((r) => r.id === u.requestId)!.fixedQty = u.setQty;
-          event({ by: o.by, kind: "qty_changed", requestId: u.requestId, qty: u.setQty, text: "was not sure: set by the order" });
-        }
-        lines.push({ requestId: u.requestId, qty: u.qty });
-      }
-      for (const c of plan.create) {
-        const r: StockRequest = { id: randomUUID(), code: s.nextRequest++, siteId: o.siteId, productId: c.productId, level: o.lines.find((l) => l.productId === c.productId)?.level ?? "low",
-          qty: c.qty, note: "From the count", requestedBy: o.by, supplierId: o.supplierId, createdAt: Date.now() };
-        s.requests.push(r);
-        lines.push({ requestId: r.id, qty: c.qty });
-      }
-      const t: PurchaseTask = { id: randomUUID(), code: s.nextTask++, supplierId: o.supplierId, method: "delivery", assigneeId: o.assigneeId, requiredBy: o.requiredBy, priority: "normal",
-        note: o.note, destination: o.siteId, createdBy: o.by, createdAt: Date.now(), roundAt: o.roundAt };
-      s.tasks.push(t);
-      for (const l of lines) s.lines.push({ id: randomUUID(), taskId: t.id, requestId: l.requestId, qty: l.qty });
-      event({ by: o.by, kind: "assigned", taskId: t.id, text: "created" });
-      return { ok: true, value: t.id };
-    },
-    async confirmSupplierDelivery(taskId, by, lines, note) {
-      const s = S();
-      const t = s.tasks.find((x) => x.id === taskId);
-      if (!t || t.cancelledAt) return { ok: false, error: "That order has been cancelled" };
-      const d = gather([], [taskId]);
-      if (d.events.some((e) => e.taskId === taskId && e.kind === "delivered")) return { ok: false, error: "This delivery has already been confirmed" };
-      const check = checkDeliveryAgainst(d.lines.filter((l) => l.taskId === taskId), d, lines);
-      if (!check.ok) return check;
-      for (const l of check.value) {
-        if (l.arrived > 0) s.receipts.push({ id: randomUUID(), requestId: l.requestId, qty: l.arrived, by, at: Date.now(), note: l.missing > 0 ? OUTCOME_LABEL[l.outcome] : undefined });
-        if (l.missing > 0) event({ by, kind: "short", taskId, lineId: l.lineId, requestId: l.requestId, qty: l.missing, text: OUTCOME_LABEL[l.outcome] });
-      }
-      event({ by, kind: "delivered", taskId, text: note });
-      return { ok: true, value: undefined };
-    },
+    async supplierDelivers() { return S().delivers.map((d) => ({ ...d })); },
   };
 }

@@ -5,7 +5,7 @@ import type { Ctx } from "@/lib/session";
 export function StockBar({ ctx, onPhone, title, eyebrow, back }: { ctx: Ctx; onPhone: boolean; title: string; eyebrow?: string; back?: string }) {
   return onPhone
     ? <PhoneTopBar ctx={ctx} title={title} eyebrow={eyebrow ?? `Stock · ${ctx.site.name}`} back={back} />
-    : <TopBar ctx={ctx} title={title} eyebrow={eyebrow ?? `Stock & Purchasing · ${ctx.site.name}`} back={back} />;
+    : <TopBar ctx={ctx} title={title} eyebrow={eyebrow ?? `Stock · ${ctx.site.name}`} back={back} />;
 }
 
 export function StockNav({ ctx, onPhone }: { ctx: Ctx; onPhone: boolean }) {

@@ -14,8 +14,9 @@ const label = (p: P) => (p.size ? `${p.name} · ${p.size}` : p.name);
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
 
 /**
- * Report Stock. Tap what's low or out, say how many (in the product's own unit, or "not sure"), add a note or photo if
- * it helps, check and send. The report is saved as it's made, so it can be finished later. Nothing to report: say so.
+ * Report Stock. Tap what you need ordered and say how many (in the product's own unit; it starts at the usual amount,
+ * or 1), mark it urgent if you've run out, add a note or photo if it helps, check and send. The report is saved as
+ * it's made, so it can be finished later. Nothing needed: say so.
  */
 export function ReportStock({ siteName, products, frequent, open, draft, canRepeat }: {
   siteName: string; products: P[]; frequent: string[]; open: { productId: string; state: string }[];
@@ -68,10 +69,11 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
     });
   };
   const tap = (p: P) => {
-    if (!lineOf(p.id)) setLine(p.id, { level: "low" });
+    if (!lineOf(p.id)) setLine(p.id, { level: "low", qty: p.typical ?? 1 });
     setOpenId(openId === p.id ? undefined : p.id);
   };
-  const step1 = (l: Line, d: number) => setLine(l.productId, { qty: Math.max(0, Math.min(9999, (l.qty ?? 0) + d)) || undefined });
+  const step1 = (l: Line, d: number) => setLine(l.productId, { qty: Math.max(1, Math.min(9999, (l.qty ?? 0) + d)) });
+  const missing = lines.filter((l) => l.qty === undefined).length;
 
   const send = () => start(async () => {
     setErr("");
@@ -94,7 +96,7 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
           </div>
         </div>
         <div className="row wrap" style={{ gap: 10 }}>
-          <Link className="btn" href="/stock/requests">See requests</Link>
+          <Link className="btn" href="/stock">Back to stock</Link>
           <button type="button" className="btn ghost" onClick={() => { setResult(undefined); setStep("pick"); }}>Report something else</button>
         </div>
       </main>
@@ -113,17 +115,20 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
               return (
                 <li key={l.productId} className={l.level === "out" ? "out" : ""}>
                   <span className="grow"><span className="strong">{p ? label(p) : "?"}</span>{l.note && <span className="muted"> · {l.note}</span>}</span>
-                  <span className={`chip ${l.level === "out" ? "bad" : "warn"}`}>{l.level === "out" ? "Out" : "Low"}</span>
-                  <span className="stock-qty">{l.qty !== undefined ? `${fmt(l.qty)}${p?.size ? ` × ${p.size}` : ""}` : "Not sure"}</span>
+                  {l.level === "out" && <span className="chip bad">Urgent</span>}
+                  {l.qty !== undefined
+                    ? <span className="stock-qty">{`${fmt(l.qty)}${p?.size ? ` × ${p.size}` : ""}`}</span>
+                    : <button type="button" className="chip bad" onClick={() => { setStep("pick"); setOpenId(l.productId); }}>How many?</button>}
                 </li>
               );
             })}
           </ul>
+          {missing > 0 && <div className="err" role="alert">Say how many you need of {missing === 1 ? "one item" : `${missing} items`} before sending.</div>}
           {err && <div className="err" role="alert">{err}</div>}
         </main>
         <div className="sticky-foot"><div className="inner">
           <button type="button" className="btn ghost" onClick={() => setStep("pick")}>Back</button>
-          <button type="button" className="btn accent grow" disabled={pending || (!lines.length && !noIssues)} onClick={send}>{pending ? "Sending…" : lines.length ? `Send report · ${lines.length} item${lines.length === 1 ? "" : "s"}` : "Send: no stock issues"}</button>
+          <button type="button" className="btn accent grow" disabled={pending || missing > 0 || (!lines.length && !noIssues)} onClick={send}>{pending ? "Sending…" : lines.length ? `Send report · ${lines.length} item${lines.length === 1 ? "" : "s"}` : "Send: no stock issues"}</button>
         </div></div>
       </>
     );
@@ -132,7 +137,7 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
   return (
     <>
       <main className="stack">
-        <p className="muted lead" style={{ margin: 0 }}>Tap what&apos;s running low or out at {siteName}. Say how many you need if you know; leave it as not sure if you don&apos;t.</p>
+        <p className="muted lead" style={{ margin: 0 }}>Tap what you need ordered for {siteName} and say how many.</p>
         <div className="stock-tools">
           <input className="txt" type="search" placeholder="Search, e.g. lime" aria-label="Search products" value={query} onChange={(e) => setQuery(e.target.value)} />
           <div className="chips stock-cats" role="group" aria-label="Show">
@@ -153,7 +158,7 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
         </section>
         {!lines.length && (
           <div className="card stack" style={{ gap: 10 }}>
-            <div className="strong">Checked, and nothing is low?</div>
+            <div className="strong">Checked, and nothing is needed?</div>
             <button type="button" className={`btn ${noIssues ? "" : "ghost"}`} aria-pressed={noIssues} onClick={() => setNoIssues(!noIssues)}>
               {noIssues ? <><Icon name="check" />No stock issues today</> : "No stock issues today"}
             </button>
@@ -183,30 +188,27 @@ export function ReportStock({ siteName, products, frequent, open, draft, canRepe
     return (
       <div key={p.id} className={`stock-item ${l ? "on" : ""} ${l?.level === "out" ? "out" : ""}`}>
         <button type="button" className="stock-head" aria-expanded={!!isOpen} onClick={() => tap(p)}>
-          <span className="mark" aria-hidden="true">{l ? (l.level === "out" ? "!" : "–") : ""}</span>
+          <span className="mark" aria-hidden="true">{l ? (l.level === "out" ? "!" : "✓") : ""}</span>
           <span className="grow stack" style={{ gap: 2, textAlign: "left" }}>
             <span className="strong">{p.name}</span>
             <span className="muted" style={{ fontSize: 13 }}>{p.size ?? "each"}{already ? ` · already asked for: ${already.toLowerCase()}` : ""}</span>
           </span>
-          {l && <span className={`chip ${l.level === "out" ? "bad" : "warn"}`}>{l.level === "out" ? "Out" : "Low"} · {l.qty !== undefined ? fmt(l.qty) : "?"}</span>}
+          {l && <span className={`chip ${l.level === "out" ? "bad" : l.qty === undefined ? "bad" : "warn"}`}>{l.qty !== undefined ? fmt(l.qty) : "How many?"}{l.level === "out" ? " · urgent" : ""}</span>}
         </button>
         {isOpen && (
           <div className="stock-edit stack">
-            <div className="seg" role="group" aria-label={`${p.name}: how bad`}>
-              <button type="button" aria-pressed={l.level === "low"} onClick={() => setLine(p.id, { level: "low" })}>Low</button>
-              <button type="button" aria-pressed={l.level === "out"} onClick={() => setLine(p.id, { level: "out" })}>Out of stock</button>
-            </div>
             <div className="row wrap" style={{ gap: 10 }}>
               <span className="strong">Need</span>
               <div className="stepper" role="group" aria-label={`${p.name}: how many`}>
                 <button type="button" aria-label="One less" onClick={() => step1(l, -1)}>−</button>
-                <input className="txt" inputMode="decimal" aria-label="Quantity" value={l.qty !== undefined ? fmt(l.qty) : ""} placeholder="?"
+                <input className="txt" inputMode="decimal" aria-label="Quantity" value={l.qty !== undefined ? fmt(l.qty) : ""} placeholder="0"
                   onChange={(e) => { const n = Number(e.target.value.replace(",", ".")); setLine(p.id, { qty: e.target.value.trim() === "" || !Number.isFinite(n) || n <= 0 ? undefined : n }); }} />
                 <button type="button" aria-label="One more" onClick={() => step1(l, 1)}>+</button>
               </div>
               <span className="muted">× {p.size ?? "each"}</span>
-              <button type="button" className={`chip ${l.qty === undefined ? "done" : ""}`} onClick={() => setLine(p.id, { qty: undefined })}>Not sure</button>
             </div>
+            <button type="button" className={`chip ${l.level === "out" ? "bad" : ""}`} aria-pressed={l.level === "out"} style={{ alignSelf: "flex-start" }}
+              onClick={() => setLine(p.id, { level: l.level === "out" ? "low" : "out" })}>{l.level === "out" ? "Urgent: we've run out" : "Mark urgent (we've run out)"}</button>
             {p.typical !== undefined && l.qty !== p.typical && <button type="button" className="chip" style={{ alignSelf: "flex-start" }} onClick={() => setLine(p.id, { qty: p.typical })}>Usually {fmt(p.typical)}: use that</button>}
             <input className="txt" maxLength={200} placeholder="Note (optional), e.g. half a box left" aria-label={`Note for ${p.name}`} value={l.note ?? ""} onChange={(e) => setLine(p.id, { note: e.target.value })} />
             <div className="row wrap" style={{ gap: 8 }}>
