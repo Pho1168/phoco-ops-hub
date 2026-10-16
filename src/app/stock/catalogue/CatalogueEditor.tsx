@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { addStockPrice, saveStockProduct, saveStockSupplier, setPurchaserAction, setStockReminderAction } from "@/app/actions";
@@ -9,9 +10,11 @@ type P = Product & { price?: string };
 type Tab = "products" | "suppliers" | "people";
 
 /** Suppliers, products, prices and purchasers, all in one place for the owner. Every change is logged. */
-export function CatalogueEditor({ suppliers, products, productionSites, sites, people, today }: {
+export function CatalogueEditor({ suppliers, products, productionSites, sites, people, schedules, today }: {
   suppliers: Supplier[]; products: P[]; productionSites: { id: string; name: string }[]; sites: { id: string; name: string; reminder: boolean }[];
-  people: { id: string; name: string; owner: boolean; on: boolean }[]; today: string;
+  people: { id: string; name: string; owner: boolean; on: boolean }[];
+  /** Suppliers on order days: their days and kitchen, in a line. */
+  schedules: Record<string, string>; today: string;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("products");
@@ -57,6 +60,7 @@ export function CatalogueEditor({ suppliers, products, productionSites, sites, p
                   <span className="row wrap" style={{ gap: 8 }}>
                     <span className="strong grow">{p.name}{p.size ? ` · ${p.size}` : ""}</span>
                     {!p.active && <span className="chip">Off</span>}
+                    {p.forRestaurants === false && <span className="chip">Kitchen only</span>}
                     <span className="chip">{p.supplierId ? supName.get(p.supplierId) : "No supplier"}</span>
                   </span>
                   <span className="muted" style={{ fontSize: 13 }}>{p.category ?? "No category"} · {p.price ?? "no price"}{p.importName && p.importName !== p.name ? ` · from the sheet as "${p.importName}"` : ""}</span>
@@ -74,10 +78,14 @@ export function CatalogueEditor({ suppliers, products, productionSites, sites, p
             {suppliers.map((s) => edit === s.id
               ? <SupplierForm key={s.id} s={s} productionSites={productionSites} pending={pending} onCancel={() => setEdit(undefined)} onSave={(v) => run(() => saveStockSupplier(s.id, v), `${v.name} saved`)} />
               : (
-                <button key={s.id} type="button" className="stock-line" style={{ textAlign: "left", border: 0, cursor: "pointer", font: "inherit", opacity: s.active ? 1 : .55 }} onClick={() => setEdit(s.id)}>
-                  <span className="row wrap" style={{ gap: 8 }}><span className="strong grow">{s.name}</span>{!s.active && <span className="chip">Off</span>}<span className="chip">{METHODS.find((m) => m.id === s.method)?.label}</span></span>
-                  <span className="muted" style={{ fontSize: 13 }}>{products.filter((p) => p.supplierId === s.id).length} products{s.note ? ` · ${s.note}` : ""}</span>
-                </button>
+                <div key={s.id} className="stack" style={{ gap: 4 }}>
+                  <button type="button" className="stock-line" style={{ textAlign: "left", border: 0, cursor: "pointer", font: "inherit", opacity: s.active ? 1 : .55 }} onClick={() => setEdit(s.id)}>
+                    <span className="row wrap" style={{ gap: 8 }}><span className="strong grow">{s.name}</span>{!s.active && <span className="chip">Off</span>}
+                      {schedules[s.id] && <span className="chip done">Order days: {schedules[s.id]}</span>}<span className="chip">{METHODS.find((m) => m.id === s.method)?.label}</span></span>
+                    <span className="muted" style={{ fontSize: 13 }}>{products.filter((p) => p.supplierId === s.id).length} products{s.note ? ` · ${s.note}` : ""}</span>
+                  </button>
+                  {(s.method === "delivery" || schedules[s.id]) && <Link href={`/stock/orders/${s.id}/settings`} className="muted" style={{ fontSize: 13, paddingLeft: 14, fontWeight: 600 }}>{schedules[s.id] ? "Change order days and who orders" : "Set order days (if it delivers to a production kitchen)"}</Link>}
+                </div>
               ))}
           </div>
         </>
@@ -113,10 +121,10 @@ export function CatalogueEditor({ suppliers, products, productionSites, sites, p
 
 function ProductForm({ p, suppliers, pending, today, onSave, onCancel, onPrice }: {
   p?: P; suppliers: Supplier[]; pending: boolean; today?: string;
-  onSave: (v: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean }) => void; onCancel: () => void;
+  onSave: (v: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean; forRestaurants: boolean }) => void; onCancel: () => void;
   onPrice?: (v: { pounds: string; on: string; note?: string }) => void;
 }) {
-  const [v, setV] = useState({ name: p?.name ?? "", size: p?.size ?? "", category: p?.category ?? "", supplierId: p?.supplierId ?? "", link: p?.link ?? "", active: p?.active ?? true });
+  const [v, setV] = useState({ name: p?.name ?? "", size: p?.size ?? "", category: p?.category ?? "", supplierId: p?.supplierId ?? "", link: p?.link ?? "", active: p?.active ?? true, forRestaurants: p?.forRestaurants !== false });
   const [price, setPrice] = useState({ pounds: "", on: today ?? "", note: "" });
   return (
     <form className="card stack" onSubmit={(e) => { e.preventDefault(); onSave({ ...v, size: v.size || undefined, category: v.category || undefined, supplierId: v.supplierId || undefined, link: v.link || undefined }); }}>
@@ -132,6 +140,7 @@ function ProductForm({ p, suppliers, pending, today, onSave, onCancel, onPrice }
       </div>
       <input className="txt" maxLength={300} placeholder="Product page (https://…, optional)" value={v.link} onChange={(e) => setV({ ...v, link: e.target.value })} aria-label="Product page" />
       <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} style={{ width: 22, height: 22 }} /><span>On the list (staff can report it)</span></label>
+      <label className="row" style={{ gap: 8 }}><input type="checkbox" checked={v.forRestaurants} onChange={(e) => setV({ ...v, forRestaurants: e.target.checked })} style={{ width: 22, height: 22, flexShrink: 0 }} /><span>Restaurants can order it (from the kitchen, when its supplier delivers only to a kitchen). Off: kitchen only</span></label>
       <div className="muted" style={{ fontSize: 13 }}>Changing the supplier changes new requests only; requests already sent keep theirs (change those on the request).</div>
       <div className="row" style={{ gap: 8 }}><button type="submit" className="btn small" disabled={pending}>Save</button><button type="button" className="btn ghost small" onClick={onCancel}>Cancel</button></div>
       {onPrice && (

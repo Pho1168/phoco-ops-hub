@@ -3,6 +3,7 @@ import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
 import { cleanLines, methodOf, needsEscalation, productionQueue, productLabel, reqCode, taskCode, withProgress, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
+import { supplierAt } from "@/lib/domain/supplier-orders";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
@@ -34,7 +35,10 @@ export async function sendStockReport(db: Store, person: Pick<Person, "id">, sit
   if (!clean.value.length && !draft.noIssues) return { ok: false, error: "Add what's low or out, or tap No stock issues today" };
   if (clean.value.length && draft.noIssues) await db.saveStockDraft(site.id, person.id, draft.date, clean.value, false);
   void items;
-  const sent = await db.submitStockReport(draft.id, person.id, clean.value, catalog.products);
+  // A supplier that delivers only to a kitchen supplies the restaurants through that kitchen (its production order).
+  const cfgs = await db.supplierOrders();
+  const routed = catalog.products.map((p) => ({ id: p.id, supplierId: supplierAt(p, site.id, cfgs, catalog.suppliers) }));
+  const sent = await db.submitStockReport(draft.id, person.id, clean.value, routed);
   if (!sent) return { ok: false, error: "That report has already been sent" };
   await routeProduction(db, sent.created, person.id, now, catalog.suppliers);
   return { ok: true, value: { created: sent.created, again: sent.again, noIssues: !clean.value.length } };

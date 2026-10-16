@@ -9,6 +9,8 @@ import { canPurchase, canReportAt, canSeeTask, cleanLines as cleanStockLines, cl
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode } from "@/lib/domain/stock";
 import { notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince } from "@/lib/stock-service";
 import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
+import { canOrder, checkDelivery, cleanOrderLines, cleanOrderSettings, DOW, OUTCOME_LABEL } from "@/lib/domain/supplier-orders";
+import { notifyDeliveryProblems, scheduled, sendSupplierCount, supplierView } from "@/lib/supplier-order-service";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
 import { currentDevice, DEVICE_COOKIE, DEVICE_COOKIE_MAX_AGE, newDeviceToken, sha256 } from "@/lib/device";
@@ -2517,17 +2519,17 @@ export async function saveStockSupplier(id: string | undefined, input: { name: s
 }
 
 /** The owner keeps the product catalogue: name, size, category, preferred supplier, link, on or off. */
-export async function saveStockProduct(id: string | undefined, input: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean }): Promise<ActionResult> {
+export async function saveStockProduct(id: string | undefined, input: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean; forRestaurants?: boolean }): Promise<ActionResult> {
   const who = await purchasingOwner();
   if (!who.ok) return who;
   const db = store();
   const { suppliers, products } = await db.stockCatalog();
   const clean = cleanProduct(input, suppliers, products, id);
   if (!clean.ok) return clean;
-  const saved = await db.saveProduct(id, clean.value, input.active !== false);
+  const saved = await db.saveProduct(id, { ...clean.value, forRestaurants: input.forRestaurants !== false }, input.active !== false);
   if (!saved) return { ok: false, error: "That product is already in the catalogue" };
   const before = id ? products.find((p) => p.id === id) : undefined;
-  await db.audit({ actorId: who.ctx.person.id, action: "stock.product", detail: `${id ? "Changed" : "Added"} ${clean.value.name}${before && before.supplierId !== clean.value.supplierId ? `: supplier now ${suppliers.find((s) => s.id === clean.value.supplierId)?.name ?? "none"}` : ""}${input.active === false ? " (off)" : ""}` });
+  await db.audit({ actorId: who.ctx.person.id, action: "stock.product", detail: `${id ? "Changed" : "Added"} ${clean.value.name}${before && before.supplierId !== clean.value.supplierId ? `: supplier now ${suppliers.find((s) => s.id === clean.value.supplierId)?.name ?? "none"}` : ""}${input.active === false ? " (off)" : ""}${input.forRestaurants === false ? " (not for restaurants)" : ""}` });
   revalidateStock();
   return { ok: true };
 }
@@ -2569,6 +2571,132 @@ export async function setStockReminderAction(siteId: string, on: boolean): Promi
   await db.audit({ actorId: who.ctx.person.id, siteId: site.id, action: "stock.reminder", detail: on ? "Closers asked for a stock report" : "Closers no longer asked for a stock report" });
   revalidateStock();
   return { ok: true };
+}
+
+// ---------- Scheduled supplier orders (rules in src/lib/domain/supplier-orders.ts) ----------
+
+const DowZ = z.number().int().min(0).max(6);
+const HmZ = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+/** The owner sets a supplier's order days, the kitchen it delivers to and who orders from it. */
+export async function saveSupplierOrderSettings(supplierId: string, input: unknown): Promise<ActionResult> {
+  const who = await purchasingOwner();
+  if (!who.ok) return who;
+  const p = z.object({ deliversTo: SiteIdZ.nullable().optional(), days: z.array(z.object({ cutDow: DowZ, cutHm: HmZ, delDow: DowZ, delHm: HmZ })).max(7),
+    orderers: z.array(StockIdZ).max(10) }).safeParse(input);
+  if (!p.success || !StockIdZ.safeParse(supplierId).success) return { ok: false, error: "Check the days and times (like 20:00)" };
+  const db = store();
+  const supplier = (await db.stockCatalog()).suppliers.find((x) => x.id === supplierId);
+  if (!supplier) return { ok: false, error: "That supplier isn't there" };
+  if (supplier.method === "production") return { ok: false, error: "A production kitchen doesn't take orders this way" };
+  const clean = cleanOrderSettings(p.data, await db.sites(), await db.people());
+  if (!clean.ok) return clean;
+  if (clean.value.days.length && !clean.value.deliversTo) return { ok: false, error: "Choose the kitchen it delivers to" };
+  await db.saveSupplierOrders(supplier.id, clean.value, who.ctx.person.id);
+  const people = await db.people();
+  const days = clean.value.days.map((d) => `${DOW[d.cutDow].slice(0, 3)} ${d.cutHm} → ${DOW[d.delDow].slice(0, 3)} ${d.delHm}`).join(", ") || "no order days";
+  const names = clean.value.orderers.map((id) => people.find((x) => x.id === id)?.name ?? "?").join(", ") || "owners only";
+  await db.audit({ actorId: who.ctx.person.id, siteId: clean.value.deliversTo, action: "stock.supplier.orders", detail: `${supplier.name}: ${days}; delivers to ${clean.value.deliversTo ?? "each restaurant"}; orders: ${names}` });
+  revalidateStock();
+  revalidatePath("/owner");
+  return { ok: true };
+}
+
+/** The kitchen's team sends a count of a supplier's products (on an order day). Whoever orders is told. */
+export async function sendSupplierCountNow(supplierId: string, input: { lines: unknown; note?: unknown }): Promise<ActionResult & { toOrder?: number; counted?: number; of?: number }> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  const { ctx } = who;
+  if (!canCount(ctx.person, ctx.site)) return { ok: false, error: `You can't count stock at ${ctx.site.name}` };
+  const parsed = z.object({ lines: z.array(z.object({ productId: StockIdZ, qty: CountQtyZ })).max(500), note: z.string().max(COUNT_NOTE_MAX).optional() }).safeParse(input);
+  if (!parsed.success || !StockIdZ.safeParse(supplierId).success) return { ok: false, error: "Something in the count doesn't look right. Check the numbers and try again" };
+  const db = store();
+  const r = await sendSupplierCount(db, ctx.person, ctx.site, supplierId, parsed.data, Date.now());
+  if (!r.ok) return r;
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "stock.count",
+    detail: `${r.value.supplier} count: ${r.value.counted} of ${r.value.of} counted, ${r.value.toOrder} suggested to order${r.value.count.note ? ` (${r.value.count.note})` : ""}` });
+  revalidateStock();
+  revalidatePath("/shift");
+  return { ok: true, toOrder: r.value.toOrder, counted: r.value.counted, of: r.value.of };
+}
+
+/** Whoever orders sets par levels for the supplier's products at its kitchen. Only the changed ones are added. */
+export async function saveSupplierPars(supplierId: string, input: unknown): Promise<ActionResult & { changed?: number }> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  const db = store();
+  const s = StockIdZ.safeParse(supplierId).success ? await scheduled(db, supplierId) : undefined;
+  if (!s) return { ok: false, error: "That supplier isn't on order days" };
+  if (!canOrder(who.ctx.person, s.cfg)) return { ok: false, error: `Only owners and the people who order from ${s.supplier.name} set its par levels` };
+  const parsed = z.array(z.object({ productId: StockIdZ, qty: CountQtyZ })).max(500).safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Something in the par levels doesn't look right. Check the numbers and try again" };
+  const { products } = await db.stockCatalog();
+  const clean = cleanTargets(parsed.data, products.filter((p) => p.active && p.supplierId === supplierId));
+  if (!clean.ok) return clean;
+  const changed = changedTargets(clean.value, await db.stockTargets(s.cfg.deliversTo));
+  if (!changed.length) return { ok: true, changed: 0 };
+  await db.setStockTargets(s.cfg.deliversTo, changed, who.ctx.person.id);
+  const names = changed.slice(0, 6).map((t) => `${products.find((p) => p.id === t.productId)?.name ?? "?"} ${t.qty ?? "none"}`).join(", ");
+  await db.audit({ actorId: who.ctx.person.id, siteId: s.cfg.deliversTo, action: "stock.par", detail: `${s.supplier.name} par levels: ${names}${changed.length > 6 ? ` and ${changed.length - 6} more` : ""}` });
+  revalidateStock();
+  return { ok: true, changed: changed.length };
+}
+
+/** Makes the round's order (once): the lines become requests at the kitchen and one delivery task given to the person ordering. */
+export async function generateSupplierOrderNow(supplierId: string, input: unknown): Promise<ActionResult & { id?: string }> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  const db = store();
+  const now = Date.now();
+  const view = StockIdZ.safeParse(supplierId).success ? await supplierView(db, supplierId, now) : undefined;
+  if (!view) return { ok: false, error: "That supplier isn't on order days" };
+  if (!canOrder(who.ctx.person, view.cfg)) return { ok: false, error: `Only owners and the people who order from ${view.supplier.name} can order` };
+  const p = z.object({ roundAt: z.number().int(), note: z.string().max(500).optional(), lines: z.array(z.object({ productId: StockIdZ, qty: z.number().nullable() })).max(500) }).safeParse(input);
+  if (!p.success) return { ok: false, error: "Check the quantities" };
+  // This round, or the last one if it was missed and its delivery hasn't come yet (a late phone order).
+  const target = [view.next, view.last].find((r) => r && r.round.cutoffAt === p.data.roundAt && !r.task && (r === view.next || now < r.round.deliveryAt));
+  if (!target) return { ok: false, error: "That delivery has already been ordered or has gone. Reload the page" };
+  const clean = cleanOrderLines(p.data.lines, view.products);
+  if (!clean.ok) return clean;
+  const shelf = new Map(view.rows.map((r) => [r.product.id, r.onHand]));
+  const r = await db.generateSupplierOrder({ supplierId, siteId: view.site.id, roundAt: target.round.cutoffAt, requiredBy: target.round.delDate, assigneeId: who.ctx.person.id,
+    by: who.ctx.person.id, note: p.data.note?.trim() || undefined, lines: clean.value.map((l) => ({ ...l, level: shelf.get(l.productId) === 0 ? "out" as const : "low" as const })) });
+  if (!r.ok) return r;
+  const t = (await db.stockTask(r.value))?.tasks.find((x) => x.id === r.value);
+  await db.audit({ actorId: who.ctx.person.id, siteId: view.site.id, action: "stock.supplier.order",
+    detail: `${view.supplier.name} order${t ? ` ${stockTaskCode(t)}` : ""} for ${target.round.delDate}: ${clean.value.length} product${clean.value.length === 1 ? "" : "s"}` });
+  revalidateStock();
+  return { ok: true, id: r.value };
+}
+
+/** The kitchen confirms a supplier delivery: what arrived per line, and why the rest didn't. Whoever orders hears about problems. */
+export async function confirmSupplierDeliveryNow(taskId: string, input: unknown): Promise<ActionResult & { problems?: number }> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  const p = z.object({ note: z.string().max(300).optional(), lines: z.array(z.object({ lineId: StockIdZ, arrived: z.number(), outcome: z.enum(["arrived", "short", "missing", "wrong"]) })).max(500) }).safeParse(input);
+  if (!p.success || !StockIdZ.safeParse(taskId).success) return { ok: false, error: "Check the numbers" };
+  const db = store();
+  const d = await db.stockTask(taskId);
+  const t = d?.tasks.find((x) => x.id === taskId);
+  if (!d || !t || !t.supplierId || !t.destination || t.roundAt === undefined) return { ok: false, error: "That order isn't there" };
+  const s = await scheduled(db, t.supplierId);
+  const site = await db.site(t.destination);
+  if (!s || !site) return { ok: false, error: "That order isn't there" };
+  if (!(canCount(who.ctx.person, site) || canOrder(who.ctx.person, s.cfg))) return { ok: false, error: `Only ${site.name}'s team confirms this delivery` };
+  const mine = d.lines.filter((l) => l.taskId === taskId);
+  const check = checkDelivery(p.data.lines, new Map(mine.map((l) => [l.id, l.qty])));
+  if (!check.ok) return check;
+  const r = await db.confirmSupplierDelivery(taskId, who.ctx.person.id, check.value, p.data.note?.trim() || undefined);
+  if (!r.ok) return r;
+  const { products } = await db.stockCatalog();
+  const nameOf = (lineId: string) => { const l = mine.find((x) => x.id === lineId); const req = d.requests.find((x) => x.id === l?.requestId); return products.find((x) => x.id === req?.productId)?.name ?? "?"; };
+  const problems = check.value.filter((l) => l.missing > 0).map((l) => `${nameOf(l.lineId)} ${OUTCOME_LABEL[l.outcome].toLowerCase()} (${l.missing})`);
+  await db.audit({ actorId: who.ctx.person.id, siteId: site.id, action: "stock.supplier.delivered",
+    detail: `${s.supplier.name} ${stockTaskCode(t)} delivered${problems.length ? `: ${problems.join(", ")}` : ": everything arrived"}${p.data.note ? ` (${p.data.note.trim()})` : ""}` });
+  await notifyDeliveryProblems(db, s.supplier.id, taskId, problems, who.ctx.person, Date.now());
+  revalidateStock();
+  revalidatePath("/shift");
+  return { ok: true, problems: problems.length };
 }
 
 // ---------- Production stock count (rules in src/lib/domain/stock-count.ts) ----------

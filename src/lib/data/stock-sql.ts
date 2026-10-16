@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, TERMINAL, withProgress,
   type DraftLine, type EventKind, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { CountLine, StockCount } from "@/lib/domain/stock-count";
+import { checkDeliveryAgainst, OUTCOME_LABEL, planOrderLines, type OrderDay } from "@/lib/domain/supplier-orders";
 import { londonDate } from "@/lib/domain/time";
 import { sql, withTx } from "./pg";
 import type { StockData, StockStore } from "./stock-store";
@@ -16,18 +17,19 @@ const day = (d: Date | string | null) => (d === null ? undefined : typeof d === 
 
 interface SupplierRow { id: string; name: string; method: Supplier["method"]; site_id: string | null; note: string | null; link: string | null; active: boolean }
 const toSupplier = (r: SupplierRow): Supplier => ({ id: r.id, name: r.name, method: r.method, siteId: opt(r.site_id), note: opt(r.note), link: opt(r.link), active: r.active });
-interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null }
-const toProduct = (r: ProductRow): Product => ({ id: r.id, name: r.name, size: opt(r.size), category: opt(r.category), supplierId: opt(r.supplier_id), active: r.active, link: opt(r.link), importName: opt(r.import_name) });
+interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null; for_restaurants: boolean }
+const toProduct = (r: ProductRow): Product => ({ id: r.id, name: r.name, size: opt(r.size), category: opt(r.category), supplierId: opt(r.supplier_id), active: r.active, link: opt(r.link), importName: opt(r.import_name),
+  ...(r.for_restaurants === false ? { forRestaurants: false } : {}) });
 
 interface ReportRow { id: string; site_id: string; person_id: string; person_name: string | null; business_date: string; lines: DraftLine[]; no_issues: boolean; submitted_at: Date | null; updated_at: Date }
 const toReport = (r: ReportRow): StockReport => ({ id: r.id, siteId: r.site_id, personId: r.person_id, personName: opt(r.person_name), date: day(r.business_date)!, lines: r.lines ?? [], noIssues: r.no_issues, submittedAt: r.submitted_at?.getTime(), updatedAt: r.updated_at.getTime() });
 const reportSelect = (q: Q) => q`select r.id, r.site_id, r.person_id, p.display_name as person_name, to_char(r.business_date, 'YYYY-MM-DD') as business_date, r.lines, r.no_issues, r.submitted_at, r.updated_at
   from stock_reports r left join people p on p.id = r.person_id`;
 
-interface CountRow { id: string; site_id: string; counted_by: string; counted_by_name: string | null; business_date: string; lines: CountLine[]; note: string | null; created_at: Date }
+interface CountRow { id: string; site_id: string; counted_by: string; counted_by_name: string | null; business_date: string; lines: CountLine[]; note: string | null; created_at: Date; supplier_id: string | null }
 const toCount = (r: CountRow): StockCount => ({ id: r.id, siteId: r.site_id, countedBy: r.counted_by, countedByName: opt(r.counted_by_name), date: r.business_date,
-  lines: (r.lines ?? []).map((l) => ({ productId: l.productId, qty: Number(l.qty) })), note: opt(r.note), createdAt: r.created_at.getTime() });
-const countSelect = (q: Q) => q`select c.id, c.site_id, c.counted_by, p.display_name as counted_by_name, to_char(c.business_date, 'YYYY-MM-DD') as business_date, c.lines, c.note, c.created_at
+  lines: (r.lines ?? []).map((l) => ({ productId: l.productId, qty: Number(l.qty) })), note: opt(r.note), createdAt: r.created_at.getTime(), ...(r.supplier_id ? { supplierId: r.supplier_id } : {}) });
+const countSelect = (q: Q) => q`select c.id, c.site_id, c.counted_by, p.display_name as counted_by_name, to_char(c.business_date, 'YYYY-MM-DD') as business_date, c.lines, c.note, c.created_at, c.supplier_id
   from stock_counts c left join people p on p.id = c.counted_by`;
 interface TargetRow { site_id: string; product_id: string; qty: string | null; set_by: string; set_by_name: string | null; set_at: Date }
 
@@ -39,12 +41,13 @@ const requestSelect = (q: Q) => q`select r.id, r.code, r.site_id, r.product_id, 
   r.supplier_id, r.created_at, r.cancelled_at, r.cancel_reason from stock_requests r left join people p on p.id = r.requested_by`;
 
 interface TaskRow { id: string; code: number; supplier_id: string | null; method: PurchaseTask["method"]; assignee_id: string | null; assignee_name: string | null; driver_id: string | null; driver_name: string | null;
-  required_by: string | null; priority: PurchaseTask["priority"]; note: string | null; destination: string | null; created_by: string; created_at: Date; cancelled_at: Date | null; cancel_reason: string | null }
+  required_by: string | null; priority: PurchaseTask["priority"]; note: string | null; destination: string | null; created_by: string; created_at: Date; cancelled_at: Date | null; cancel_reason: string | null;
+  round_at: Date | null }
 const toTask = (r: TaskRow): PurchaseTask => ({ id: r.id, code: r.code, supplierId: opt(r.supplier_id), method: r.method, assigneeId: opt(r.assignee_id), assigneeName: opt(r.assignee_name), driverId: opt(r.driver_id),
   driverName: opt(r.driver_name), requiredBy: opt(r.required_by), priority: r.priority, note: opt(r.note), destination: opt(r.destination), createdBy: r.created_by, createdAt: r.created_at.getTime(),
-  cancelledAt: r.cancelled_at?.getTime(), cancelReason: opt(r.cancel_reason) });
+  cancelledAt: r.cancelled_at?.getTime(), cancelReason: opt(r.cancel_reason), ...(r.round_at ? { roundAt: r.round_at.getTime() } : {}) });
 const taskSelect = (q: Q) => q`select t.id, t.code, t.supplier_id, t.method, t.assignee_id, a.display_name as assignee_name, t.driver_id, d.display_name as driver_name,
-  to_char(t.required_by, 'YYYY-MM-DD') as required_by, t.priority, t.note, t.destination, t.created_by, t.created_at, t.cancelled_at, t.cancel_reason
+  to_char(t.required_by, 'YYYY-MM-DD') as required_by, t.priority, t.note, t.destination, t.created_by, t.created_at, t.cancelled_at, t.cancel_reason, t.round_at
   from stock_tasks t left join people a on a.id = t.assignee_id left join people d on d.id = t.driver_id`;
 
 interface LineRow { id: string; task_id: string; request_id: string; qty: string }
@@ -86,7 +89,7 @@ export const stockSql: StockStore = {
   async stockCatalog() {
     const q = sql();
     const suppliers = (await q<SupplierRow[]>`select id, name, method, site_id, note, link, active from stock_suppliers order by lower(name)`).map(toSupplier);
-    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name from stock_products order by position, lower(name)`).map(toProduct);
+    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants from stock_products order by position, lower(name)`).map(toProduct);
     const prices = (await q<{ product_id: string; pence: number; on_date: string; note: string | null }[]>`
       select product_id, pence, to_char(on_date, 'YYYY-MM-DD') as on_date, note from stock_prices order by on_date desc, created_at desc`)
       .map((r): Price => ({ productId: r.product_id, pence: r.pence, on: r.on_date, note: opt(r.note) }));
@@ -105,11 +108,12 @@ export const stockSql: StockStore = {
     const q = sql();
     try {
       if (id && UUID.test(id)) {
-        await q`update stock_products set name = ${p.name}, size = ${p.size ?? null}, category = ${p.category ?? null}, supplier_id = ${p.supplierId ?? null}, link = ${p.link ?? null}, active = ${active} where id = ${id}`;
+        await q`update stock_products set name = ${p.name}, size = ${p.size ?? null}, category = ${p.category ?? null}, supplier_id = ${p.supplierId ?? null}, link = ${p.link ?? null}, active = ${active},
+          for_restaurants = ${p.forRestaurants !== false} where id = ${id}`;
         return id;
       }
-      const [r] = await q<{ id: string }[]>`insert into stock_products (name, size, category, supplier_id, link, active, position)
-        values (${p.name}, ${p.size ?? null}, ${p.category ?? null}, ${p.supplierId ?? null}, ${p.link ?? null}, ${active}, (select coalesce(max(position), 0) + 1 from stock_products)) returning id`;
+      const [r] = await q<{ id: string }[]>`insert into stock_products (name, size, category, supplier_id, link, active, for_restaurants, position)
+        values (${p.name}, ${p.size ?? null}, ${p.category ?? null}, ${p.supplierId ?? null}, ${p.link ?? null}, ${active}, ${p.forRestaurants !== false}, (select coalesce(max(position), 0) + 1 from stock_products)) returning id`;
       return r.id;
     } catch (e) {
       if ((e as { code?: string }).code === "23505") return false;
@@ -348,14 +352,16 @@ export const stockSql: StockStore = {
     });
   },
 
-  async stockCounts(siteId, since) {
+  async stockCounts(siteId, since, supplierId) {
     const q = sql();
-    return (await q<CountRow[]>`${countSelect(q)} where c.site_id = ${siteId} and c.created_at >= ${new Date(since)} order by c.created_at desc limit 200`).map(toCount);
+    if (supplierId !== undefined && !UUID.test(supplierId)) return [];
+    const which = supplierId === undefined ? q`c.supplier_id is null` : q`c.supplier_id = ${supplierId}`;
+    return (await q<CountRow[]>`${countSelect(q)} where c.site_id = ${siteId} and ${which} and c.created_at >= ${new Date(since)} order by c.created_at desc limit 200`).map(toCount);
   },
   async addStockCount(c) {
     const q = sql();
-    const [r] = await q<{ id: string }[]>`insert into stock_counts (site_id, counted_by, business_date, lines, note)
-      values (${c.siteId}, ${c.countedBy}, ${c.date}, ${q.json(c.lines as unknown as postgres.JSONValue)}, ${c.note ?? null}) returning id`;
+    const [r] = await q<{ id: string }[]>`insert into stock_counts (site_id, counted_by, business_date, lines, note, supplier_id)
+      values (${c.siteId}, ${c.countedBy}, ${c.date}, ${q.json(c.lines as unknown as postgres.JSONValue)}, ${c.note ?? null}, ${c.supplierId ?? null}) returning id`;
     const [row] = await q<CountRow[]>`${countSelect(q)} where c.id = ${r.id}`;
     return toCount(row);
   },
@@ -370,6 +376,69 @@ export const stockSql: StockStore = {
     return withTx(async (tx) => {
       for (const t of targets) await tx`insert into stock_targets (site_id, product_id, qty, set_by) values (${siteId}, ${t.productId}, ${t.qty ?? null}, ${by})`;
       return targets.length;
+    });
+  },
+
+  async supplierOrders() {
+    const rows = await sql()<{ supplier_id: string; delivers_to: string | null; order_days: OrderDay[]; orderers: string[]; updated_at: Date }[]>`
+      select supplier_id, delivers_to, order_days, orderers, updated_at from stock_supplier_orders`;
+    return rows.map((r) => ({ supplierId: r.supplier_id, ...(r.delivers_to ? { deliversTo: r.delivers_to } : {}), days: r.order_days ?? [], orderers: r.orderers ?? [], updatedAt: r.updated_at.getTime() }));
+  },
+  async saveSupplierOrders(supplierId, cfg, by) {
+    const q = sql();
+    await q`insert into stock_supplier_orders (supplier_id, delivers_to, order_days, orderers, updated_by, updated_at)
+      values (${supplierId}, ${cfg.deliversTo ?? null}, ${q.json(cfg.days as unknown as postgres.JSONValue)}, ${cfg.orderers}::uuid[], ${by}, now())
+      on conflict (supplier_id) do update set delivers_to = excluded.delivers_to, order_days = excluded.order_days, orderers = excluded.orderers,
+        updated_by = excluded.updated_by, updated_at = now()`;
+  },
+  async generateSupplierOrder(o) {
+    if (!UUID.test(o.supplierId)) return { ok: false, error: "That supplier isn't there" };
+    return withTx(async (tx) => {
+      await tx`select id from stock_suppliers where id = ${o.supplierId} for update`;
+      const [dupe] = await tx<{ id: string }[]>`select id from stock_tasks where supplier_id = ${o.supplierId} and round_at = ${new Date(o.roundAt)} and cancelled_at is null`;
+      if (dupe) return { ok: false as const, error: "This delivery has already been ordered" };
+      const ids = (await tx<{ id: string }[]>`select id from stock_requests where site_id = ${o.siteId} and supplier_id = ${o.supplierId} and cancelled_at is null
+        and product_id = any(${o.lines.map((l) => l.productId)}::uuid[])`).map((r) => r.id);
+      const d = await lockRequests(tx, ids);
+      const plan = planOrderLines(o.lines, withProgress(d), o.siteId, o.supplierId);
+      const lines: { requestId: string; qty: number }[] = [];
+      for (const u of plan.use) {
+        if (u.setQty !== undefined) {
+          await tx`update stock_requests set fixed_qty = ${u.setQty} where id = ${u.requestId}`;
+          await tx`insert into stock_events (by, kind, request_id, qty, text) values (${o.by}, 'qty_changed', ${u.requestId}, ${u.setQty}, ${"was not sure: set by the order"})`;
+        }
+        lines.push({ requestId: u.requestId, qty: u.qty });
+      }
+      for (const c of plan.create) {
+        const level = o.lines.find((l) => l.productId === c.productId)?.level ?? "low";
+        const [r] = await tx<{ id: string }[]>`insert into stock_requests (site_id, product_id, level, qty, note, requested_by, supplier_id)
+          values (${o.siteId}, ${c.productId}, ${level}, ${c.qty}, ${"From the count"}, ${o.by}, ${o.supplierId}) returning id`;
+        lines.push({ requestId: r.id, qty: c.qty });
+      }
+      const [t] = await tx<{ id: string }[]>`insert into stock_tasks (supplier_id, method, assignee_id, required_by, priority, note, destination, created_by, round_at)
+        values (${o.supplierId}, 'delivery', ${o.assigneeId}, ${o.requiredBy}, 'normal', ${o.note ?? null}, ${o.siteId}, ${o.by}, ${new Date(o.roundAt)}) returning id`;
+      for (const l of lines) await tx`insert into stock_task_lines (task_id, request_id, qty) values (${t.id}, ${l.requestId}, ${l.qty})`;
+      await tx`insert into stock_events (by, kind, task_id, text) values (${o.by}, 'assigned', ${t.id}, ${"created"})`;
+      return { ok: true as const, value: t.id };
+    });
+  },
+  async confirmSupplierDelivery(taskId, by, lines, note) {
+    if (!UUID.test(taskId)) return { ok: false, error: "That order isn't there" };
+    return withTx(async (tx) => {
+      const [t] = await tx<{ id: string }[]>`select id from stock_tasks where id = ${taskId} and cancelled_at is null for update`;
+      if (!t) return { ok: false as const, error: "That order has been cancelled" };
+      const ids = (await tx<{ request_id: string }[]>`select request_id from stock_task_lines where task_id = ${taskId}`).map((r) => r.request_id);
+      const d = await lockRequests(tx, ids);
+      if (d.events.some((e) => e.taskId === taskId && e.kind === "delivered")) return { ok: false as const, error: "This delivery has already been confirmed" };
+      const mine = d.lines.filter((l) => l.taskId === taskId);
+      const check = checkDeliveryAgainst(mine, d, lines);
+      if (!check.ok) return check;
+      for (const l of check.value) {
+        if (l.arrived > 0) await tx`insert into stock_receipts (request_id, qty, by, note) values (${l.requestId}, ${l.arrived}, ${by}, ${l.missing > 0 ? OUTCOME_LABEL[l.outcome] : null})`;
+        if (l.missing > 0) await tx`insert into stock_events (by, kind, task_id, line_id, request_id, qty, text) values (${by}, 'short', ${taskId}, ${l.lineId}, ${l.requestId}, ${l.missing}, ${OUTCOME_LABEL[l.outcome]})`;
+      }
+      await tx`insert into stock_events (by, kind, task_id, text) values (${by}, 'delivered', ${taskId}, ${note ?? null})`;
+      return { ok: true as const, value: undefined };
     });
   },
 };

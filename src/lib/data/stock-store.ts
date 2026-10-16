@@ -1,5 +1,6 @@
 import type { DraftLine, Price, Product, PurchaseTask, Receipt, StockEvent, StockReport, StockRequest, Supplier, TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
+import type { Outcome, SupplierOrders } from "@/lib/domain/supplier-orders";
 import type { SiteId } from "@/lib/domain/types";
 
 /** Requests and what's happened to them: the raw records the stock rules (src/lib/domain/stock.ts) work from. */
@@ -16,7 +17,7 @@ export interface StockStore {
   stockCatalog(): Promise<{ suppliers: Supplier[]; products: Product[]; prices: Price[] }>;
   saveSupplier(id: string | undefined, s: Omit<Supplier, "id" | "active">, active: boolean): Promise<string>;
   /** False when that name, size and supplier is already another product. */
-  saveProduct(id: string | undefined, p: Pick<Product, "name" | "size" | "category" | "supplierId" | "link">, active: boolean): Promise<string | false>;
+  saveProduct(id: string | undefined, p: Pick<Product, "name" | "size" | "category" | "supplierId" | "link" | "forRestaurants">, active: boolean): Promise<string | false>;
   addPrice(p: Price, by: string): Promise<void>;
   purchaserIds(): Promise<string[]>;
   setPurchaser(personId: string, on: boolean): Promise<void>;
@@ -60,12 +61,28 @@ export interface StockStore {
   /** The owner sets a quantity, changes the supplier, or cancels (each logged as an event with the reason). */
   changeStockRequest(id: string, change: { fixedQty: number } | { supplierId: string | null } | { cancel: string }, by: string): Promise<Done>;
 
-  /** Production counts at a kitchen from a time, newest first (with who counted). */
-  stockCounts(siteId: SiteId, since: number): Promise<StockCount[]>;
+  /** Counts at a kitchen from a time, newest first (with who counted): its production list, or one supplier's products. */
+  stockCounts(siteId: SiteId, since: number, supplierId?: string): Promise<StockCount[]>;
   /** Adds a count (counts are never changed: a recount is another one). */
   addStockCount(c: Omit<StockCount, "id" | "createdAt" | "countedByName">): Promise<StockCount>;
   /** The target in use for each product at a kitchen (the latest set; none if it was taken off). */
   stockTargets(siteId: SiteId): Promise<StockTarget[]>;
   /** Adds a target record for each of these (already checked and only the changed ones). Returns how many. */
   setStockTargets(siteId: SiteId, targets: { productId: string; qty?: number }[], by: string): Promise<number>;
+
+  /** Every supplier's order settings (order days, who orders, the kitchen it delivers to). */
+  supplierOrders(): Promise<SupplierOrders[]>;
+  saveSupplierOrders(supplierId: string, cfg: Omit<SupplierOrders, "supplierId" | "updatedAt">, by: string): Promise<void>;
+  /**
+   * Makes a round's order, once (refused if the round already has one): with the supplier locked, what's reported at
+   * the kitchen and still waiting is used first (`planOrderLines`), the rest become new requests, then one delivery
+   * task for the round with a line each, given to whoever orders.
+   */
+  generateSupplierOrder(o: { supplierId: string; siteId: SiteId; roundAt: number; requiredBy: string; assigneeId: string; by: string; note?: string;
+    lines: { productId: string; qty: number; level: "low" | "out" }[] }): Promise<Done<string>>;
+  /**
+   * The kitchen confirms what arrived, once, for every line together: a receipt for what came, a "short" event for
+   * what didn't (it goes back to waiting), then "delivered" on the order. Refused until the order is placed.
+   */
+  confirmSupplierDelivery(taskId: string, by: string, lines: { lineId: string; arrived: number; missing: number; outcome: Outcome }[], note?: string): Promise<Done>;
 }
