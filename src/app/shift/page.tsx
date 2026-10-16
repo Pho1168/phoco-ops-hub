@@ -79,7 +79,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
                     <h2 className="h-sec" style={{ fontSize: 24 }}>{laneName(lane.lane)}</h2>
                     <span className="muted">{windowLabel(lane)}</span>
                   </div>
-                  <OnShift on={v.on} />
+                  <OnShift on={v.on} label="On this lane" />
                   <Summary view={v} />
                 </div>
                 <DayStrip view={v} now={now} />
@@ -153,7 +153,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
             <span className="muted" style={{ marginLeft: "auto" }}>Now {londonHM(now)}</span>
           </div>
           <DayStrip view={v} now={now} />
-          <OnShift on={v.on.filter((p) => p.personId !== ctx.person.id)} />
+          <OnShift on={v.on.filter((p) => p.personId !== ctx.person.id)} label="On with you" />
           {v.reply && <ShiftReply shiftId={v.reply.shiftId} current={v.reply.current} />}
         </div>
 

@@ -78,19 +78,23 @@ export function FirstUp({ item }: { item: ShiftItem }) {
 }
 
 /** Who's on the lane, with their late / can't-make-it replies. */
-export function OnShift({ on, showTimes = true }: { on: OnLane[]; showTimes?: boolean }) {
+/** The people on a shift, under a label saying who they are, so a colleague's name never reads as your own. */
+export function OnShift({ on, label, showTimes = true }: { on: OnLane[]; label: string; showTimes?: boolean }) {
   if (!on.length) return null;
   return (
-    <ul className="sm-on" aria-label="On this shift">
-      {on.map((p) => (
-        <li key={p.shiftId}>
-          <span className="avatar sm-avatar" aria-hidden>{initials(p.name)}</span>
-          <span className="strong" style={{ fontSize: 14 }}>{p.name}</span>
-          {showTimes && <span className="muted">{p.time}</span>}
-          {p.reply && <span className={`chip ${p.reply.tone}`}>{p.reply.text}</span>}
-        </li>
-      ))}
-    </ul>
+    <div className="sm-on-row">
+      <span className="sm-on-label">{label}</span>
+      <ul className="sm-on" aria-label={label}>
+        {on.map((p) => (
+          <li key={p.shiftId}>
+            <span className="avatar sm-avatar" aria-hidden>{initials(p.name)}</span>
+            <span className="strong" style={{ fontSize: 14 }}>{p.name}</span>
+            {showTimes && <span className="muted">{p.time}</span>}
+            {p.reply && <span className={`chip ${p.reply.tone}`}>{p.reply.text}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
