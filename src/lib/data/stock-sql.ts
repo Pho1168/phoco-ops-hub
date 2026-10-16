@@ -16,9 +16,9 @@ const day = (d: Date | string | null) => (d === null ? undefined : typeof d === 
 
 interface SupplierRow { id: string; name: string; method: Supplier["method"]; site_id: string | null; note: string | null; link: string | null; active: boolean }
 const toSupplier = (r: SupplierRow): Supplier => ({ id: r.id, name: r.name, method: r.method, siteId: opt(r.site_id), note: opt(r.note), link: opt(r.link), active: r.active });
-interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null; for_restaurants: boolean }
+interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null; for_restaurants: boolean; also_from: string[] | null }
 const toProduct = (r: ProductRow): Product => ({ id: r.id, name: r.name, size: opt(r.size), category: opt(r.category), supplierId: opt(r.supplier_id), active: r.active, link: opt(r.link), importName: opt(r.import_name),
-  ...(r.for_restaurants === false ? { forRestaurants: false } : {}) });
+  ...(r.for_restaurants === false ? { forRestaurants: false } : {}), ...(r.also_from?.length ? { alsoFrom: r.also_from } : {}) });
 
 interface ReportRow { id: string; site_id: string; person_id: string; person_name: string | null; business_date: string; lines: DraftLine[]; no_issues: boolean; submitted_at: Date | null; updated_at: Date; extras: NewItemLine[] | null }
 const toReport = (r: ReportRow): StockReport => ({ id: r.id, siteId: r.site_id, personId: r.person_id, personName: opt(r.person_name), date: day(r.business_date)!, lines: r.lines ?? [], noIssues: r.no_issues, submittedAt: r.submitted_at?.getTime(), updatedAt: r.updated_at.getTime(), extras: r.extras ?? [] });
@@ -95,7 +95,7 @@ export const stockSql: StockStore = {
   async stockCatalog() {
     const q = sql();
     const suppliers = (await q<SupplierRow[]>`select id, name, method, site_id, note, link, active from stock_suppliers order by lower(name)`).map(toSupplier);
-    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants from stock_products order by position, lower(name)`).map(toProduct);
+    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants, also_from from stock_products order by position, lower(name)`).map(toProduct);
     const prices = (await q<{ product_id: string; pence: number; on_date: string; note: string | null }[]>`
       select product_id, pence, to_char(on_date, 'YYYY-MM-DD') as on_date, note from stock_prices order by on_date desc, created_at desc`)
       .map((r): Price => ({ productId: r.product_id, pence: r.pence, on: r.on_date, note: opt(r.note) }));
@@ -115,11 +115,11 @@ export const stockSql: StockStore = {
     try {
       if (id && UUID.test(id)) {
         await q`update stock_products set name = ${p.name}, size = ${p.size ?? null}, category = ${p.category ?? null}, supplier_id = ${p.supplierId ?? null}, link = ${p.link ?? null}, active = ${active},
-          for_restaurants = ${p.forRestaurants !== false} where id = ${id}`;
+          for_restaurants = ${p.forRestaurants !== false} ${p.alsoFrom ? q`, also_from = ${p.alsoFrom}::uuid[]` : q``} where id = ${id}`;
         return id;
       }
-      const [r] = await q<{ id: string }[]>`insert into stock_products (name, size, category, supplier_id, link, active, for_restaurants, position)
-        values (${p.name}, ${p.size ?? null}, ${p.category ?? null}, ${p.supplierId ?? null}, ${p.link ?? null}, ${active}, ${p.forRestaurants !== false}, (select coalesce(max(position), 0) + 1 from stock_products)) returning id`;
+      const [r] = await q<{ id: string }[]>`insert into stock_products (name, size, category, supplier_id, link, active, for_restaurants, also_from, position)
+        values (${p.name}, ${p.size ?? null}, ${p.category ?? null}, ${p.supplierId ?? null}, ${p.link ?? null}, ${active}, ${p.forRestaurants !== false}, ${p.alsoFrom ?? []}::uuid[], (select coalesce(max(position), 0) + 1 from stock_products)) returning id`;
       return r.id;
     } catch (e) {
       if ((e as { code?: string }).code === "23505") return false;

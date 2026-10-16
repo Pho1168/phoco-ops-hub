@@ -2,7 +2,7 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
-import { cleanLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
+import { buyFrom, cleanLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
@@ -264,14 +264,45 @@ export async function giveToDriver(db: Store, person: Pick<Person, "id" | "statu
   return made;
 }
 
-/** A driver ticks a line off: bought (and so arrived), or couldn't get it (it goes back on the Stock needed list). */
-export async function driverTick(db: Store, person: Pick<Person, "id">, lineId: string, got: boolean, now: number): Promise<Done> {
+/**
+ * Moves an item on Stock needed to another supplier that sells it (before anyone has it): each of its requests there
+ * now, so it shows on that supplier's card (and its PDF or driver's list). One partly bought already stays put.
+ */
+export async function moveNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productId: string, supplierId: string, now: number): Promise<Done<{ moved: number; kept: number; to: string }>> {
+  const { group } = await neededGroup(db, person, key, now);
+  const row = group?.rows.find((r) => r.product.id === productId);
+  if (!group || group.production || !row) return { ok: false, error: "That list has changed. Refresh and try again" };
+  const { suppliers } = await db.stockCatalog();
+  const to = buyFrom(row.product, suppliers).find((s) => s.id === supplierId);
+  if (!to || to.id === group.supplier?.id) return { ok: false, error: `${row.product.name} isn't sold there. Add the supplier to it in the catalogue first` };
+  let moved = 0, kept = 0;
+  for (const id of [...row.requestIds, ...row.unknownIds]) {
+    const r = await db.changeStockRequest(id, { supplierId: to.id }, person.id);
+    if (r.ok) moved++; else kept++;
+  }
+  if (!moved) return { ok: false, error: "Part of it is already bought, so it stays where it is" };
+  return { ok: true, value: { moved, kept, to: to.name } };
+}
+
+/**
+ * A driver ticks a line off: bought (and so arrived), or couldn't get it (it goes back on the Stock needed list). Bought
+ * somewhere else on the way (`at`): one of the other suppliers that sell it, noted on the record.
+ */
+export async function driverTick(db: Store, person: Pick<Person, "id">, lineId: string, got: boolean, now: number, at?: string): Promise<Done> {
   const data = await db.stockData({ since: stockSince(now) });
   const line = data.lines.find((l) => l.id === lineId);
   const task = line && data.tasks.find((t) => t.id === line.taskId);
   if (!line || !task || task.cancelledAt) return { ok: false, error: "That isn't on your list any more" };
   if (task.assigneeId !== person.id && task.driverId !== person.id) return { ok: false, error: "That isn't on your list" };
-  const r = await db.addStockEvent({ by: person.id, kind: got ? "bought" : "unavailable", lineId, qty: got ? line.qty : undefined, text: got ? "Ticked off" : "Couldn't get it" });
+  let where: string | undefined;
+  if (got && at && at !== task.supplierId) {
+    const { products, suppliers } = await db.stockCatalog();
+    const req = data.requests.find((x) => x.id === line.requestId);
+    const product = req && products.find((p) => p.id === req.productId);
+    where = product && buyFrom(product, suppliers).find((s) => s.id === at)?.name;
+    if (!where) return { ok: false, error: "That shop isn't one that sells it" };
+  }
+  const r = await db.addStockEvent({ by: person.id, kind: got ? "bought" : "unavailable", lineId, qty: got ? line.qty : undefined, text: got ? (where ? `Bought at ${where}` : "Ticked off") : "Couldn't get it" });
   if (!r.ok) return r;
   if (got) await db.addStockReceipt(line.requestId, line.qty, person.id, "Bought by the driver");
   return { ok: true, value: undefined };

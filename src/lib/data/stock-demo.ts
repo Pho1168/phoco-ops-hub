@@ -39,6 +39,9 @@ function seed(): StockState {
     p("Wings", "1kg", lidl, "Meat"), p("Condensed Milk", "Can", lidl, "Che"),
     p("Z-Fold Tissue", "Pack", amz, "Cleaning"), p("Blue Rolls", "Pack", amz, "Cleaning"),
   ];
+  // Some products are sold at more than one shop.
+  products[9].alsoFrom = [lidl.id]; // Coconut Milk: Wing Yip, or Lidl/Aldi
+  products[13].alsoFrom = [wy.id]; // Condensed Milk: Lidl/Aldi, or Wing Yip
   const prices: Price[] = [
     { productId: products[7].id, pence: 2385, on: "2025-09-03", note: "12 x 725ml" },
     { productId: products[9].id, pence: 115, on: "2025-09-03" },
@@ -98,8 +101,10 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
       if (s.products.some((x) => x.id !== id && sameProduct(x, p))) return false;
       const existing = id ? s.products.find((x) => x.id === id) : undefined;
       const flag = p.forRestaurants === false ? { forRestaurants: false } : { forRestaurants: undefined };
-      if (existing) { Object.assign(existing, { size: undefined, category: undefined, supplierId: undefined, link: undefined }, p, flag, { active }); return existing.id; }
-      const n = { id: randomUUID(), ...p, ...flag, active, position: s.products.length + 1 };
+      const also = p.alsoFrom ? { alsoFrom: p.alsoFrom.length ? [...p.alsoFrom] : undefined } : {};
+      const { alsoFrom: _ignored, ...rest } = p; void _ignored;
+      if (existing) { Object.assign(existing, { size: undefined, category: undefined, supplierId: undefined, link: undefined }, rest, flag, also, { active }); return existing.id; }
+      const n = { id: randomUUID(), ...rest, ...flag, ...also, active, position: s.products.length + 1 };
       s.products.push(n);
       return n.id;
     },

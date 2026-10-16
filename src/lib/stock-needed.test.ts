@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
+import { buyFrom, cleanAlsoFrom, cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
 import { buildPdf, checklistPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
-import { addNewItem, clearNeeded, deliversTo, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
+import { addNewItem, clearNeeded, deliversTo, moveNeeded, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
 
 const NOW = Date.UTC(2026, 9, 16, 21, 0);
 
@@ -253,5 +253,45 @@ describe("the tick-off sheet", () => {
     expect(/\/Count (\d+)/.exec(one)![1]).toBe("1");
     expect(Number(/\/Count (\d+)/.exec(many)![1])).toBeGreaterThan(1);
     expect(many.trimEnd().endsWith("%%EOF")).toBe(true);
+  });
+});
+
+describe("items sold at more than one shop", () => {
+  it("other suppliers are checked: active shops, not a kitchen, not the usual one, once each", async () => {
+    const { suppliers } = await db.stockCatalog();
+    const id = (n: string) => suppliers.find((s) => s.name === n)!.id;
+    expect(cleanAlsoFrom([id("Lidl/Aldi (demo)"), id("Lidl/Aldi (demo)"), id("Wing Yip (demo)")], id("Wing Yip (demo)"), suppliers)).toEqual({ ok: true, value: [id("Lidl/Aldi (demo)")] });
+    expect(cleanAlsoFrom([id("Production (demo)")], undefined, suppliers).ok).toBe(false);
+    expect(cleanAlsoFrom(["nope"], undefined, suppliers).ok).toBe(false);
+    const coco = (await db.stockCatalog()).products.find((p) => p.name === "Coconut Milk")!;
+    expect(buyFrom(coco, suppliers).map((s) => s.name)).toEqual(["Wing Yip (demo)", "Lidl/Aldi (demo)"]);
+  });
+
+  it("Stock needed moves an item to another shop that sells it, and only to one that does", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Coconut Milk", qty: 4 }, { name: "Che Lychee", qty: 2 }]);
+    await report("WEM", "DEMO-PRD", [{ name: "Coconut Milk", qty: 1 }]);
+    const wy = (await group("Wing Yip (demo)"))!;
+    const { suppliers } = await db.stockCatalog();
+    const lidl = suppliers.find((s) => s.name === "Lidl/Aldi (demo)")!;
+    const coco = wy.rows.find((r) => r.product.name === "Coconut Milk")!.product.id;
+    const che = wy.rows.find((r) => r.product.name === "Che Lychee")!.product.id;
+    expect((await moveNeeded(db, await owner(), wy.key, che, lidl.id, NOW)).ok).toBe(false); // not sold there
+    expect(await moveNeeded(db, await owner(), wy.key, coco, lidl.id, NOW)).toMatchObject({ ok: true, value: { moved: 2, kept: 0, to: "Lidl/Aldi (demo)" } });
+    expect((await group("Lidl/Aldi (demo)"))!.rows[0]).toMatchObject({ qty: 5 });
+    expect((await group("Wing Yip (demo)"))!.rows.map((r) => r.product.name)).toEqual(["Che Lychee"]);
+  });
+
+  it("a driver can tick an item as bought at another shop that sells it, and nowhere else", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Coconut Milk", qty: 4 }, { name: "Che Lychee", qty: 2 }]);
+    const wy = (await group("Wing Yip (demo)"))!;
+    const made = await giveToDriver(db, await owner(), wy.key, "DEMO-FLT", undefined, NOW);
+    const task = (await db.stockTask((made as { value: string }).value))!;
+    const { suppliers, products } = await db.stockCatalog();
+    const lidl = suppliers.find((s) => s.name === "Lidl/Aldi (demo)")!;
+    const lineFor = (name: string) => task.lines.find((l) => task.requests.find((r) => r.id === l.requestId)!.productId === products.find((p) => p.name === name)!.id)!;
+    expect((await driverTick(db, { id: "DEMO-FLT" }, lineFor("Che Lychee").id, true, NOW, lidl.id)).ok).toBe(false);
+    expect((await driverTick(db, { id: "DEMO-FLT" }, lineFor("Coconut Milk").id, true, NOW, lidl.id)).ok).toBe(true);
+    const after = (await db.stockTask(task.tasks[0].id))!;
+    expect(after.events.find((e) => e.lineId === lineFor("Coconut Milk").id && e.kind === "bought")?.text).toBe("Bought at Lidl/Aldi (demo)");
   });
 });

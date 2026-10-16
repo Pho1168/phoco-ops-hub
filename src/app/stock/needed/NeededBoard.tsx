@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { giveNeededToDriver, setNeededAmount, takeBackFromDriver, tickNeededAction } from "@/app/actions";
+import { giveNeededToDriver, moveNeededAction, setNeededAmount, takeBackFromDriver, tickNeededAction } from "@/app/actions";
 import { Icon } from "@/components/Icon";
 
 export interface BoardRow {
@@ -10,6 +10,8 @@ export interface BoardRow {
   sites: { name: string; qty: number }[];
   /** Requests sent without an amount: one is set first. */
   unknown: { requestId: string; site?: string }[];
+  /** Other suppliers that also sell it (it can be moved to one of them). */
+  buyFrom: { id: string; name: string }[];
 }
 export interface BoardGroup {
   key: string; name: string; method: string; methodLabel: string; production: boolean; pdf: boolean;
@@ -129,6 +131,16 @@ export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers
                   {r.photoIds.length > 0 && (
                     <div className="row wrap" style={{ gap: 6 }}>
                       {r.photoIds.map((p, i) => <a key={p} className="btn ghost small" href={`/api/media/${p}`} target="_blank" rel="noreferrer"><Icon name="camera" /> Photo{r.photoIds.length > 1 ? ` ${i + 1}` : ""}</a>)}
+                    </div>
+                  )}
+                  {r.buyFrom.length > 0 && !done && (
+                    <div className="stock-site no-print">
+                      <span className="muted">Also sold at {r.buyFrom.map((x) => x.name).join(", ")}</span>
+                      <select className="txt" style={{ width: "auto" }} aria-label={`Buy ${r.name} from`} value="" disabled={busy}
+                        onChange={(e) => { const to = e.target.value; if (to) run(() => moveNeededAction(g.key, r.productId, to)); }}>
+                        <option value="">Buy from…</option>
+                        {r.buyFrom.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                      </select>
                     </div>
                   )}
                   {r.unknown.map((u) => <AmountAsk key={u.requestId} site={u.site} busy={busy} onSet={(qty) => run(() => setNeededAmount(u.requestId, qty))} />)}
