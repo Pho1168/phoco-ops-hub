@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { store } from "@/lib/data";
-import { lineEnd, neededCount } from "@/lib/domain/stock";
-import { londonDate } from "@/lib/domain/time";
+import { lineEnd, neededCount, sentTodayLine } from "@/lib/domain/stock";
+import { londonDate, londonHM } from "@/lib/domain/time";
 import { kitchenPlan, neededView } from "@/lib/stock-service";
 import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "./Bar";
@@ -56,7 +56,7 @@ export default async function StockHome() {
         <div className="tiles">
           {can.report && door("/stock/report", "box", "Report stock", draft && (drafted || draft.noIssues)
             ? `Not sent yet: ${plural(drafted, "item")}`
-            : sentToday.length ? `Sent today by ${sentToday.map((r) => r.personName?.split(" ")[0]).filter(Boolean).join(", ")}` : `What ${ctx.site.name} needs ordered, and how many`,
+            : sentTodayLine(sentToday, londonHM) ?? `What ${ctx.site.name} needs ordered, and how many`,
             drafted ? { n: drafted, tone: "warn" } : undefined)}
           {can.ordering && door("/stock/needed", "cart", "Stock needed", needed ? `${plural(needed - newCount, "item")} from ${plural(suppliers, "supplier")}${newCount ? ` · ${newCount} new to add` : ""}` : "Nothing waiting", { n: needed })}
           {(myItems > 0 || can.purchaser) && door("/stock/tasks", "truck", "My shopping list", myItems ? `${plural(myItems, "item")} to get` : "Nothing for you right now", { n: myItems })}

@@ -217,6 +217,18 @@ export function lookAlikes(name: string, products: Pick<Product, "id" | "name" |
     .filter((x) => x.score > 0).sort((a, b) => b.score - a.score || a.p.name.localeCompare(b.p.name)).slice(0, n).map((x) => x.p);
 }
 
+/**
+ * The Report stock tile's line for today's sent reports: each person once (first names, newest first), and when the
+ * latest was sent, e.g. "Sent today by Vishal, Anh · last at 17:30". Undefined when none were sent.
+ */
+export function sentTodayLine(reports: Pick<StockReport, "personName" | "submittedAt">[], hm: (ms: number) => string): string | undefined {
+  if (!reports.length) return undefined;
+  const sorted = [...reports].sort((a, b) => (b.submittedAt ?? 0) - (a.submittedAt ?? 0));
+  const names = [...new Set(sorted.map((r) => r.personName?.split(" ")[0]).filter((n): n is string => !!n))];
+  const last = sorted[0].submittedAt;
+  return `Sent today${names.length ? ` by ${names.join(", ")}` : ""}${last ? ` · last at ${hm(last)}` : ""}`;
+}
+
 // ---------- requests, tasks, events ----------
 
 export interface StockRequest {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { cleanNewItems, lookAlikes, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
+import { cleanNewItems, lookAlikes, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
 import { buildPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
 import { addNewItem, clearNeeded, deliversTo, driverTick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded } from "@/lib/stock-service";
 
@@ -215,5 +215,17 @@ describe("clearing Stock needed", () => {
     const left = await groups();
     expect(left.flatMap((g) => g.rows.map((x) => [x.product.name, x.qty]))).toEqual([["Che Lychee", 1]]);
     expect(await state(created.find((c) => c.productId === (wy.rows.find((x) => x.product.name === "Coconut Milk")!.product.id))!.id)).toBe("cancelled");
+  });
+});
+
+describe("the Report stock tile", () => {
+  it("names each sender once, newest first, with when the last report went", () => {
+    const hm = (ms: number) => new Date(ms).toISOString().slice(11, 16);
+    const at = (h: number) => Date.UTC(2026, 9, 16, h, 30);
+    expect(sentTodayLine([{ personName: "Vishal Test", submittedAt: at(13) }, { personName: "Vishal Test", submittedAt: at(16) }, { personName: "Vishal Test", submittedAt: at(14) }], hm))
+      .toBe("Sent today by Vishal · last at 16:30");
+    expect(sentTodayLine([{ personName: "Anh B", submittedAt: at(12) }, { personName: "Vishal T", submittedAt: at(15) }, { personName: "Anh B", submittedAt: at(10) }], hm))
+      .toBe("Sent today by Vishal, Anh · last at 15:30");
+    expect(sentTodayLine([], hm)).toBeUndefined();
   });
 });
