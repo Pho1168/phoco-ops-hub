@@ -27,7 +27,7 @@ export default async function ReportPage() {
     <>
       <StockBar ctx={ctx} onPhone={onPhone} title="Report stock" back="/stock" />
       <ReportStock siteName={ctx.site.name} products={products} frequent={frequent(history, ctx.site.id, now)} open={open}
-        draft={draft ? { lines: draft.lines, noIssues: draft.noIssues } : undefined} canRepeat={lastSent} />
+        draft={draft ? { lines: draft.lines, noIssues: draft.noIssues, extras: draft.extras } : undefined} canRepeat={lastSent} />
     </>
   );
 }

@@ -1,10 +1,11 @@
 import { store } from "@/lib/data";
-import { canPurchase, methodOf } from "@/lib/domain/stock";
+import { canPurchase, lookAlikes, methodOf, runsPurchasing } from "@/lib/domain/stock";
 import { londonDate, shortDay } from "@/lib/domain/time";
 import { neededView } from "@/lib/stock-service";
 import { StockBar, StockNav } from "../Bar";
 import { orderingStockCtx } from "../load";
 import { NeededBoard, type BoardGroup } from "./NeededBoard";
+import { NewItemsCard } from "./NewItemsCard";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,8 @@ export default async function NeededPage() {
   const { ctx, onPhone } = await orderingStockCtx();
   const db = store();
   const now = Date.now();
-  const [{ groups, sites, items }, people, purchasers] = await Promise.all([neededView(db, ctx.person, now), db.people(), db.purchaserIds()]);
+  const [{ groups, sites, items, siteIds, catalog }, people, purchasers] = await Promise.all([neededView(db, ctx.person, now), db.people(), db.purchaserIds()]);
+  const newItems = await db.stockNewItems({ open: true, siteIds });
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   const drivers = people.filter((p) => canPurchase({ ...p, purchaser: purchasers.includes(p.id) }))
     .map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
@@ -38,6 +40,13 @@ export default async function NeededPage() {
     <>
       <StockBar ctx={ctx} onPhone={onPhone} title="Stock needed" back="/stock" eyebrow={`Stock · ${shortDay(londonDate(now))}`} />
       <main className="stack">
+        {newItems.length > 0 && (
+          <NewItemsCard owner={runsPurchasing(ctx.person)}
+            items={newItems.map((n) => ({ id: n.id, name: n.name, size: n.size, qty: n.qty, note: n.note, site: siteName.get(n.siteId) ?? n.siteId,
+              by: n.requestedByName?.split(" ")[0], at: n.createdAt, like: lookAlikes(n.name, catalog.products).map((p) => ({ id: p.id, label: p.size ? `${p.name} · ${p.size}` : p.name })) }))}
+            suppliers={catalog.suppliers.filter((x) => x.active).map((x) => ({ id: x.id, name: x.name })).sort((a, b) => a.name.localeCompare(b.name))}
+            categories={[...new Set(catalog.products.map((p) => p.category).filter((c): c is string => !!c))].sort()} />
+        )}
         <NeededBoard groups={board} drivers={drivers} />
       </main>
       <StockNav ctx={ctx} onPhone={onPhone} />

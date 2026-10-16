@@ -2,7 +2,7 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
-import { cleanLines, lineEnd, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
+import { cleanLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
@@ -25,19 +25,71 @@ export async function stockView(db: Store, now: number, siteIds?: string[], days
  * Sends the person's report at the site. A report with nothing in it is "no stock issues today" (it must say so).
  * Production products go straight onto the production kitchen's order for this restaurant today.
  */
-export async function sendStockReport(db: Store, person: Pick<Person, "id">, site: Pick<Site, "id">, now: number): Promise<Done<{ created: StockRequest[]; again: number; noIssues: boolean }>> {
+export async function sendStockReport(db: Store, person: Pick<Person, "id">, site: Pick<Site, "id">, now: number): Promise<Done<{ created: StockRequest[]; again: number; noIssues: boolean; newItems: NewItem[] }>> {
   const draft = await db.stockDraft(site.id, person.id);
   if (!draft) return { ok: false, error: "There's nothing to send. Add what you need, or tap No stock issues today" };
-  const { catalog, items } = await stockView(db, now, [site.id]);
+  const { catalog } = await stockView(db, now, [site.id]);
   const clean = cleanLines(draft.lines, catalog.products);
   if (!clean.ok) return clean;
-  if (!clean.value.length && !draft.noIssues) return { ok: false, error: "Add what you need, or tap No stock issues today" };
-  if (clean.value.length && draft.noIssues) await db.saveStockDraft(site.id, person.id, draft.date, clean.value, false);
-  void items;
-  const sent = await db.submitStockReport(draft.id, person.id, clean.value, catalog.products);
+  const extras = cleanNewItems(draft.extras);
+  if (!extras.ok) return extras;
+  const empty = !clean.value.length && !extras.value.length;
+  if (empty && !draft.noIssues) return { ok: false, error: "Add what you need, or tap No stock issues today" };
+  if (!empty && draft.noIssues) await db.saveStockDraft(site.id, person.id, draft.date, clean.value, false, extras.value);
+  const sent = await db.submitStockReport(draft.id, person.id, clean.value, catalog.products, extras.value);
   if (!sent) return { ok: false, error: "That report has already been sent" };
   await routeProduction(db, sent.created, person.id, now, catalog.suppliers);
-  return { ok: true, value: { created: sent.created, again: sent.again, noIssues: !clean.value.length } };
+  if (sent.newItems.length) await notifyNewItems(db, sent.newItems, site.id, now);
+  return { ok: true, value: { created: sent.created, again: sent.again, noIssues: empty, newItems: sent.newItems } };
+}
+
+/** Tells the owners a restaurant asked for something that isn't in the catalogue (one message per report and owner). */
+async function notifyNewItems(db: Store, items: NewItem[], siteId: string, now: number): Promise<void> {
+  const [people, site] = await Promise.all([db.people(), db.site(siteId)]);
+  const names = items.map((i) => `${i.qty} × ${i.name}${i.size ? ` (${i.size})` : ""}`);
+  for (const p of people.filter((x) => runsPurchasing(x))) {
+    await db.queueNotice({ personId: p.id, kind: "stock", title: `New item${items.length === 1 ? "" : "s"} asked for · ${site?.name ?? siteId}`,
+      body: `${names.slice(0, 4).join(", ")}${names.length > 4 ? ` and ${names.length - 4} more` : ""}. Not in the catalogue yet: add ${items.length === 1 ? "it" : "them"} on Stock needed.`,
+      dedupeKey: `newitem|${items[0].id}|${p.id}`, sendAfter: afterQuietHours(now), url: "/stock/needed" });
+  }
+}
+
+/**
+ * The owner adds a new item to the catalogue: as a new product (name, size, category, supplier, checked like any
+ * product), or as a product that's already there; then it's asked for at its restaurant with this quantity, so it's on
+ * Stock needed under its supplier (production: straight onto the kitchen's order) and on the list for next time.
+ */
+export async function addNewItem(db: Store, person: Pick<Person, "id" | "status" | "access">, id: string,
+  input: { productId: string; qty: number } | { name: string; size?: string; category?: string; supplierId: string; qty: number }, now: number): Promise<Done<{ productId: string; created: boolean }>> {
+  if (!runsPurchasing(person)) return { ok: false, error: "Only the owner adds to the catalogue" };
+  const item = (await db.stockNewItems({ open: true })).find((n) => n.id === id);
+  if (!item) return { ok: false, error: "That new item has already been dealt with. Refresh to see the list as it is now" };
+  const { products, suppliers } = await db.stockCatalog();
+  let product: Product | undefined;
+  let created = false;
+  if ("productId" in input) {
+    product = products.find((p) => p.id === input.productId && p.active);
+    if (!product) return { ok: false, error: "That product isn't in the catalogue" };
+  } else {
+    if (!input.supplierId) return { ok: false, error: "Choose who it's bought from" };
+    const clean = cleanProduct({ name: input.name, size: input.size, category: input.category, supplierId: input.supplierId }, suppliers.filter((s) => s.active), [], undefined);
+    if (!clean.ok) return clean;
+    product = products.find((p) => sameProduct(p, clean.value));
+    if (product && !product.active) return { ok: false, error: `${product.name} is in the catalogue but switched off. Switch it on in the catalogue first` };
+    if (!product) {
+      const pid = await db.saveProduct(undefined, clean.value, true);
+      if (!pid) return { ok: false, error: "That product is already in the catalogue" };
+      product = (await db.stockCatalog()).products.find((p) => p.id === pid);
+      created = true;
+    }
+  }
+  if (!product) return { ok: false, error: "That product isn't in the catalogue" };
+  const qty = Math.round(Number(input.qty) * 100) / 100;
+  if (!Number.isFinite(qty) || qty <= 0 || qty > 9999) return { ok: false, error: "Quantities are from 1 to 9999" };
+  const r = await db.decideNewItem(id, person.id, { productId: product.id, supplierId: product.supplierId, qty });
+  if (!r.ok) return r;
+  if (r.value.request) await routeProduction(db, [r.value.request], person.id, now);
+  return { ok: true, value: { productId: product.id, created } };
 }
 
 /** Requests whose supplier is a production kitchen, with a quantity and nothing assigned: onto that kitchen's order for today. */

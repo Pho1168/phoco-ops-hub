@@ -25,7 +25,9 @@ export default async function StockHome() {
     can.report ? db.stockReports([ctx.site.id], now - 86_400_000) : [],
   ]);
   const sentToday = sent.filter((r) => r.date === today);
-  const needed = neededCount(view.groups);
+  const drafted = draft ? draft.lines.length + draft.extras.length : 0;
+  const newCount = can.ordering ? (await db.stockNewItems({ open: true, siteIds: view.siteIds })).length : 0;
+  const needed = neededCount(view.groups) + newCount;
   const suppliers = view.groups.filter((g) => g.rows.length).length;
   // My shopping list: what's still to get on lists given to me.
   const mine = new Set(data.tasks.filter((t) => !t.cancelledAt && t.method !== "production" && (t.assigneeId === ctx.person.id || t.driverId === ctx.person.id)).map((t) => t.id));
@@ -52,11 +54,11 @@ export default async function StockHome() {
       <StockBar ctx={ctx} onPhone={onPhone} title="Stock" />
       <main className="stack">
         <div className="tiles">
-          {can.report && door("/stock/report", "box", "Report stock", draft && (draft.lines.length || draft.noIssues)
-            ? `Not sent yet: ${plural(draft.lines.length, "item")}`
+          {can.report && door("/stock/report", "box", "Report stock", draft && (drafted || draft.noIssues)
+            ? `Not sent yet: ${plural(drafted, "item")}`
             : sentToday.length ? `Sent today by ${sentToday.map((r) => r.personName?.split(" ")[0]).filter(Boolean).join(", ")}` : `What ${ctx.site.name} needs ordered, and how many`,
-            draft && draft.lines.length ? { n: draft.lines.length, tone: "warn" } : undefined)}
-          {can.ordering && door("/stock/needed", "cart", "Stock needed", needed ? `${plural(needed, "item")} from ${plural(suppliers, "supplier")}` : "Nothing waiting", { n: needed })}
+            drafted ? { n: drafted, tone: "warn" } : undefined)}
+          {can.ordering && door("/stock/needed", "cart", "Stock needed", needed ? `${plural(needed - newCount, "item")} from ${plural(suppliers, "supplier")}${newCount ? ` · ${newCount} new to add` : ""}` : "Nothing waiting", { n: needed })}
           {(myItems > 0 || can.purchaser) && door("/stock/tasks", "truck", "My shopping list", myItems ? `${plural(myItems, "item")} to get` : "Nothing for you right now", { n: myItems })}
         </div>
         {kitchen && (

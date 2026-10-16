@@ -1,4 +1,4 @@
-import type { DraftLine, Price, Product, PurchaseTask, Receipt, StockEvent, StockReport, StockRequest, Supplier, TaskLine } from "@/lib/domain/stock";
+import type { DraftLine, NewItem, NewItemLine, Price, Product, PurchaseTask, Receipt, StockEvent, StockReport, StockRequest, Supplier, TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
 import type { SiteId } from "@/lib/domain/types";
 
@@ -24,7 +24,8 @@ export interface StockStore {
 
   /** The person's unsent report at the site, if any. */
   stockDraft(siteId: SiteId, personId: string): Promise<StockReport | undefined>;
-  saveStockDraft(siteId: SiteId, personId: string, date: string, lines: DraftLine[], noIssues: boolean): Promise<StockReport>;
+  /** Saves the draft: its lines and, when given, its new items (left as they are when not). */
+  saveStockDraft(siteId: SiteId, personId: string, date: string, lines: DraftLine[], noIssues: boolean, extras?: NewItemLine[]): Promise<StockReport>;
   /** Sent reports at these sites from a time, newest first. */
   stockReports(siteIds: SiteId[], since: number): Promise<StockReport[]>;
   /**
@@ -32,7 +33,15 @@ export interface StockStore {
    * those products locked (`planSubmit`), so two people sending at once never make two requests for one need. False
    * if it was already sent (a second tap, another tab).
    */
-  submitStockReport(reportId: string, by: string, lines: DraftLine[], products: Pick<Product, "id" | "supplierId">[]): Promise<{ created: StockRequest[]; again: number } | false>;
+  submitStockReport(reportId: string, by: string, lines: DraftLine[], products: Pick<Product, "id" | "supplierId">[], extras?: NewItemLine[]): Promise<{ created: StockRequest[]; again: number; newItems: NewItem[] } | false>;
+
+  /** New items (not in the catalogue): still waiting for the owner, or every one from a time, optionally at some sites. Oldest first. */
+  stockNewItems(f: { open?: boolean; since?: number; siteIds?: SiteId[] }): Promise<NewItem[]>;
+  /**
+   * The owner's decision on a new item, once: added (a request for its restaurant for the product, which is already in
+   * the catalogue, with this quantity and supplier) or not needed. Refused if it's already been decided.
+   */
+  decideNewItem(id: string, by: string, d: { productId: string; supplierId?: string; qty: number } | { dismiss: string }): Promise<Done<{ request?: StockRequest }>>;
 
   /**
    * Requests and tasks made from a time, plus any request still in hand however old (with every line, event and
