@@ -180,7 +180,7 @@ create or replace function stock_task_guard() returns trigger language plpgsql s
 begin
   if tg_op = 'DELETE' then raise exception 'stock records are kept' using errcode = 'check_violation'; end if;
   if old.cancelled_at is not null or row(new.id, new.code, new.method, new.created_by, new.created_at) is distinct from row(old.id, old.code, old.method, old.created_by, old.created_at) then
-    raise exception 'that task can''t be changed' using errcode = 'check_violation';
+    raise exception 'that task cannot be changed' using errcode = 'check_violation';
   end if;
   return new;
 end $$;
@@ -192,20 +192,13 @@ begin
   return new;
 end $$;
 
-drop trigger if exists stock_events_guard on stock_events;
-create trigger stock_events_guard before update or delete on stock_events for each row execute function stock_only_added();
-drop trigger if exists stock_receipts_guard on stock_receipts;
-create trigger stock_receipts_guard before update or delete on stock_receipts for each row execute function stock_only_added();
-drop trigger if exists stock_prices_guard on stock_prices;
-create trigger stock_prices_guard before update or delete on stock_prices for each row execute function stock_only_added();
-drop trigger if exists stock_task_lines_guard on stock_task_lines;
-create trigger stock_task_lines_guard before update or delete on stock_task_lines for each row execute function stock_only_added();
-drop trigger if exists stock_requests_guard on stock_requests;
-create trigger stock_requests_guard before update or delete on stock_requests for each row execute function stock_request_guard();
-drop trigger if exists stock_tasks_guard on stock_tasks;
-create trigger stock_tasks_guard before update or delete on stock_tasks for each row execute function stock_task_guard();
-drop trigger if exists stock_reports_guard on stock_reports;
-create trigger stock_reports_guard before update or delete on stock_reports for each row execute function stock_report_guard();
+create or replace trigger stock_events_guard before update or delete on stock_events for each row execute function stock_only_added();
+create or replace trigger stock_receipts_guard before update or delete on stock_receipts for each row execute function stock_only_added();
+create or replace trigger stock_prices_guard before update or delete on stock_prices for each row execute function stock_only_added();
+create or replace trigger stock_task_lines_guard before update or delete on stock_task_lines for each row execute function stock_only_added();
+create or replace trigger stock_requests_guard before update or delete on stock_requests for each row execute function stock_request_guard();
+create or replace trigger stock_tasks_guard before update or delete on stock_tasks for each row execute function stock_task_guard();
+create or replace trigger stock_reports_guard before update or delete on stock_reports for each row execute function stock_report_guard();
 
 -- Messages about stock (a task given to you, an urgent request nobody has).
 alter table notifications drop constraint if exists notifications_kind_check;
