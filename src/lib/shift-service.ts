@@ -1,4 +1,5 @@
 import { store } from "@/lib/data";
+import { isKitchen } from "@/lib/domain/stock-count";
 import type { Store } from "@/lib/data/store";
 import { readyFor, gasFor, type DayShift, type GasNow } from "@/lib/daily-service";
 import { periodAt, periodBounds } from "@/lib/domain/assign";
@@ -80,6 +81,15 @@ async function gather(site: Site, window: ShiftWindow, person: Person | undefine
       stockReport = { closeAt: day.closeAt, closer: !!person && day.closers.includes(person.id), sentBy: sent?.personName, sentAt: sent?.submittedAt };
     }
   }
+  // The production count at close, at a production kitchen, for whoever is on until it closes.
+  let productionCount: ShiftInput["productionCount"];
+  if (isKitchen(site) && site.status === "open") {
+    const day = gasDay(site.id, today, known.shifts, undefined, site.gasBy);
+    if (day) {
+      const counted = (await db.stockCounts(site.id, now - 86_400_000)).filter((c) => c.date === today).sort((a, b) => a.createdAt - b.createdAt)[0];
+      productionCount = { closeAt: day.closeAt, closer: !!person && day.closers.includes(person.id), sentBy: counted?.countedByName, sentAt: counted?.createdAt };
+    }
+  }
   const kitDown = kit.flatMap((eq) => {
     const f = faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down");
     return f.length ? [{ id: eq.id, name: eq.name, body: f[f.length - 1].fault.body, since: Math.min(...f.map((x) => x.fault.createdAt)) }] : [];
@@ -99,6 +109,7 @@ async function gather(site: Site, window: ShiftWindow, person: Person | undefine
     gas: gas ? { state: gas.state, closeAt: gas.day.closeAt, closer: !!person && gas.day.closers.includes(person.id), doneBy: gas.check?.personName, doneAt: gas.check?.createdAt } : undefined,
     ready: ready ? { light: ready.light, readyBy: ready.readyBy, headline: readyHeadline(ready) } : undefined,
     stockReport,
+    productionCount,
     kitDown,
     tasks: openTasks.map((t) => ({ id: t.id, title: t.title, priority: t.priority, dueOn: t.dueOn, forName: person ? undefined : t.assigneeName ?? (t.section ? undefined : "anyone on shift") })),
   };

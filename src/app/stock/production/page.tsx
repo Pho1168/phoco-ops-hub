@@ -78,7 +78,8 @@ export default async function Production() {
             ))}
           </aside>
         </div>
-        <p className="muted" style={{ fontSize: 13 }}>Stock on hand at the kitchen isn&apos;t counted in the app yet, so the list shows what&apos;s asked for, not what&apos;s on the shelf.</p>
+        <p className="muted" style={{ fontSize: 13 }}>This list is what the restaurants have asked for, not what&apos;s on the shelf.{" "}
+          {can.planSites.length ? <>What&apos;s on the shelf and what to make is on the <Link href="/stock/plan">production plan</Link>.</> : can.count ? <>At close, <Link href="/stock/count">count production stock</Link> so the day can be planned.</> : null}</p>
       </main>
       <StockNav ctx={ctx} onPhone={onPhone} />
     </>

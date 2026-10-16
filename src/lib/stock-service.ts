@@ -2,8 +2,9 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
-import { cleanLines, methodOf, needsEscalation, productLabel, reqCode, taskCode, withProgress, type Product, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
-import { afterQuietHours, londonDate } from "@/lib/domain/time";
+import { cleanLines, methodOf, needsEscalation, productionQueue, productLabel, reqCode, taskCode, withProgress, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
+import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
+import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
 
 /**
@@ -93,6 +94,48 @@ export async function queueStockEscalations(now = Date.now(), db: Store = store(
     }
   }
   return queued;
+}
+
+/** How far back the plan looks for the latest count (older than that: not counted). */
+export const COUNT_WINDOW_DAYS = 30;
+
+/**
+ * A production kitchen's plan: the products it counts, the latest count, the targets, what the restaurants still
+ * need sending on its production orders, and what to make. Rules in src/lib/domain/stock-count.ts.
+ */
+export async function kitchenPlan(db: Store, siteId: string, now: number): Promise<{ products: Product[]; counts: StockCount[]; latest?: StockCount; targets: StockTarget[]; orders: ProductionRow[]; rows: PlanRow[] }> {
+  const [{ catalog, data }, counts, targets] = await Promise.all([stockView(db, now), db.stockCounts(siteId, now - COUNT_WINDOW_DAYS * 86_400_000), db.stockTargets(siteId)]);
+  const products = countProducts(catalog.products, catalog.suppliers, siteId);
+  const own = new Set(catalog.suppliers.filter((s) => s.method === "production" && s.siteId === siteId).map((s) => s.id));
+  const orders = productionQueue(data.tasks.filter((t) => t.supplierId && own.has(t.supplierId)), data.lines, data.requests, data.events, catalog.products);
+  const latest = counts[0];
+  return { products, counts, latest, targets, orders, rows: productionPlan(products, targets, latest, orders) };
+}
+
+/**
+ * Sends a production count from the kitchen (checked), then tells whoever plans there (owners, its managers and
+ * operations managers, not the person who counted) how many items are below target and how many to make.
+ */
+export async function sendProductionCount(db: Store, person: Pick<Person, "id" | "name">, site: Pick<Site, "id" | "name">, input: { lines: { productId: string; qty: number | null }[]; note?: string }, now: number):
+  Promise<Done<{ count: StockCount; below: number; make: number; counted: number; of: number }>> {
+  const { catalog } = await stockView(db, now, [site.id], 1);
+  const products = countProducts(catalog.products, catalog.suppliers, site.id);
+  if (!products.length) return { ok: false, error: `${site.name} has no production products to count. Add them in the catalogue first` };
+  const clean = cleanCount(input.lines, products, input.note);
+  if (!clean.ok) return clean;
+  const count = await db.addStockCount({ siteId: site.id, countedBy: person.id, date: londonDate(now), lines: clean.value.lines, note: clean.value.note });
+  const plan = await kitchenPlan(db, site.id, now);
+  // This count, whatever else was sent at the same moment.
+  const rows = productionPlan(plan.products, plan.targets, count, plan.orders);
+  const below = belowTarget(rows).length, make = rows.filter((r) => (r.make ?? 0) > 0).length;
+  const planners = (await db.people()).filter((p) => p.id !== person.id && plansProduction(p, site.id));
+  const first = person.name.split(" ")[0];
+  for (const p of planners) {
+    await db.queueNotice({ personId: p.id, kind: "stock", title: `Production count · ${site.name}`,
+      body: `${make ? `${make} item${make === 1 ? "" : "s"} to make` : "Nothing to make"}${below ? `, ${below} below target` : ""}. Counted by ${first} at ${londonHM(now)}: ${clean.value.lines.length} of ${products.length} items.`,
+      dedupeKey: `prodcount|${count.id}|${p.id}`, sendAfter: afterQuietHours(now), url: `/stock/plan?site=${site.id}` });
+  }
+  return { ok: true, value: { count, below, make, counted: clean.value.lines.length, of: products.length } };
 }
 
 /** A request's product, supplier and progress together, for lists. */

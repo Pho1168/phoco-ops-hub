@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, planSubmit, progress, sameProduct, TERMINAL, withProgress,
   type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
+import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
 import type { SiteId } from "@/lib/domain/types";
 import type { StockData, StockStore } from "./stock-store";
 
@@ -10,6 +11,8 @@ interface StockState {
   suppliers: Supplier[]; products: (Product & { position: number })[]; prices: Price[];
   reports: StockReport[]; requests: StockRequest[]; tasks: PurchaseTask[]; lines: TaskLine[]; events: StockEvent[]; receipts: Receipt[];
   purchasers: Set<string>; nextRequest: number; nextTask: number;
+  /** Production counts and every target ever set (the latest per product counts). */
+  counts: StockCount[]; targets: StockTarget[];
 }
 
 function seed(): StockState {
@@ -36,7 +39,10 @@ function seed(): StockState {
     { productId: products[7].id, pence: 2385, on: "2025-09-03", note: "12 x 725ml" },
     { productId: products[9].id, pence: 115, on: "2025-09-03" },
   ];
-  return { suppliers, products, prices, reports: [], requests: [], tasks: [], lines: [], events: [], receipts: [], purchasers: new Set(["DEMO-MGR", "DEMO-FLT"]), nextRequest: 1, nextTask: 1 };
+  // Wembley's targets for its production products, so the plan has something to work from.
+  const targets: StockTarget[] = [[0, 4], [1, 10], [2, 8], [3, 3]].map(([i, qty]) => ({ siteId: "WEM", productId: products[i].id, qty, setBy: "DEMO-OWN", setAt: Date.now() - 86_400_000 }));
+  return { suppliers, products, prices, reports: [], requests: [], tasks: [], lines: [], events: [], receipts: [], purchasers: new Set(["DEMO-MGR", "DEMO-FLT"]), nextRequest: 1, nextTask: 1,
+    counts: [], targets };
 }
 
 const g = globalThis as unknown as { __phocoStockDemo?: StockState };
@@ -265,6 +271,29 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
         Object.assign(r, { cancelledAt: Date.now(), cancelReason: change.cancel });
       }
       return { ok: true, value: undefined };
+    },
+
+    async stockCounts(siteId, since) {
+      return S().counts.filter((c) => c.siteId === siteId && c.createdAt >= since).sort((a, b) => b.createdAt - a.createdAt)
+        .map((c) => ({ ...c, lines: c.lines.map((l) => ({ ...l })), countedByName: deps.personName(c.countedBy) }));
+    },
+    async addStockCount(c) {
+      const s = S();
+      const at = Math.max(Date.now(), (s.counts.at(-1)?.createdAt ?? 0) + 1);
+      const n: StockCount = { ...c, lines: c.lines.map((l) => ({ ...l })), id: randomUUID(), createdAt: at };
+      s.counts.push(n);
+      return { ...n, countedByName: deps.personName(n.countedBy) };
+    },
+    async stockTargets(siteId) {
+      const latest = new Map<string, StockTarget>();
+      for (const t of S().targets.filter((x) => x.siteId === siteId)) if (!latest.has(t.productId) || latest.get(t.productId)!.setAt <= t.setAt) latest.set(t.productId, t);
+      return [...latest.values()].map((t) => ({ ...t, setByName: deps.personName(t.setBy) }));
+    },
+    async setStockTargets(siteId, targets, by) {
+      const s = S();
+      const at = Date.now();
+      for (const t of targets) s.targets.push({ siteId, productId: t.productId, ...(t.qty !== undefined ? { qty: t.qty } : {}), setBy: by, setAt: at });
+      return targets.length;
     },
   };
 }

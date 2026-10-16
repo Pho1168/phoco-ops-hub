@@ -7,7 +7,8 @@ import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { canPurchase, canReportAt, canSeeTask, cleanLines as cleanStockLines, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode } from "@/lib/domain/stock";
-import { notifyTask, routeProduction, sendStockReport, stockSince } from "@/lib/stock-service";
+import { notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince } from "@/lib/stock-service";
+import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
 import { currentDevice, DEVICE_COOKIE, DEVICE_COOKIE_MAX_AGE, newDeviceToken, sha256 } from "@/lib/device";
@@ -2568,4 +2569,49 @@ export async function setStockReminderAction(siteId: string, on: boolean): Promi
   await db.audit({ actorId: who.ctx.person.id, siteId: site.id, action: "stock.reminder", detail: on ? "Closers asked for a stock report" : "Closers no longer asked for a stock report" });
   revalidateStock();
   return { ok: true };
+}
+
+// ---------- Production stock count (rules in src/lib/domain/stock-count.ts) ----------
+
+const CountQtyZ = z.number().min(0).max(COUNT_MAX).nullable();
+
+/** Sends a production count from the kitchen the person is signed in at. The planners are told (stock-service). */
+export async function sendProductionCountNow(input: { lines: unknown; note?: unknown }): Promise<ActionResult & { below?: number; make?: number; counted?: number; of?: number }> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  const { ctx } = who;
+  if (!canCount(ctx.person, ctx.site)) return { ok: false, error: `You can't count production stock at ${ctx.site.name}` };
+  const parsed = z.object({ lines: z.array(z.object({ productId: StockIdZ, qty: CountQtyZ })).max(500), note: z.string().max(COUNT_NOTE_MAX).optional() }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Something in the count doesn't look right. Check the numbers and try again" };
+  const db = store();
+  const now = Date.now();
+  const r = await sendProductionCount(db, ctx.person, ctx.site, parsed.data, now);
+  if (!r.ok) return r;
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "stock.count",
+    detail: `Production count: ${r.value.counted} of ${r.value.of} items counted, ${r.value.make} to make, ${r.value.below} below target${r.value.count.note ? ` (${r.value.count.note})` : ""}` });
+  revalidateStock();
+  revalidatePath("/shift");
+  return { ok: true, below: r.value.below, make: r.value.make, counted: r.value.counted, of: r.value.of };
+}
+
+/** Sets targets at a kitchen: owners, its managers and operations managers. Only the changed ones are added. */
+export async function saveProductionTargets(siteId: string, input: unknown): Promise<ActionResult & { changed?: number }> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  const db = store();
+  const site = await db.site(SiteIdZ.parse(siteId));
+  if (!site || !isKitchen(site)) return { ok: false, error: "That isn't a production kitchen" };
+  if (!plansProduction(who.ctx.person, site.id)) return { ok: false, error: `Only owners and ${site.name}'s managers set its targets` };
+  const parsed = z.array(z.object({ productId: StockIdZ, qty: CountQtyZ })).max(500).safeParse(input);
+  if (!parsed.success) return { ok: false, error: "Something in the targets doesn't look right. Check the numbers and try again" };
+  const { products, suppliers } = await db.stockCatalog();
+  const clean = cleanTargets(parsed.data, countProducts(products, suppliers, site.id));
+  if (!clean.ok) return clean;
+  const changed = changedTargets(clean.value, await db.stockTargets(site.id));
+  if (!changed.length) return { ok: true, changed: 0 };
+  await db.setStockTargets(site.id, changed, who.ctx.person.id);
+  const names = changed.slice(0, 6).map((t) => `${products.find((p) => p.id === t.productId)?.name ?? "?"} ${t.qty ?? "none"}`).join(", ");
+  await db.audit({ actorId: who.ctx.person.id, siteId: site.id, action: "stock.targets", detail: `Production targets: ${names}${changed.length > 6 ? ` and ${changed.length - 6} more` : ""}` });
+  revalidateStock();
+  return { ok: true, changed: changed.length };
 }
