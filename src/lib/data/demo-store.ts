@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { makeStockDemo, resetStockDemo, stockMediaUsed } from "./stock-demo";
 import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
@@ -448,11 +449,20 @@ const lastPosition = (section: Skill["section"], liveOnly = false) =>
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
 
-export function resetDemo() { g.__phocoDemo = seed(); }
+export function resetDemo() { g.__phocoDemo = seed(); resetStockDemo(); }
 
 export const demoStore: Store = {
+  ...makeStockDemo({
+    personName: (id) => nameOf(id),
+    setStockReminder: (siteId, on) => { const x = S().sites.find((y) => y.id === siteId); if (x) x.stockReminder = on; },
+  }),
   async sites() { return S().sites; },
   async site(id) { return S().sites.find((s) => s.id === id); },
+  async createSite(n) {
+    if (S().sites.some((s) => s.id === n.id)) return false;
+    S().sites.push({ id: n.id, name: n.name, kind: n.kind, status: "open", ...(n.readyBy ? { readyBy: n.readyBy } : {}), ...(n.gasBy ? { gasBy: n.gasBy } : {}) });
+    return true;
+  },
   async setSiteStatus(id, status, reason) {
     const s = S().sites.find((x) => x.id === id);
     if (!s) return;
@@ -1030,7 +1040,7 @@ export const demoStore: Store = {
     return true;
   },
   async deleteUnusedMedia(before) {
-    const used = JSON.stringify(S().libVersions.filter((v) => v.status !== "discarded").map((v) => v.body)) + S().trainingSkills.flatMap((k) => guidePhotoIds(k.guide)).join(",");
+    const used = JSON.stringify(S().libVersions.filter((v) => v.status !== "discarded").map((v) => v.body)) + S().trainingSkills.flatMap((k) => guidePhotoIds(k.guide)).join(",") + stockMediaUsed();
     let n = 0;
     for (const [id, m] of Array.from(S().media.entries())) if (m.createdAt < before && !used.includes(id)) { S().media.delete(id); n++; }
     return n;

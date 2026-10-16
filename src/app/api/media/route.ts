@@ -27,13 +27,16 @@ async function readCapped(req: Request, max: number): Promise<Uint8Array | undef
 }
 
 /**
- * A photo for an SOP step, made smaller on the phone or tablet first (a JPEG, at most 1600 px on the long side). Only
+ * A photo for an SOP step (or, with ?for=stock, a stock report line or a receipt), made smaller on the phone or tablet first (a JPEG, at most 1600 px on the long side). Only
  * people who write SOPs, on the full app, and up to PHOTO_DAILY_LIMIT a day each. The bytes must really be a JPEG,
  * and its width and height are read from the file itself.
  */
 export async function POST(req: Request) {
   const ctx = await current();
-  if (!ctx || ctx.scope !== "full" || ctx.person.pinMustChange || !canDraft(ctx.person)) return fail(403, "Only managers can add photos");
+  // Stock photos (a report line, a receipt): anyone signed in, on the tablet or their own phone. Others: SOP writers on the full app.
+  const forStock = new URL(req.url).searchParams.get("for") === "stock";
+  if (!ctx || ctx.person.pinMustChange || ctx.person.status !== "active") return fail(403, "Sign in again");
+  if (!forStock && (ctx.scope !== "full" || !canDraft(ctx.person))) return fail(403, "Only managers can add photos");
   if (Number(req.headers.get("content-length") ?? 0) > PHOTO_MAX_BYTES) return fail(413, "That photo is too big");
   const db = store();
   // A quick refusal before reading the photo; adding it checks again, as one step.

@@ -116,6 +116,13 @@ describe("what's on a kitchen shift", () => {
     expect(items.map((i) => `${i.kind}:${i.state}:${i.urgent}`)).toEqual(["allergen:whenever:true", "training:whenever:true", "sop:whenever:false"]);
     expect(items[0].href).toBe("/library/allergens/d1");
   });
+  it("asks closers for the stock report, from an hour before close, until anyone at the site sends it", () => {
+    const stockReport = { closeAt: at(D, "21:30"), closer: true };
+    expect(shiftItems(base({ stockReport })).find((i) => i.kind === "stock")).toMatchObject({ state: "later", href: "/stock/report", when: "before you go" });
+    expect(shiftItems(base({ stockReport, now: at(D, "20:30") })).find((i) => i.kind === "stock")?.state).toBe("now");
+    expect(shiftItems(base({ stockReport: { ...stockReport, closer: false } })).some((i) => i.kind === "stock")).toBe(false);
+    expect(shiftItems(base({ stockReport: { ...stockReport, sentBy: "Minh", sentAt: at(D, "21:10") }, now: at(D, "21:12") })).find((i) => i.kind === "stock")).toMatchObject({ state: "done", detail: "Sent by Minh at 21:10" });
+  });
   it("puts the gas check at close for closers only, and ready to open on morning shifts only", () => {
     const gas = { state: "due" as const, closeAt: at(D, "23:00"), closer: true };
     expect(shiftItems(base({ gas })).find((i) => i.kind === "gas")).toMatchObject({ state: "now", when: "at close" });

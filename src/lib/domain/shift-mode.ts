@@ -69,7 +69,7 @@ export function laneChoices(p: Pick<Person, "access">, site: Pick<Site, "id" | "
 
 // ---------- the items of a shift ----------
 
-export type ItemKind = "check" | "prep" | "note" | "allergen" | "sop" | "training" | "gas" | "ready" | "kit" | "task";
+export type ItemKind = "check" | "prep" | "note" | "allergen" | "sop" | "training" | "gas" | "ready" | "kit" | "task" | "stock";
 export type ItemState = "late" | "now" | "later" | "whenever" | "done";
 
 export interface ShiftItem {
@@ -108,8 +108,13 @@ export interface ShiftInput {
   allergens: DocToday[]; sops: DocToday[];
   training: { overdue: number; again: number };
   gas?: GasToday; ready?: ReadyToday;
+  /** The stock report at close (Stock & Purchasing), for the closers: done once anyone at the site has sent today's. */
+  stockReport?: { closeAt: number; closer: boolean; sentBy?: string; sentAt?: number };
   kitDown: KitDown[]; tasks: TaskToday[];
 }
+
+/** The stock report shows as "now" for the closers from this long before close. */
+export const STOCK_REPORT_FROM_MIN = 60;
 
 const ORDER: Record<ItemState, number> = { late: 0, now: 1, later: 2, whenever: 3, done: 4 };
 
@@ -174,6 +179,13 @@ export function shiftItems(x: ShiftInput): ShiftItem[] {
     const state: ItemState = x.gas.state === "done" ? "done" : x.gas.state === "overdue" ? "late" : x.gas.state === "due" ? "now" : "later";
     out.push({ kind: "gas", id: "gas", title: "Gas check at close", detail: x.gas.state === "done" ? `Checked${x.gas.doneBy ? ` by ${x.gas.doneBy}` : ""}${x.gas.doneAt ? ` at ${londonHM(x.gas.doneAt)}` : ""}` : "Every burner off: one tap",
       href: "/today", state, urgent: state === "late", dueAt: x.gas.closeAt, when: "at close", doneBy: x.gas.doneBy, doneAt: x.gas.doneAt });
+  }
+
+  if (x.stockReport && (x.stockReport.closer || !x.personId)) {
+    const s = x.stockReport;
+    const state: ItemState = s.sentAt ? "done" : now >= s.closeAt - STOCK_REPORT_FROM_MIN * 60_000 ? "now" : "later";
+    out.push({ kind: "stock", id: "stock", title: "Stock report", href: "/stock/report", state, urgent: false, dueAt: s.closeAt, when: "before you go",
+      detail: s.sentAt ? `Sent${s.sentBy ? ` by ${s.sentBy}` : ""} at ${londonHM(s.sentAt)}` : "What's low or out, for the buyers", doneBy: s.sentBy, doneAt: s.sentAt });
   }
 
   for (const k of x.kitDown) out.push({ kind: "kit", id: k.id, title: `Not working: ${k.name}`, detail: k.body, href: `/equipment/${k.id}`, state: "now", urgent: true });

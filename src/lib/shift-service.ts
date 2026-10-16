@@ -3,7 +3,7 @@ import type { Store } from "@/lib/data/store";
 import { readyFor, gasFor, type DayShift, type GasNow } from "@/lib/daily-service";
 import { periodAt, periodBounds } from "@/lib/domain/assign";
 import { progress } from "@/lib/domain/checklist";
-import { readyHeadline, readyShownUntil, type Ready } from "@/lib/domain/daily";
+import { gasDay, readyHeadline, readyShownUntil, type Ready } from "@/lib/domain/daily";
 import { faultsOf } from "@/lib/domain/equipment";
 import { currentNotes } from "@/lib/domain/handover";
 import { latestReplies, replyOpen, replyText, todaysShifts, type ShiftReply } from "@/lib/domain/reminders";
@@ -71,6 +71,15 @@ async function gather(site: Site, window: ShiftWindow, person: Person | undefine
     gasFor(site, now, db, known),
     readyShown ? readyFor(site, now, db, { ...known, lists: lists.map((l) => ({ name: l.name, due: l.due, signed: !!l.signedAt })) }, { forStaff: !isManager }) : undefined,
   ]);
+  // The stock report at close, for whoever is on until the kitchen closes (as for the gas check).
+  let stockReport: ShiftInput["stockReport"];
+  if (site.stockReminder !== false && site.status === "open") {
+    const day = gasDay(site.id, today, known.shifts, undefined, site.gasBy);
+    if (day) {
+      const sent = (await db.stockReports([site.id], now - 86_400_000)).filter((r) => r.date === today).sort((a, b) => (a.submittedAt ?? 0) - (b.submittedAt ?? 0))[0];
+      stockReport = { closeAt: day.closeAt, closer: !!person && day.closers.includes(person.id), sentBy: sent?.personName, sentAt: sent?.submittedAt };
+    }
+  }
   const kitDown = kit.flatMap((eq) => {
     const f = faultsOf(kitOpen.filter((e) => e.equipmentId === eq.id)).filter((x) => x.fault.severity === "down");
     return f.length ? [{ id: eq.id, name: eq.name, body: f[f.length - 1].fault.body, since: Math.min(...f.map((x) => x.fault.createdAt)) }] : [];
@@ -89,6 +98,7 @@ async function gather(site: Site, window: ShiftWindow, person: Person | undefine
     training,
     gas: gas ? { state: gas.state, closeAt: gas.day.closeAt, closer: !!person && gas.day.closers.includes(person.id), doneBy: gas.check?.personName, doneAt: gas.check?.createdAt } : undefined,
     ready: ready ? { light: ready.light, readyBy: ready.readyBy, headline: readyHeadline(ready) } : undefined,
+    stockReport,
     kitDown,
     tasks: openTasks.map((t) => ({ id: t.id, title: t.title, priority: t.priority, dueOn: t.dueOn, forName: person ? undefined : t.assigneeName ?? (t.section ? undefined : "anyone on shift") })),
   };

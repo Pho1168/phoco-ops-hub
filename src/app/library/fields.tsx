@@ -27,10 +27,10 @@ async function shrink(file: File): Promise<{ blob: Blob; w: number; h: number }>
 }
 
 /** Uploads a photo (made smaller first); the server reads its real size. */
-export async function upload(file: File): Promise<Photo> {
+export async function upload(file: File, purpose?: "stock"): Promise<Photo> {
   let small: Awaited<ReturnType<typeof shrink>>;
   try { small = await shrink(file); } catch { throw new Error("Couldn't read that photo. Take it again, or choose a JPEG or PNG"); }
-  const r = await fetch("/api/media", { method: "POST", headers: { "content-type": "image/jpeg" }, body: small.blob });
+  const r = await fetch(purpose ? `/api/media?for=${purpose}` : "/api/media", { method: "POST", headers: { "content-type": "image/jpeg" }, body: small.blob });
   const j = (await r.json().catch(() => ({}))) as { ok?: boolean; id?: string; w?: number; h?: number; error?: string };
   if (!r.ok || !j.ok || !j.id || !j.w || !j.h) throw new Error(j.error ?? "The photo didn't upload. Try again");
   return { id: j.id, w: j.w, h: j.h };

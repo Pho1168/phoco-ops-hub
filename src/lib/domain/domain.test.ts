@@ -1013,3 +1013,19 @@ describe("London times that don't exist", () => {
     expect(new Date(londonToUtc("2027-03-28", "00:30")).toISOString()).toBe("2027-03-28T00:30:00.000Z");
   });
 });
+
+describe("adding a site", async () => {
+  const { cleanNewSite } = await import("./sites");
+  const existing = [{ id: "EAS", name: "Eastcote" }, { id: "WEM", name: "Wembley" }];
+  it("takes a short code, a name and a kind", () => {
+    expect(cleanNewSite({ id: " gre ", name: " Greenwich ", kind: "restaurant", gasBy: "21:30" }, existing)).toEqual({ ok: true, value: { id: "GRE", name: "Greenwich", kind: "restaurant", gasBy: "21:30" } });
+  });
+  it("refuses a taken code or name, a bad code, kind or time", () => {
+    expect(cleanNewSite({ id: "EAS", name: "New", kind: "restaurant" }, existing).ok).toBe(false);
+    expect(cleanNewSite({ id: "NEW", name: "eastcote", kind: "restaurant" }, existing).ok).toBe(false);
+    expect(cleanNewSite({ id: "G1", name: "Greenwich", kind: "restaurant" }, existing).ok).toBe(false);
+    expect(cleanNewSite({ id: "GREENW", name: "Greenwich", kind: "restaurant" }, existing).ok).toBe(false);
+    expect(cleanNewSite({ id: "GRE", name: "Greenwich", kind: "cafe" }, existing).ok).toBe(false);
+    expect(cleanNewSite({ id: "GRE", name: "Greenwich", kind: "restaurant", readyBy: "25:00" }, existing).ok).toBe(false);
+  });
+});

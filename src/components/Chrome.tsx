@@ -77,7 +77,7 @@ export function PhoneTopBar(props: BarProps & { home?: boolean }) {
 }
 
 /** The tabs. "Today" (everything at the site) is reached from the Shift screen's More row and keeps its tab highlight there. */
-export function BottomNav({ ctx, current }: { ctx: Ctx; current: "shift" | "today" | "handover" | "rota" | "library" | "owner" | "manage" }) {
+export function BottomNav({ ctx, current }: { ctx: Ctx; current: "shift" | "today" | "handover" | "rota" | "library" | "owner" | "manage" | "stock" }) {
   const item = (href: string, id: typeof current, label: string, icon: string, also?: typeof current) => (
     <Link href={href} aria-current={current === id || current === also ? "page" : undefined}><Icon name={icon} />{label}</Link>
   );
@@ -87,6 +87,7 @@ export function BottomNav({ ctx, current }: { ctx: Ctx; current: "shift" | "toda
       {item("/handover", "handover", "Handover", "handover")}
       {item("/rota", "rota", "Rota", "rota")}
       {item("/library", "library", "Library", "book")}
+      {item("/stock", "stock", "Stock", "box")}
       {ctx.isLead
         ? item("/owner", "owner", ctx.isOwner ? "Owner" : "Overview", "owner")
         : managedSites(ctx.person).length > 0 && item("/manage", "manage", "Manage", "manage")}

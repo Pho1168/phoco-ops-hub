@@ -1,4 +1,6 @@
-import postgres from "postgres";
+import type postgres from "postgres";
+import { sql, withTx } from "./pg";
+import { stockSql } from "./stock-sql";
 import type { Answer, Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, ChecklistDraftItem, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
 import type { RawAnswer } from "@/lib/domain/records";
@@ -21,41 +23,6 @@ import { trainingSections, type Guide, type Pathway, type Question, type Skill, 
  * The server connects directly to the database; the public Supabase API can read nothing because
  * row level security is on with no policies. Food-safety records are only ever inserted.
  */
-
-type Sql = postgres.Sql;
-const g = globalThis as unknown as { __phocoSql?: Sql };
-
-function sql(): Sql {
-  if (!g.__phocoSql) {
-    const url = process.env.DATABASE_URL;
-    if (!url) throw new Error("DATABASE_URL is not set");
-    // Supabase's transaction pooler (port 6543) hands a database connection to the next client as soon as a query
-    // finishes. So: no prepared statements (prepare:false), and one query at a time per connection (max_pipeline:0).
-    // With pipelining on, a page that runs many queries at once can be left waiting for an answer that never comes.
-    const options = { prepare: false, max: 5, max_pipeline: 0, idle_timeout: 20, connect_timeout: 10 };
-    g.__phocoSql = postgres(url, options);
-  }
-  return g.__phocoSql;
-}
-
-/**
- * Runs `fn` in a transaction on one reserved connection. postgres.js's own sql.begin can't be used with
- * max_pipeline:0 (it never marks its connection as reserved), so this does begin / commit / rollback itself.
- */
-async function withTx<T>(fn: (tx: postgres.ReservedSql) => Promise<T>): Promise<T> {
-  const tx = await sql().reserve();
-  try {
-    await tx`begin`;
-    const result = await fn(tx);
-    await tx`commit`;
-    return result;
-  } catch (e) {
-    await tx`rollback`.catch(() => undefined);
-    throw e;
-  } finally {
-    tx.release();
-  }
-}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: string) => UUID.test(s);
@@ -180,8 +147,8 @@ function toPerson(r: PersonRow): Person {
   };
 }
 
-function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null; ready_by: string | null; gas_by: string | null }): Site {
-  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason), readyBy: r.ready_by ?? undefined, gasBy: r.gas_by ?? undefined };
+function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null; ready_by: string | null; gas_by: string | null; stock_reminder: boolean }): Site {
+  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason), readyBy: r.ready_by ?? undefined, gasBy: r.gas_by ?? undefined, stockReminder: r.stock_reminder };
 }
 
 async function selectPeople(where: postgres.PendingQuery<postgres.Row[]> | null): Promise<Person[]> {
@@ -379,14 +346,15 @@ async function withStarts<T>(tx: postgres.ReservedSql, personIds: string[], chan
 }
 
 export const sqlStore: Store = {
+  ...stockSql,
   async sites() {
     const q = sql();
-    return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by from sites order by case id when 'EAS' then 1 when 'WEM' then 2 else 3 end`)
+    return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by, stock_reminder from sites order by position, id`)
       .map((r) => toSite(r as Parameters<typeof toSite>[0]));
   },
   async site(id) {
     const q = sql();
-    const [r] = await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by from sites where id = ${id}`;
+    const [r] = await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by, stock_reminder from sites where id = ${id}`;
     return r ? toSite(r as Parameters<typeof toSite>[0]) : undefined;
   },
   async setSiteStatus(id, status, reason) {
@@ -399,6 +367,13 @@ export const sqlStore: Store = {
     });
   },
 
+  async createSite(n) {
+    const q = sql();
+    const r = await q`insert into sites (id, name, kind, status, ready_by, gas_by, position)
+      values (${n.id}, ${n.name}, ${n.kind}, 'open', ${n.readyBy ?? null}, ${n.gasBy ?? null}, (select coalesce(max(position), 0) + 1 from sites))
+      on conflict (id) do nothing returning id`;
+    return r.length > 0;
+  },
   async setSiteGasBy(id, gasBy) {
     await sql()`update sites set gas_by = ${gasBy} where id = ${id}`;
   },
@@ -1433,7 +1408,10 @@ export const sqlStore: Store = {
     const q = sql();
     const r = await q`delete from media m where m.created_at < ${new Date(before)}
       and not exists (select 1 from library_versions v where v.status <> 'discarded' and strpos(v.body::text, m.id::text) > 0)
-      and not exists (select 1 from training_skills s where s.guide is not null and strpos(s.guide::text, m.id::text) > 0)`;
+      and not exists (select 1 from training_skills s where s.guide is not null and strpos(s.guide::text, m.id::text) > 0)
+      and not exists (select 1 from stock_requests r where r.photo_id = m.id)
+      and not exists (select 1 from stock_events e where e.media_id = m.id)
+      and not exists (select 1 from stock_reports r where r.submitted_at is null and strpos(r.lines::text, m.id::text) > 0)`;
     return r.count;
   },
 

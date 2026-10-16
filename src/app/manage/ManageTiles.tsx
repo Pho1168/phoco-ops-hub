@@ -20,6 +20,7 @@ const TILES = [
 /** The owner's own tools, after the shared ones. */
 const OWNER_TILES = [
   { href: "/manage/checklists", icon: "records", title: "Checklists", text: "The opening, closing, cleaning and temperature checks: due times, and new versions of the checks" },
+  { href: "/stock/purchasing", icon: "cart", title: "Purchasing", text: "What the restaurants need, by supplier: give it to a driver or buyer and follow it to delivery" },
 ];
 
 /** The manager's tools, shown on the Manage tab and at the top of the Owner screen. */

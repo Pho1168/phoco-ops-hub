@@ -10,7 +10,7 @@ import type { OnLane, ShiftView } from "@/lib/shift-service";
 /** Shift Mode's building blocks. Server components: the only buttons are the ones the rest of the app already has. */
 
 const STATE_LABEL: Record<ItemState, string> = { late: "Late", now: "Now", later: "Later", whenever: "This shift", done: "Done this shift" };
-const ICON: Record<ShiftItem["kind"], string> = { check: "today", prep: "prep", note: "handover", allergen: "alert", sop: "book", training: "cert", gas: "flame", ready: "clock", kit: "wrench", task: "check" };
+const ICON: Record<ShiftItem["kind"], string> = { check: "today", prep: "prep", note: "handover", allergen: "alert", sop: "book", training: "cert", gas: "flame", ready: "clock", kit: "wrench", task: "check", stock: "box" };
 
 export function ShiftItemRow({ item, siteId, siteName, needsPin }: { item: ShiftItem; siteId: string; siteName: string; needsPin: boolean }) {
   if (item.kind === "gas" && (item.state === "now" || item.state === "late")) {
