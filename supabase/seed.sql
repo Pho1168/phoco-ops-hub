@@ -5,7 +5,7 @@ update sites set status='closed', closed_reason='Closed until reopening (owner d
 -- Limits must be confirmed by the owner against the approved HACCP plan before go-live (approved_by stays null until then).
 insert into temp_rules (code, label, target_max, target_min, legal_max, legal_min) values
  ('F','Fridge / chilled', 5, null, 8, null),
- ('Z','Freezer', -18, null, null, null),
+ ('Z','Freezer', -18, null, -15, null),
  ('C','Cooking core', null, 75, null, 75);
 insert into checklist_templates (id, site_id, name, area, when_label, due_time, is_suggested) values ('EAS-FOH-OPEN', 'EAS', 'FOH Opening', 'FOH', 'Before doors open', '11:45', false);
 with v as (insert into checklist_versions (template_id, version, status, source_note, published_at) values ('EAS-FOH-OPEN', 1, 'published', 'EAS- FOH Opening Closing + SYD FOH (counter desk items)', now()) returning id)
