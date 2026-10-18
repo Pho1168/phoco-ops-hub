@@ -107,6 +107,12 @@ async function SitePage({ ctx }: { ctx: Ctx }) {
     <>
       <StockBar ctx={ctx} onPhone={false} title="Stock needed" back="/stock" eyebrow={`${ctx.site.name} · ${shortDay(londonDate(now))}`} />
       <main className="stack">
+        {view.some((g) => g.rows.length > 0) && (
+          <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
+            <span className="muted grow" style={{ fontSize: 14 }}>Everything below on one page, with boxes to tick.</span>
+            <a className="btn small" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (PDF)</a>
+          </div>
+        )}
         <SiteNeeded site={ctx.site.name} groups={view} />
       </main>
       <StockNav ctx={ctx} onPhone={false} />
