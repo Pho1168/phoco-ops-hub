@@ -122,6 +122,9 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
               </div>
             )}
             {prepOn && !readOnly && (
+              <a className="btn ghost small no-print" href="/handover/list" target="_blank" rel="noreferrer" style={{ justifyContent: "flex-start" }}><Icon name="print" /> Print the handover list (80 mm receipt)</a>
+            )}
+            {prepOn && !readOnly && (
               <Link href="/handover/prep" className="cta-dark">
                 <Icon name="handover" />
                 <span className="grow">

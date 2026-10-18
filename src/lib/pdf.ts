@@ -48,7 +48,7 @@ export function fitText(text: string, size: number, maxW: number, bold = false):
 const n = (v: number) => (Math.round(v * 100) / 100).toString();
 
 /** The PDF file for these pages (each a list of drawing operations, in points from the bottom-left). */
-export function buildPdf(pages: PdfOp[][], title: string): Uint8Array {
+export function buildPdf(pages: PdfOp[][], title: string, size: { w: number; h: number }[] = []): Uint8Array {
   const objects: string[] = [];
   const add = (body: string) => { objects.push(body); return objects.length; };
   // 1 catalog, 2 pages, 3 regular font, 4 bold font, 5 info; then a content stream and a page for each page.
@@ -58,7 +58,8 @@ export function buildPdf(pages: PdfOp[][], title: string): Uint8Array {
   add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
   add(`<< /Title ${pdfString(title)} /Producer (PHO & CO Ops Hub) >>`);
   const kids: number[] = [];
-  for (const ops of pages.length ? pages : [[]]) {
+  for (const [at, ops] of (pages.length ? pages : [[]]).entries()) {
+    const box = size[at] ?? A4;
     const parts: string[] = [];
     for (const op of ops) {
       if (op.t === "text") parts.push(`${n(op.grey ?? 0)} g BT /${op.bold ? "F2" : "F1"} ${n(op.size)} Tf ${n(op.x)} ${n(op.y)} Td ${pdfString(op.text)} Tj ET 0 g`);
@@ -69,7 +70,7 @@ export function buildPdf(pages: PdfOp[][], title: string): Uint8Array {
     }
     const stream = parts.join("\n");
     const content = add(`<< /Length ${Buffer.byteLength(stream, "latin1")} >>\nstream\n${stream}\nendstream`);
-    kids.push(add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n(A4.w)} ${n(A4.h)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${content} 0 R >>`));
+    kids.push(add(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n(box.w)} ${n(box.h)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${content} 0 R >>`));
   }
   objects[1] = `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(" ")}] /Count ${kids.length} >>`;
   let out = "%PDF-1.4\n%\xe2\xe3\xcf\xd3\n";
@@ -193,4 +194,57 @@ export function checklistPdf(o: { title: string; lines: string[]; groups: SheetG
     p.push({ t: "text", x: A4.w - M - 52, y: 24, size: 7.5, text: `Page ${i + 1} of ${pages.length}`, grey: 0.45 });
   });
   return buildPdf(pages, o.title);
+}
+
+/** An 80 mm receipt roll: 226.77 pt wide (72 mm printable), as long as the list needs. */
+export const RECEIPT_W = 226.77;
+/** A PDF page can't be taller than this (14400 pt). */
+export const RECEIPT_MAX_H = 14400;
+
+export interface ReceiptGroup { heading: string; rows: string[] }
+
+/**
+ * A handover list for a receipt printer: one tall 80 mm page. A heading, then each group (a station) with a box to tick
+ * beside every item, in big plain text; long names wrap onto a second line.
+ */
+export function receiptPdf(o: { title: string; lines: string[]; groups: ReceiptGroup[]; foot: string }): Uint8Array {
+  const M = 10, W = RECEIPT_W - 2 * M, size = 11, lead = 14.5, box = 9;
+  // Lay out from the top (y counts down from 0), then flip so the page is exactly as tall as the content.
+  const items: ({ t: "title"; text: string } | { t: "small"; text: string } | { t: "head"; text: string } | { t: "row"; lines: string[] } | { t: "gap"; h: number } | { t: "rule" })[] = [];
+  const wrap = (text: string, max: number): string[] => {
+    const out: string[] = [];
+    let line = "";
+    for (const w of text.split(/\s+/).filter(Boolean)) {
+      const next = line ? `${line} ${w}` : w;
+      if (textWidth(next, size) <= max || !line) line = next; else { out.push(line); line = w; }
+    }
+    if (line) out.push(line);
+    return out.map((l) => fitText(l, size, max));
+  };
+  items.push({ t: "title", text: o.title });
+  for (const l of o.lines) items.push({ t: "small", text: l });
+  items.push({ t: "rule" });
+  for (const g of o.groups) {
+    items.push({ t: "gap", h: 6 }, { t: "head", text: fitText(g.heading.toUpperCase(), 11, W, true) });
+    for (const r of g.rows) items.push({ t: "row", lines: wrap(r, W - 18) });
+  }
+  if (!o.groups.length) items.push({ t: "small", text: "Nothing on the list." });
+  items.push({ t: "gap", h: 6 }, { t: "rule" }, { t: "small", text: o.foot }, { t: "gap", h: 16 });
+  const heightOf = (it: (typeof items)[number]) => it.t === "title" ? 22 : it.t === "small" ? 12 : it.t === "head" ? 18 : it.t === "row" ? it.lines.length * lead + 4 : it.t === "gap" ? it.h : 8;
+  const total = Math.min(RECEIPT_MAX_H, Math.ceil(10 + items.reduce((h, it) => h + heightOf(it), 0)));
+  const ops: PdfOp[] = [];
+  let y = total - 10;
+  for (const it of items) {
+    const h = heightOf(it);
+    if (y - h < 0) break;
+    if (it.t === "title") ops.push({ t: "text", x: M, y: y - 15, size: 15, bold: true, text: fitText(it.text, 15, W, true) });
+    else if (it.t === "small") ops.push({ t: "text", x: M, y: y - 9, size: 8.5, text: fitText(it.text, 8.5, W), grey: 0.25 });
+    else if (it.t === "head") { ops.push({ t: "text", x: M, y: y - 11, size: 11, bold: true, text: it.text }); ops.push({ t: "line", x1: M, y1: y - 15, x2: M + W, y2: y - 15, width: 1 }); }
+    else if (it.t === "row") {
+      ops.push({ t: "rect", x: M, y: y - lead + 3, w: box, h: box, width: 1 });
+      it.lines.forEach((l, i) => ops.push({ t: "text", x: M + 18, y: y - lead + 4 - i * lead + 0.5, size, text: l }));
+    } else if (it.t === "rule") ops.push({ t: "line", x1: M, y1: y - 4, x2: M + W, y2: y - 4, width: 0.8 });
+    y -= h;
+  }
+  return buildPdf([ops], o.title, [{ w: RECEIPT_W, h: total }]);
 }
