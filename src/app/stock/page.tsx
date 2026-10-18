@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { store } from "@/lib/data";
-import { lineEnd, neededCount, sentTodayLine } from "@/lib/domain/stock";
+import { editsSiteNeeded, lineEnd, neededCount, sentTodayLine } from "@/lib/domain/stock";
 import { londonDate, londonHM } from "@/lib/domain/time";
-import { kitchenPlan, neededView } from "@/lib/stock-service";
+import { kitchenPlan, neededView, siteNeededView } from "@/lib/stock-service";
 import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "./Bar";
 import { stockCtx } from "./load";
@@ -10,7 +10,8 @@ import { stockCtx } from "./load";
 export const dynamic = "force-dynamic";
 
 /**
- * Stock home: Report stock (anyone at the site), Stock needed (owners and operations managers) and My shopping list
+ * Stock home: Report stock (anyone at the site), Stock needed (owners and operations managers; on the tablet, everyone
+ * else sees their restaurant's list) and My shopping list
  * (drivers); the production kitchen's count and plan for its team; the catalogue and history for the owner.
  */
 export default async function StockHome() {
@@ -29,6 +30,9 @@ export default async function StockHome() {
   const newCount = can.ordering ? (await db.stockNewItems({ open: true, siteIds: view.siteIds })).length : 0;
   const needed = neededCount(view.groups) + newCount;
   const suppliers = view.groups.filter((g) => g.rows.length).length;
+  // On the tablet, everyone else sees what their restaurant has asked for (and can change it).
+  const siteList = !can.ordering && !onPhone && editsSiteNeeded(ctx.person, ctx.site, ctx.scope) ? (await siteNeededView(db, ctx.site.id, now)).groups : undefined;
+  const siteItems = siteList ? neededCount(siteList) : 0;
   // My shopping list: what's still to get on lists given to me.
   const mine = new Set(data.tasks.filter((t) => !t.cancelledAt && t.method !== "production" && (t.assigneeId === ctx.person.id || t.driverId === ctx.person.id)).map((t) => t.id));
   const myItems = data.lines.filter((l) => mine.has(l.taskId) && !lineEnd(l, data.events)).length;
@@ -59,6 +63,7 @@ export default async function StockHome() {
             : sentTodayLine(sentToday, londonHM) ?? `What ${ctx.site.name} needs ordered, and how many`,
             drafted ? { n: drafted, tone: "warn" } : undefined)}
           {can.ordering && door("/stock/needed", "cart", "Stock needed", needed ? `${plural(needed - newCount, "item")} from ${plural(suppliers, "supplier")}${newCount ? ` · ${newCount} new to add` : ""}` : "Nothing waiting", { n: needed })}
+          {siteList && door("/stock/needed", "cart", "Stock needed", siteItems ? `${plural(siteItems, "item")} ${ctx.site.name} has asked for · change or remove` : "Nothing waiting", { n: siteItems })}
           {(myItems > 0 || can.purchaser) && door("/stock/tasks", "truck", "My shopping list", myItems ? `${plural(myItems, "item")} to get` : "Nothing for you right now", { n: myItems })}
         </div>
         {kitchen && (

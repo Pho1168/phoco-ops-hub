@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { buyFrom, canUntick, tickDayStart, untickedLines, cleanAlsoFrom, cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
+import { buyFrom, canUntick, editsSiteNeeded, qtyPlan, tickDayStart, untickedLines, cleanAlsoFrom, cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
 import { buildPdf, checklistPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
-import { addNewItem, clearNeeded, deliversTo, moveNeeded, driverTick, driverUntick, giveToDriver, neededView, sendStockReport, stockView, tickNeeded, untickNeeded } from "@/lib/stock-service";
+import { addNewItem, clearNeeded, deliversTo, moveNeeded, driverTick, driverUntick, giveToDriver, neededView, editSiteNeeded, sendStockReport, siteNeededView, stockView, tickNeeded, untickNeeded } from "@/lib/stock-service";
 
 const NOW = Date.UTC(2026, 9, 16, 21, 0);
 
@@ -416,5 +416,69 @@ describe("unticking a mistaken tick", () => {
     await driverTick(db, { id: "DEMO-FLT" }, line, false, NOW);
     expect((await tickNeeded(db, await owner(), g.key, [g.rows[0].product.id], NOW)).ok).toBe(true);
     expect(await driverUntick(db, { id: "DEMO-FLT" }, line, NOW)).toMatchObject({ ok: false });
+  });
+});
+
+describe("Stock needed on the restaurant's tablet", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+  afterEach(() => { vi.useRealTimers(); });
+  const site = async () => siteNeededView(db, "EAS", NOW);
+  const idOf = async (name: string) => (await db.stockCatalog()).products.find((p) => p.name === name)!.id;
+
+  it("is for anyone who reports stock there, on the full app (not a phone)", async () => {
+    const boh = (await db.person("DEMO-BOH"))!;
+    const eas = (await db.sites()).find((x) => x.id === "EAS")!;
+    expect(editsSiteNeeded(boh, eas, "full")).toBe(true);
+    expect(editsSiteNeeded(boh, eas, "shifts")).toBe(false);
+    expect(editsSiteNeeded(boh, (await db.sites()).find((x) => x.id === "WEM")!, "full")).toBe(false);
+  });
+
+  it("a new total: the newest request takes the change; one brought to nothing is removed", () => {
+    const reqs = [{ id: "a", wanted: 2 }, { id: "b", wanted: 3 }];
+    expect(qtyPlan(reqs, 5)).toEqual([]);
+    expect(qtyPlan(reqs, 8)).toEqual([{ id: "b", qty: 6 }]);
+    expect(qtyPlan(reqs, 4)).toEqual([{ id: "b", qty: 2 }]);
+    expect(qtyPlan(reqs, 1)).toEqual([{ id: "b", remove: true }, { id: "a", qty: 1 }]);
+    expect(qtyPlan([{ id: "a" }], 3)).toEqual([{ id: "a", qty: 3 }]); // no amount yet
+  });
+
+  it("shows only this restaurant's items; the amount changes up and down, and the owner sees who changed it", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 2 }, { name: "Tofu", qty: 1 }]);
+    await report("WEM", "DEMO-PRD", [{ name: "Lime", qty: 3 }]);
+    const lime = await idOf("Lime");
+    const sur = (await site()).groups.find((g) => g.supplier?.name === "Surelygrow (demo)")!;
+    expect(sur.rows.find((r) => r.product.id === lime)).toMatchObject({ qty: 2, sites: [{ siteId: "EAS", qty: 2 }] });
+
+    expect(await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", lime, 5, NOW)).toEqual({ ok: true, value: { name: "Lime", from: 2, to: 5 } });
+    expect((await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", lime, 1, NOW)).ok).toBe(true);
+    const owner = (await group("Surelygrow (demo)"))!.rows.find((r) => r.product.id === lime)!;
+    expect(owner.qty).toBe(4); // 1 at Eastcote + 3 at Wembley
+    expect(owner.changed).toMatchObject({ qty: 1, was: 5 });
+    expect((await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", lime, 0, NOW)).ok).toBe(false);
+    expect((await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", lime, 10_000, NOW)).ok).toBe(false);
+  });
+
+  it("removing takes it off (kept in the history) and the owner sees what went", async () => {
+    const { created } = await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 2 }]);
+    const lime = await idOf("Lime");
+    expect(await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", lime, null, NOW)).toEqual({ ok: true, value: { name: "Lime", from: 2, to: null } });
+    expect((await site()).groups.flatMap((g) => g.rows)).toEqual([]);
+    const g = (await groups()).find((x) => x.supplier?.name === "Surelygrow (demo)")!;
+    expect(g.rows).toEqual([]);
+    expect(g.removed).toMatchObject([{ product: { name: "Lime" }, qty: 2, siteId: "EAS" }]);
+    expect(await state(created[0].id)).toBe("cancelled");
+    expect((await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", lime, null, NOW)).ok).toBe(false);
+  });
+
+  it("what's already being ordered, or on the kitchen's order, can't be changed there", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Coconut Milk", qty: 4 }, { name: "Soup", qty: 6 }]);
+    const wy = (await group("Wing Yip (demo)"))!;
+    const coco = await idOf("Coconut Milk");
+    // Given to a driver: off the list, so nothing to change.
+    await giveToDriver(db, await owner(), wy.key, "DEMO-FLT", undefined, NOW);
+    expect((await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", coco, 6, NOW)).ok).toBe(false);
+    const soup = await idOf("Soup");
+    const r = await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", soup, 2, NOW);
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/kitchen's order/) });
   });
 });

@@ -2,7 +2,7 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
-import { buyFrom, canUntick, cleanLines, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
+import { buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
@@ -156,6 +156,44 @@ export async function neededView(db: Store, person: Pick<Person, "status" | "acc
   const siteIds = orderingSites(person, sites.filter((s) => s.status === "open").map((s) => s.id));
   const groups = neededGroups(items, data, catalog.products, catalog.suppliers, siteIds, now);
   return { catalog, data, items, sites, siteIds, groups };
+}
+
+/** Stock needed for one restaurant (what the tablet shows its staff): its own requests, by supplier. */
+export async function siteNeededView(db: Store, siteId: string, now: number) {
+  const { catalog, data, items } = await stockView(db, now);
+  return { catalog, data, items, groups: neededGroups(items, data, catalog.products, catalog.suppliers, [siteId], now) };
+}
+
+/**
+ * Someone at the restaurant changes how many of a product it needs (`qty`), or takes it off the list (null). Only
+ * what's still waiting (`stillWaiting`) can change, never a production kitchen's (it's already on the kitchen's order).
+ * Each request is changed through the store as the owner's change is (logged with who and what it was), and removing
+ * cancels it with `REMOVE_NOTE`.
+ */
+export async function editSiteNeeded(db: Store, person: Pick<Person, "id">, siteId: string, productId: string, qty: number | null, now: number): Promise<Done<{ name: string; from: number; to: number | null }>> {
+  const { groups, items } = await siteNeededView(db, siteId, now);
+  const g = groups.find((x) => x.rows.some((r) => r.product.id === productId));
+  const row = g?.rows.find((r) => r.product.id === productId);
+  if (!g || !row) return { ok: false, error: "That isn't on the list any more. Refresh to see it as it is now" };
+  if (g.production) return { ok: false, error: "That's already on the kitchen's order, so it can't be changed here. Ask the owner" };
+  const reqs = [...row.requestIds, ...row.unknownIds].map((id) => items.find((x) => x.request.id === id)!).filter(Boolean)
+    .sort((a, b) => a.request.createdAt - b.request.createdAt);
+  if (!reqs.length || reqs.some((x) => !stillWaiting(x.progress))) return { ok: false, error: "Part of it is already being ordered, so it can't be changed here. Ask the owner" };
+  const from = reqs.reduce((t, x) => t + (x.progress.wanted ?? 0), 0);
+  if (qty === null) {
+    for (const x of reqs) {
+      const r = await db.changeStockRequest(x.request.id, { cancel: REMOVE_NOTE }, person.id);
+      if (!r.ok) return r;
+    }
+    return { ok: true, value: { name: row.product.name, from, to: null } };
+  }
+  const q = Math.round(qty * 100) / 100;
+  if (!(q > 0) || q > QTY_MAX) return { ok: false, error: `Give an amount from 1 to ${QTY_MAX}, or remove it` };
+  for (const step of qtyPlan(reqs.map((x) => ({ id: x.request.id, wanted: x.progress.wanted })), q)) {
+    const r = await db.changeStockRequest(step.id, "remove" in step ? { cancel: REMOVE_NOTE } : { fixedQty: step.qty }, person.id);
+    if (!r.ok) return r;
+  }
+  return { ok: true, value: { name: row.product.name, from, to: q } };
 }
 
 /** One supplier's group as it is now (the page sends its key), or undefined. */

@@ -1,13 +1,23 @@
 import { store } from "@/lib/data";
-import { buyFrom, canPurchase, lookAlikes, methodOf, runsPurchasing } from "@/lib/domain/stock";
+import { redirect } from "next/navigation";
+import { buyFrom, canPurchase, editsSiteNeeded, lookAlikes, methodOf, runsPurchasing, stillWaiting, type NeededRow, type RemovedRow } from "@/lib/domain/stock";
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
-import { neededView } from "@/lib/stock-service";
+import { neededView, siteNeededView } from "@/lib/stock-service";
+import type { Ctx } from "@/lib/session";
 import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "../Bar";
-import { orderingStockCtx } from "../load";
+import { stockCtx } from "../load";
 import { NeededBoard, type BoardGroup } from "./NeededBoard";
 import { NewItemsCard } from "./NewItemsCard";
 import { ClearNeeded } from "./ClearNeeded";
+import { SiteNeeded, type SiteGroup } from "./SiteNeeded";
+
+const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
+/** "Changed to 6 (was 4) by Amrit · 16:40": the latest change of amount today. */
+const changedLine = (c: NeededRow["changed"]) =>
+  c && `Changed to ${fmt(c.qty)}${c.was !== undefined ? ` (was ${fmt(c.was)})` : ""}${c.by ? ` by ${c.by}` : ""} · ${londonHM(c.at)}`;
+const removedLine = (x: RemovedRow, site?: string) =>
+  `Removed${x.by ? ` by ${x.by}` : ""} ${londonHM(x.at)}: ${x.qty !== undefined ? `${fmt(x.qty)} × ` : ""}${x.product.name}${site ? ` (${site})` : ""}`;
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +27,12 @@ export const dynamic = "force-dynamic";
  * downloads as a PDF to email.
  */
 export default async function NeededPage() {
-  const { ctx, onPhone } = await orderingStockCtx();
+  const { ctx, onPhone, can } = await stockCtx();
+  if (!can.ordering) {
+    // Everyone else, on the restaurant's tablet: its own list, to change or take things off.
+    if (onPhone || !editsSiteNeeded(ctx.person, ctx.site, ctx.scope)) redirect("/stock");
+    return <SitePage ctx={ctx} />;
+  }
   const db = store();
   const now = Date.now();
   const [{ groups, sites, items, siteIds, catalog }, people, purchasers] = await Promise.all([neededView(db, ctx.person, now), db.people(), db.purchaserIds()]);
@@ -39,7 +54,9 @@ export default async function NeededPage() {
       }),
       // Other shops that sell it, to move it to before a run (not for a production kitchen's items).
       buyFrom: g.production ? [] : buyFrom(r.product, catalog.suppliers).filter((s) => s.id !== g.supplier?.id).map((s) => ({ id: s.id, name: s.name })),
+      changed: changedLine(r.changed),
     })),
+    removed: g.removed.map((x) => removedLine(x, siteName.get(x.siteId) ?? x.siteId)),
     drivers: g.drivers.map((d) => ({ taskId: d.task.id, name: d.task.assigneeName ?? "Someone", items: d.items, open: d.open, done: d.done })),
     ticked: g.ticked.map((t) => ({
       productId: t.product.id, name: t.product.name, pack: t.product.size, qty: t.qty,
@@ -68,6 +85,34 @@ export default async function NeededPage() {
         {(clearable > 0) && <ClearNeeded count={clearable} />}
       </main>
       <StockNav ctx={ctx} onPhone={onPhone} />
+    </>
+  );
+}
+
+/** The restaurant's own Stock needed (the tablet): what it asked for, to change or remove while it's still waiting. */
+async function SitePage({ ctx }: { ctx: Ctx }) {
+  const now = Date.now();
+  const { groups, items } = await siteNeededView(store(), ctx.site.id, now);
+  const progressOf = (id: string) => items.find((x) => x.request.id === id)?.progress;
+  const view: SiteGroup[] = groups.map((g) => ({
+    key: g.key, name: g.supplier?.name ?? "No supplier yet", methodLabel: g.production ? "Production" : g.supplier ? methodOf(g.supplier.method)?.label ?? "" : "Supplier to set",
+    rows: g.rows.map((r) => {
+      const ids = [...r.requestIds, ...r.unknownIds];
+      const waiting = !g.production && ids.length > 0 && ids.every((id) => { const p = progressOf(id); return !!p && stillWaiting(p); });
+      return { productId: r.product.id, name: r.product.name, pack: r.product.size, qty: r.qty, unknown: r.qty === 0 && r.unknownIds.length > 0, urgent: r.urgent, notes: r.notes,
+        editable: waiting, status: waiting ? undefined : g.production ? "On the kitchen's order" : "Being ordered", changed: changedLine(r.changed) };
+    }),
+    drivers: g.drivers.map((d) => ({ name: d.task.assigneeName?.split(" ")[0] ?? "a driver", items: d.items.map((x) => `${fmt(x.qty)} × ${x.name}`).join(" · ") })),
+    ticked: g.ticked.map((t) => ({ name: t.product.name, qty: t.qty, who: londonHM(t.at) })),
+    removed: g.removed.map((x) => removedLine(x)),
+  }));
+  return (
+    <>
+      <StockBar ctx={ctx} onPhone={false} title="Stock needed" back="/stock" eyebrow={`${ctx.site.name} · ${shortDay(londonDate(now))}`} />
+      <main className="stack">
+        <SiteNeeded site={ctx.site.name} groups={view} />
+      </main>
+      <StockNav ctx={ctx} onPhone={false} />
     </>
   );
 }
