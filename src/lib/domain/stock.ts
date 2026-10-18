@@ -409,20 +409,23 @@ export function isNeededTick(line: TaskLine, task: Pick<PurchaseTask, "note"> | 
 
 // ---------- submitting a report ----------
 
-export interface SubmitPlan { create: (DraftLine & { supplierId?: string })[]; again: { requestId: string; line: DraftLine; setQty?: number }[] }
+export interface SubmitPlan { create: (DraftLine & { supplierId?: string })[]; again: { requestId: string; line: DraftLine; setQty?: number; was?: number }[] }
+/** The note on the amount change a later report makes ("was 3, given in a later report"). */
+export const laterReportNote = (was?: number) => (was !== undefined ? `was ${was}, given in a later report` : "given in a later report");
 
 /**
  * What a submitted report does. A product already requested at that site and still waiting (nothing of it assigned or
- * bought yet) isn't requested twice: it's noted on that request (an "out" makes it urgent), and a quantity given now
- * fills one that was "not sure". Once part of it is assigned or bought, a new report of it is a new need: a new
- * request. Everything new gets the product's preferred supplier.
+ * bought yet) isn't requested twice: it's noted on that request (an "out" makes it urgent), and the amount given now
+ * replaces the one waiting (the latest count wins; it fills one that was "not sure"). Once part of it is assigned or
+ * bought, a new report of it is a new need: a new request. Everything new gets the product's preferred supplier.
  */
 export function planSubmit(lines: DraftLine[], siteId: SiteId, open: { request: StockRequest; progress: Progress }[], products: Pick<Product, "id" | "supplierId">[]): SubmitPlan {
   const plan: SubmitPlan = { create: [], again: [] };
   for (const l of lines) {
     const existing = open.find((o) => o.request.siteId === siteId && o.request.productId === l.productId && !o.request.cancelledAt
       && (o.progress.state === "waiting" || o.progress.state === "needs_qty"));
-    if (existing) plan.again.push({ requestId: existing.request.id, line: l, ...(existing.progress.wanted === undefined && l.qty !== undefined ? { setQty: l.qty } : {}) });
+    if (existing) plan.again.push({ requestId: existing.request.id, line: l,
+      ...(l.qty !== undefined && l.qty !== existing.progress.wanted ? { setQty: l.qty, ...(existing.progress.wanted !== undefined ? { was: existing.progress.wanted } : {}) } : {}) });
     else plan.create.push({ ...l, supplierId: products.find((p) => p.id === l.productId)?.supplierId });
   }
   return plan;
@@ -704,7 +707,7 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
         // The latest (events come in the order they were made, so a later one wins a tie).
         const e = data.events.filter((x) => x.kind === "qty_changed" && x.at >= from && x.requestId && [...r.requestIds, ...r.unknownIds].includes(x.requestId))
           .reduce<StockEvent | undefined>((m, x) => (!m || x.at >= m.at ? x : m), undefined);
-        const was = e?.text?.match(/^was (-?\d+(?:\.\d+)?)$/)?.[1];
+        const was = e?.text?.match(/^was (-?\d+(?:\.\d+)?)(?:,|$)/)?.[1];
         if (e && e.qty !== undefined) r.changed = { qty: e.qty, ...(was !== undefined ? { was: Number(was) } : {}), by: e.byName?.split(" ")[0], at: e.at };
       }
     }
@@ -774,6 +777,17 @@ export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name
 export const REMOVE_NOTE = "Removed on Stock needed";
 /** Nobody has any of it yet (not given to a driver, ordered or sent): the restaurant can still change or remove it. */
 export const stillWaiting = (p: Pick<Progress, "state">) => p.state === "waiting" || p.state === "needs_qty";
+
+/** One restaurant's item on Stock needed, as the restaurant sees it: whether it can still change it, and if not, why. */
+export interface SiteWaitingRow { row: NeededRow; group: NeededGroup; editable: boolean; status?: "kitchen" | "ordering" }
+/** A restaurant's items on Stock needed (its groups from `neededGroups`), each with whether it can still be changed there. */
+export function siteWaitingRows(groups: NeededGroup[], items: { request: StockRequest; progress: Progress }[]): SiteWaitingRow[] {
+  return groups.flatMap((group) => group.rows.map((row) => {
+    const ids = [...row.requestIds, ...row.unknownIds];
+    const editable = !group.production && ids.length > 0 && ids.every((id) => { const p = items.find((x) => x.request.id === id)?.progress; return !!p && stillWaiting(p); });
+    return { row, group, editable, ...(editable ? {} : { status: group.production ? "kitchen" as const : "ordering" as const }) };
+  }));
+}
 
 /**
  * How a product's waiting requests at one restaurant (oldest first) reach a new total: the newest takes the change; one

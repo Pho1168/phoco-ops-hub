@@ -1,6 +1,6 @@
 import { store } from "@/lib/data";
 import { redirect } from "next/navigation";
-import { buyFrom, canPurchase, editsSiteNeeded, lookAlikes, methodOf, runsPurchasing, stillWaiting, type NeededRow, type RemovedRow } from "@/lib/domain/stock";
+import { buyFrom, canPurchase, editsSiteNeeded, lookAlikes, methodOf, runsPurchasing, siteWaitingRows, type NeededRow, type RemovedRow } from "@/lib/domain/stock";
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { neededView, siteNeededView } from "@/lib/stock-service";
 import type { Ctx } from "@/lib/session";
@@ -93,15 +93,12 @@ export default async function NeededPage() {
 async function SitePage({ ctx }: { ctx: Ctx }) {
   const now = Date.now();
   const { groups, items } = await siteNeededView(store(), ctx.site.id, now);
-  const progressOf = (id: string) => items.find((x) => x.request.id === id)?.progress;
+  const waiting = siteWaitingRows(groups, items);
   const view: SiteGroup[] = groups.map((g) => ({
     key: g.key, name: g.supplier?.name ?? "No supplier yet", methodLabel: g.production ? "Production" : g.supplier ? methodOf(g.supplier.method)?.label ?? "" : "Supplier to set",
-    rows: g.rows.map((r) => {
-      const ids = [...r.requestIds, ...r.unknownIds];
-      const waiting = !g.production && ids.length > 0 && ids.every((id) => { const p = progressOf(id); return !!p && stillWaiting(p); });
-      return { productId: r.product.id, name: r.product.name, pack: r.product.size, qty: r.qty, unknown: r.qty === 0 && r.unknownIds.length > 0, urgent: r.urgent, notes: r.notes,
-        editable: waiting, status: waiting ? undefined : g.production ? "On the kitchen's order" : "Being ordered", changed: changedLine(r.changed) };
-    }),
+    rows: waiting.filter((w) => w.group === g).map(({ row: r, editable, status }) => ({
+      productId: r.product.id, name: r.product.name, pack: r.product.size, qty: r.qty, unknown: r.qty === 0 && r.unknownIds.length > 0, urgent: r.urgent, notes: r.notes,
+      editable, status: status === "kitchen" ? "On the kitchen's order" : status === "ordering" ? "Being ordered" : undefined, changed: changedLine(r.changed) })),
     drivers: g.drivers.map((d) => ({ name: d.task.assigneeName?.split(" ")[0] ?? "a driver", items: d.items.map((x) => `${fmt(x.qty)} × ${x.name}`).join(" · ") })),
     ticked: g.ticked.map((t) => ({ name: t.product.name, qty: t.qty, who: londonHM(t.at) })),
     removed: g.removed.map((x) => removedLine(x)),
