@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, lineEnd, planSubmit, progress, reqCode, shortOf, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, laterReportNote, lineEnd, planSubmit, progress, reqCode, shortOf, TERMINAL, withProgress,
   type DraftLine, type EventKind, type NewItem, type NewItemLine, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { CountLine, StockCount } from "@/lib/domain/stock-count";
 import { londonDate } from "@/lib/domain/time";
@@ -185,7 +185,7 @@ export const stockSql: StockStore = {
         if (a.line.note) await tx`insert into stock_events (by, kind, request_id, text) values (${by}, 'note', ${a.requestId}, ${a.line.note})`;
         if (a.setQty !== undefined) {
           await tx`update stock_requests set fixed_qty = ${a.setQty} where id = ${a.requestId}`;
-          await tx`insert into stock_events (by, kind, request_id, qty, text) values (${by}, 'qty_changed', ${a.requestId}, ${a.setQty}, ${"given in a later report"})`;
+          await tx`insert into stock_events (by, kind, request_id, qty, text) values (${by}, 'qty_changed', ${a.requestId}, ${a.setQty}, ${laterReportNote(a.was)})`;
         }
       }
       const created = (await tx<RequestRow[]>`${requestSelect(tx)} where r.id = any(${made}::uuid[]) order by r.code`).map(toRequest);

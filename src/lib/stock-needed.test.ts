@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { buyFrom, canUntick, editsSiteNeeded, qtyPlan, tickDayStart, untickedLines, cleanAlsoFrom, cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
+import { buyFrom, canUntick, editsSiteNeeded, qtyPlan, siteWaitingRows, tickDayStart, untickedLines, cleanAlsoFrom, cleanNewItems, lookAlikes, neededSheet, sentTodayLine, neededCount, orderSheetLines, orderingSites, runsOrdering } from "@/lib/domain/stock";
 import { buildPdf, checklistPdf, fitText, orderSheetPdf, pdfString } from "@/lib/pdf";
 import { addNewItem, clearNeeded, deliversTo, moveNeeded, driverTick, driverUntick, giveToDriver, neededView, editSiteNeeded, sendStockReport, siteNeededView, stockView, tickNeeded, untickNeeded } from "@/lib/stock-service";
 
@@ -480,5 +480,43 @@ describe("Stock needed on the restaurant's tablet", () => {
     const soup = await idOf("Soup");
     const r = await editSiteNeeded(db, { id: "DEMO-FOH" }, "EAS", soup, 2, NOW);
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/kitchen's order/) });
+  });
+});
+
+describe("Report stock: submitting an item already waiting", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("replaces the waiting amount (the latest count wins), noted for the owner", async () => {
+    const { created } = await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 3 }]);
+    const again = await report("EAS", "DEMO-FOH", [{ name: "Lime", qty: 2 }]);
+    expect(again.created).toEqual([]);
+    expect(again.again).toBe(1);
+    const row = (await group("Surelygrow (demo)"))!.rows.find((r) => r.product.name === "Lime")!;
+    expect(row.qty).toBe(2);
+    expect(row.changed).toMatchObject({ qty: 2, was: 3 });
+    expect(row.requestIds).toEqual([created[0].id]);
+    // The same amount again changes nothing.
+    await report("EAS", "DEMO-FOH", [{ name: "Lime", qty: 2 }]);
+    expect((await group("Surelygrow (demo)"))!.rows.find((r) => r.product.name === "Lime")!.qty).toBe(2);
+  });
+
+  it("once it's being ordered, a new report of it is a new need", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Coconut Milk", qty: 4 }]);
+    const g = (await group("Wing Yip (demo)"))!;
+    await giveToDriver(db, await owner(), g.key, "DEMO-FLT", undefined, NOW);
+    const again = await report("EAS", "DEMO-FOH", [{ name: "Coconut Milk", qty: 2 }]);
+    expect(again.created).toHaveLength(1);
+    expect((await group("Wing Yip (demo)"))!.rows[0]).toMatchObject({ qty: 2 });
+  });
+
+  it("the restaurant's list says what can still be changed there", async () => {
+    await report("EAS", "DEMO-BOH", [{ name: "Lime", qty: 2 }, { name: "Coconut Milk", qty: 4 }, { name: "Soup", qty: 6 }]);
+    const wy = (await group("Wing Yip (demo)"))!;
+    await giveToDriver(db, await owner(), wy.key, "DEMO-FLT", undefined, NOW);
+    await report("EAS", "DEMO-BOH", [{ name: "Che Lychee", qty: 1 }]);
+    const v = await siteNeededView(db, "EAS", NOW);
+    const rows = siteWaitingRows(v.groups, v.items).map((w) => [w.row.product.name, w.editable, w.status ?? ""]).sort();
+    expect(rows).toEqual([["Che Lychee", true, ""], ["Lime", true, ""], ["Soup", false, "kitchen"]]);
   });
 });

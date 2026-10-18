@@ -891,6 +891,27 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 .stock-item.on .mark { background: var(--warn-soft); border-color: var(--warn-soft); color: var(--warn-ink); }
 .stock-item.out .mark { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .stock-edit { padding: 0 14px 14px; gap: 10px; }
+/* Report stock: the catalogue on the left, your list on the right (above it on narrow screens). */
+.report-cols { display: grid; gap: 16px; align-items: start; }
+.report-cat { gap: 12px; }
+.report-list { gap: 10px; }
+.pick { background: var(--surface); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; border-left: 4px solid var(--warn-soft); }
+.pick.out { border-left-color: var(--accent); }
+.pick.waiting { border-left-color: var(--teal); }
+.pick .stepper button { width: 42px; height: 42px; font-size: 22px; }
+.pick .stepper .txt { width: 64px; min-height: 42px; font-size: 18px; }
+.report-cat .stock-list { grid-template-columns: 1fr; }
+.report-submit { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+@media (max-width: 759px) { .report-list { order: -1; } }
+@media (min-width: 760px) {
+  .report-cols { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
+  .report-list { position: sticky; top: 12px; max-height: calc(100dvh - 200px); overflow-y: auto; }
+  .report-submit { position: sticky; bottom: -14px; margin: 0 -14px -14px; padding: 10px 14px 14px; background: color-mix(in srgb, var(--teal-tint) 55%, var(--surface)); border-top: 1px solid var(--teal-tint); z-index: 1; }
+}
+@media (min-width: 1100px) {
+  .report-cols { grid-template-columns: minmax(0, 1fr) minmax(360px, 420px); }
+  .report-cat .stock-list { grid-template-columns: 1fr 1fr; }
+}
 .stock-edit > .txt, .stock-tools > .txt { width: 100%; }
 .stepper { display: inline-flex; align-items: center; gap: 6px; }
 .stepper button { width: 48px; height: 48px; border-radius: 12px; border: 0; background: var(--surface-2); font-size: 24px; font-weight: 700; cursor: pointer; color: var(--brand); }

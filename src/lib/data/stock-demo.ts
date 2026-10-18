@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, lineEnd, planSubmit, progress, reqCode, sameProduct, shortOf, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, laterReportNote, lineEnd, planSubmit, progress, reqCode, sameProduct, shortOf, TERMINAL, withProgress,
   type NewItem, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
 import type { SiteId } from "@/lib/domain/types";
@@ -147,7 +147,7 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
         if (a.setQty !== undefined) {
           const r = s.requests.find((x) => x.id === a.requestId)!;
           r.fixedQty = a.setQty;
-          event({ by, kind: "qty_changed", requestId: a.requestId, qty: a.setQty, text: "given in a later report" });
+          event({ by, kind: "qty_changed", requestId: a.requestId, qty: a.setQty, text: laterReportNote(a.was) });
         }
       }
       const newItems: NewItem[] = [];
