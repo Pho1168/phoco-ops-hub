@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
+import { raisesAlert } from "@/lib/domain/temperature";
 import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode, editsSiteNeeded } from "@/lib/domain/stock";
 import { addNewItem, clearNeeded, driverTick, driverUntick, editSiteNeeded, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
@@ -157,9 +158,11 @@ export async function answerItem(listId: string, itemId: string, raw: string | b
   const res = evaluateAnswer(item, raw, await db.rules());
   if (!res.ok) return res;
   await db.addAnswer(listId, date, { itemId, value: res.value, outcome: res.outcome, recordedBy: ctx.person.id, capturedAt: Date.now() });
-  if (item.type === "temp" && (res.outcome === "warn" || res.outcome === "bad")) {
+  // Only a reading past the safe limit raises an alert. Above target but within it (a freezer at -17°C, a fridge at
+  // 6°C) is recorded as out of range, with the re-check prompt on the checklist, but nobody is alerted.
+  if (item.type === "temp" && raisesAlert(res.outcome)) {
     await db.raiseAlert({
-      siteId: ctx.site.id, level: res.outcome === "bad" ? "critical" : "warning",
+      siteId: ctx.site.id, level: "critical",
       title: `${item.text} at ${res.value}°C`,
       detail: `${list.name} · recorded ${hm} by ${ctx.person.name}`,
       dedupeKey: `${date}|${listId}|${itemId}`,

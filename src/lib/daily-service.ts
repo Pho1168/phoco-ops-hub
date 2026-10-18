@@ -130,7 +130,7 @@ export async function dayFacts(site: Site, date: string, now = Date.now(), db: S
     onRota: shifts.length > 0,
     gasExpected: gasExpected(date, shifts.length > 0),
     checks: { expected: signoffs.length, signed: signoffs.filter((r) => r.status !== "not_signed").length, missed: signoffs.filter((r) => r.status === "not_signed").map((r) => r.listName) },
-    outOfRange: readingLog(data.answers).filter((r) => r.date === date && (r.outcome === "warn" || r.outcome === "bad")).length,
+    outOfRange: readingLog(data.answers).filter((r) => r.date === date && r.outcome === "bad").length,
     alertsRaised: data.alerts.filter((a) => a.createdAt >= from && a.createdAt < until).length,
     faults: {
       reported: faults.filter((f) => f.fault.createdAt >= from && f.fault.createdAt < until).length,

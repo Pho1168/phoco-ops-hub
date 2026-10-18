@@ -12,7 +12,8 @@ export const dynamic = "force-dynamic";
 const ACTIONS: Record<string, { warn: string[]; bad: string[]; warnMsg: string; badMsg: string }> = {
   F: { warn: ["Door closed, re-check in 30 min", "Moved food to another fridge"], bad: ["Moved food to another fridge", "Food discarded", "Engineer called"],
        warnMsg: "Above target. Close the door and re-check in 30 minutes.", badMsg: "Above the legal limit. What did you do with the food?" },
-  Z: { warn: ["Seal checked, re-check in 30 min", "Moved food to another freezer"], bad: [], warnMsg: "Warmer than target. Check the door seal and re-check in 30 minutes.", badMsg: "" },
+  Z: { warn: ["Seal checked, re-check in 30 min", "Moved food to another freezer"], bad: ["Moved food to another freezer", "Food discarded", "Engineer called"],
+       warnMsg: "Warmer than target. Check the door seal and re-check in 30 minutes.", badMsg: "Warmer than the safe limit. What did you do with the food?" },
   C: { warn: [], bad: ["Cooked longer and re-probed", "Food discarded"], warnMsg: "", badMsg: "Below the safe core temperature. Do not serve. Keep cooking and probe again." },
 };
 

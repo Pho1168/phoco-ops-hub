@@ -185,6 +185,7 @@ export interface DayFacts {
   /** On the rota, on or after the day the gas check went live (gasExpected). */
   gasExpected: boolean;
   checks: { expected: number; signed: number; missed: string[] };
+  /** Readings past the safe limit (above target but within it isn't counted: it's on the records, not in messages). */
   outOfRange: number;
   alertsRaised: number;
   faults: { reported: number; fixed: number; stillDown: string[] };
@@ -199,7 +200,7 @@ export function dayLine(f: DayFacts): string {
   const bits: string[] = [];
   if (f.gasExpected && !f.gas) bits.push("NO gas-off check");
   if (f.checks.expected) bits.push(`${f.checks.signed}/${f.checks.expected} checks signed${f.checks.missed.length ? ` (missed: ${f.checks.missed.slice(0, 3).join(", ")}${f.checks.missed.length > 3 ? "…" : ""})` : ""}`);
-  if (f.outOfRange) bits.push(`${plural(f.outOfRange, "temperature")} out of range`);
+  if (f.outOfRange) bits.push(`${plural(f.outOfRange, "temperature")} past the safe limit`);
   if (f.alertsRaised) bits.push(`${plural(f.alertsRaised, "alert")}`);
   for (const k of f.faults.stillDown.slice(0, 2)) bits.push(`${k} still not working`);
   if (f.faults.reported) bits.push(`${plural(f.faults.reported, "fault")} reported`);

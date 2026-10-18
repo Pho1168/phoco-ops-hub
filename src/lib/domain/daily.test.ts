@@ -183,7 +183,7 @@ describe("yesterday at a glance", () => {
     gas: { byName: "Anh", at: at("2026-10-13", "22:21"), onTablet: true }, late: 1, cantMakeIt: 0, ...over,
   });
   it("one line per site, most important first", () => {
-    expect(dayLine(facts())).toBe("Eastcote: 11/12 checks signed (missed: BOH Cleaning) · 1 temperature out of range · 1 alert · Fryer 2 still not working · 1 fault reported · 1 late · 2 handover notes · gas off ✓ Anh 22:21");
+    expect(dayLine(facts())).toBe("Eastcote: 11/12 checks signed (missed: BOH Cleaning) · 1 temperature past the safe limit · 1 alert · Fryer 2 still not working · 1 fault reported · 1 late · 2 handover notes · gas off ✓ Anh 22:21");
   });
   it("a missing gas check leads the line, but only on a day the site was on the rota, from the day the check went live", () => {
     expect(dayLine(facts({ gas: undefined })).startsWith("Eastcote: NO gas-off check · ")).toBe(true);

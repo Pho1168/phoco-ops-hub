@@ -16,6 +16,9 @@ export function classifyReading(value: number, rule: TempRule): Outcome {
   return "ok";
 }
 
+/** Only a reading past the safe limit raises an alert; above target but within it is recorded, with a re-check prompt. */
+export const raisesAlert = (outcome: Outcome) => outcome === "bad";
+
 /** Parses what staff type: "9.4", "9,4", "-18", "−18.5" (unicode minus). Returns NaN if not a number. */
 export function parseReading(raw: string): number {
   const cleaned = raw.trim().replace(",", ".").replace(/[−–]/g, "-").replace(/°c?$/i, "");
@@ -34,7 +37,7 @@ export function describeRule(rule: TempRule): string {
   const parts: string[] = [];
   if (rule.targetMax !== undefined) parts.push(`≤ ${rule.targetMax}°C target`);
   if (rule.targetMin !== undefined && rule.targetMin !== rule.legalMin) parts.push(`≥ ${rule.targetMin}°C target`);
-  if (rule.legalMax !== undefined) parts.push(`${rule.legalMax}°C legal`);
+  if (rule.legalMax !== undefined) parts.push(`${rule.legalMax}°C limit`);
   if (rule.legalMin !== undefined) parts.push(`≥ ${rule.legalMin}°C`);
   return parts.join(" · ");
 }

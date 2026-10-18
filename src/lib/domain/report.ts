@@ -162,7 +162,7 @@ export function weeklyDigest(week: string, sites: { name: string; r: SiteWeekRep
     const bits: string[] = [];
     if (r.checks.onTimeRate !== null) bits.push(`${r.checks.onTimeRate}% of checks on time`);
     else if (!r.started) bits.push("checklists not in use yet");
-    if (r.temps.outOfRange) bits.push(`${s(r.temps.outOfRange, "temperature")} out of range`);
+    if (r.temps.critical) bits.push(`${s(r.temps.critical, "temperature")} past the safe limit`);
     if (r.alerts.open) bits.push(`${s(r.alerts.open, "alert")} open`);
     if (r.equipment.stillDown.length) bits.push(`${s(r.equipment.stillDown.length, "piece", "pieces")} of kit not working`);
     if (r.rota.hours !== null) bits.push(`${hoursText(r.rota.hours)} h planned`);

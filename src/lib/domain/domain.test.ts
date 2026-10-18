@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyReading, parseReading } from "./temperature";
+import { classifyReading, describeRule, parseReading, raisesAlert } from "./temperature";
 import { canSignOff, evaluateAnswer, progress, runState } from "./checklist";
 import { canFreeze, canSignIn, isPinLocked, planSiteClosure, registerPinFailure, MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES } from "./access";
 import { buildEveningNotices, buildImportNotices, buildTeamWeek, parseExport, parseStaffTab, parseWeekTable, planSync, rotaGoneQuiet, weekStartOf, type StoredShift, type TeamShift } from "./rota";
@@ -37,6 +37,22 @@ describe("temperature rules", () => {
   it("freezer has no legal limit so never critical", () => {
     expect(classifyReading(-19.5, FREEZER)).toBe("ok");
     expect(classifyReading(-16, FREEZER)).toBe("warn");
+  });
+  it("freezer with its -15°C limit (migration 0039): -17°C is above target, warmer than -15°C is past the limit", () => {
+    const Z: TempRule = { ...FREEZER, legalMax: -15 };
+    expect(classifyReading(-18, Z)).toBe("ok");
+    expect(classifyReading(-17, Z)).toBe("warn");
+    expect(classifyReading(-15, Z)).toBe("warn");
+    expect(classifyReading(-14.9, Z)).toBe("bad");
+    expect(classifyReading(17, Z)).toBe("bad"); // a typed 17 for -17 still flags, so it gets looked at
+    expect(describeRule(Z)).toBe("≤ -18°C target · -15°C limit");
+  });
+  it("only a reading past the safe limit raises an alert", () => {
+    expect(raisesAlert(classifyReading(6, FRIDGE))).toBe(false);
+    expect(raisesAlert(classifyReading(8.5, FRIDGE))).toBe(true);
+    expect(raisesAlert(classifyReading(-17, { ...FREEZER, legalMax: -15 }))).toBe(false);
+    expect(raisesAlert(classifyReading(74, COOK))).toBe(true);
+    expect(raisesAlert("ok")).toBe(false);
   });
   it("cooking below 75°C is critical", () => {
     expect(classifyReading(75, COOK)).toBe("ok");

@@ -349,7 +349,7 @@ function seed(): State {
     // Placeholder limits until the owner confirms them against the approved HACCP plan.
     rules: {
       F: { code: "F", label: "Fridge / chilled", targetMax: 5, legalMax: 8 },
-      Z: { code: "Z", label: "Freezer", targetMax: -18 },
+      Z: { code: "Z", label: "Freezer", targetMax: -18, legalMax: -15 },
       C: { code: "C", label: "Cooking core", targetMin: 75, legalMin: 75 },
     },
     runs: new Map(), alerts: [], handover: [], audit: [], devices: [], pairings: [],
