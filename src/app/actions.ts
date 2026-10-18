@@ -6,8 +6,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
-  reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode } from "@/lib/domain/stock";
-import { addNewItem, clearNeeded, driverTick, driverUntick, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
+  reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode, editsSiteNeeded } from "@/lib/domain/stock";
+import { addNewItem, clearNeeded, driverTick, driverUntick, editSiteNeeded, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
 import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
@@ -2574,6 +2574,27 @@ export async function tickNeededAction(key: string, productIds: string[]): Promi
     detail: `${before?.supplier?.name ?? "No supplier"}: ${before?.production ? "sent" : "ordered"} ${names.slice(0, 6).join(", ")}${names.length > 6 ? ` and ${names.length - 6} more` : ""}` });
   revalidateStock();
   return { ok: true, ticked: r.value.ticked };
+}
+
+/**
+ * On the tablet, someone at the restaurant changes how many of a product it needs on Stock needed, or removes it (qty
+ * null). Only what's still waiting; the change is shown on the owner's list and logged.
+ */
+export async function editSiteNeededAction(productId: string, qty: number | null): Promise<ActionResult> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  const { ctx } = who;
+  if (!editsSiteNeeded(ctx.person, ctx.site, ctx.scope)) return { ok: false, error: `Stock needed can be changed on the tablet at ${ctx.site.name}` };
+  const p = z.object({ id: StockIdZ, qty: z.number().finite().nullable() }).safeParse({ id: productId, qty });
+  if (!p.success) return { ok: false, error: "Give an amount, or remove it" };
+  const db = store();
+  const r = await editSiteNeeded(db, ctx.person, ctx.site.id, p.data.id, p.data.qty, Date.now());
+  if (!r.ok) return r;
+  const { name, from, to } = r.value;
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: to === null ? "stock.remove" : "stock.qty",
+    detail: to === null ? `Removed ${from ? `${from} × ` : ""}${name} from Stock needed` : `${name}: ${from || "?"} → ${to} on Stock needed` });
+  revalidateStock();
+  return { ok: true };
 }
 
 /** Takes back a tick on Stock needed made this working day: the item is back on its supplier's card. */

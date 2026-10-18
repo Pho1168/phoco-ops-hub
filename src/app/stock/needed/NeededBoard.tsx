@@ -12,6 +12,8 @@ export interface BoardRow {
   unknown: { requestId: string; site?: string }[];
   /** Other suppliers that also sell it (it can be moved to one of them). */
   buyFrom: { id: string; name: string }[];
+  /** The latest change of amount today (someone at the restaurant, or the owner), ready to show. */
+  changed?: string;
 }
 export interface BoardGroup {
   key: string; name: string; method: string; methodLabel: string; production: boolean; pdf: boolean;
@@ -19,6 +21,8 @@ export interface BoardGroup {
   drivers: { taskId: string; name: string; items: { name: string; qty: number }[]; open: number; done: number }[];
   /** Ticked off this working day: crossed out, with Untick, until 05:00. */
   ticked: { productId: string; name: string; pack?: string; qty: number; sites: { name: string; qty: number }[]; who: string }[];
+  /** Taken off today by someone at a restaurant, ready to show. */
+  removed: string[];
 }
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
@@ -121,6 +125,7 @@ export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers
                     {done && <span className="muted" style={{ fontSize: 13 }}>Saving…</span>}
                   </div>
                   {r.sites.length > 0 && <div className="muted" style={{ fontSize: 14 }}>{forSites(r.sites)}</div>}
+                  {r.changed && <div className="muted" style={{ fontSize: 13 }}>{r.changed}</div>}
                   {r.notes.length > 0 && <div style={{ fontSize: 14 }}>&ldquo;{r.notes.join("” · “")}&rdquo;</div>}
                   {r.photoIds.length > 0 && (
                     <div className="row wrap" style={{ gap: 6 }}>
@@ -151,6 +156,7 @@ export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers
                 <div className="muted" style={{ fontSize: 14 }}>{d.items.map((x) => `${fmt(x.qty)} × ${x.name}`).join(" · ")}</div>
               </div>
             ))}
+            {g.removed.length > 0 && <div className="muted" style={{ fontSize: 13 }}>{g.removed.join(" · ")}</div>}
             {ticked.length > 0 && (
               <>
                 <div className="stock-ticked-head muted">{g.production ? "Sent today" : "Ticked today"}</div>

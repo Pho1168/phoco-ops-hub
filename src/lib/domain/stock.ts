@@ -140,6 +140,12 @@ export function priceAge(on: string, today: string): string {
 /** Reporting stock: anyone active with access at an open site. */
 export const canReportAt = (p: Pick<Person, "status" | "access">, site: Pick<Site, "id" | "status">) =>
   p.status === "active" && site.status === "open" && p.access.some((a) => a.siteId === site.id);
+/**
+ * On the tablet (the full app), anyone who reports stock at the restaurant sees what it has asked for on Stock needed
+ * and can change the amount of, or remove, what's still waiting. Ordering it stays with the owner and ops.
+ */
+export const editsSiteNeeded = (p: Pick<Person, "status" | "access">, site: Pick<Site, "id" | "status">, scope: "full" | "shifts") =>
+  scope === "full" && canReportAt(p, site);
 
 /** The catalogue, suppliers and prices: the owner only. */
 export const runsPurchasing = (p: Pick<Person, "status" | "access">) => p.status === "active" && isOwner(p);
@@ -606,11 +612,15 @@ export interface NeededRow {
   /** Requests sent with no amount (from before amounts were asked for): an amount is set first. */
   unknownIds: string[];
   notes: string[]; photoIds: string[]; urgent: boolean;
+  /** The latest change of amount this working day (given `now`): to what, from what, by whom and when. */
+  changed?: { qty: number; was?: number; by?: string; at: number };
 }
+/** Taken off the list this working day by someone at the restaurant (`REMOVE_NOTE`), so the owner sees it went. */
+export interface RemovedRow { product: Product; qty?: number; siteId: SiteId; by?: string; at: number }
 export interface WithDriver { task: PurchaseTask; items: { name: string; qty: number }[]; open: number; done: number }
 /** Ticked off this working day: stays on the card, crossed out, so a mistaken tick can be taken back. */
 export interface TickedRow { product: Product; qty: number; sites: { siteId: SiteId; qty: number }[]; lineIds: string[]; by: string[]; at: number }
-export interface NeededGroup { key: string; supplier?: Supplier; rows: NeededRow[]; drivers: WithDriver[]; production: boolean; ticked: TickedRow[] }
+export interface NeededGroup { key: string; supplier?: Supplier; rows: NeededRow[]; drivers: WithDriver[]; production: boolean; ticked: TickedRow[]; removed: RemovedRow[] }
 
 /**
  * What's needed, by supplier, for these sites. A product from a supplier: what's still to order of its requests. A
@@ -626,7 +636,7 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
     let g = groups.get(key);
     if (!g) {
       const supplier = suppliers.find((s) => s.id === supplierId);
-      g = { key, supplier, rows: [], drivers: [], production: supplier?.method === "production", ticked: [] };
+      g = { key, supplier, rows: [], drivers: [], production: supplier?.method === "production", ticked: [], removed: [] };
       groups.set(key, g);
     }
     return g;
@@ -688,6 +698,22 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
   // Ticked off this working day, still to be seen (and unticked if it was a mistake).
   if (now !== undefined) {
     const from = tickDayStart(now);
+    // Amounts changed today (the latest per row), and what someone at a restaurant took off the list.
+    for (const g of groups.values()) {
+      for (const r of g.rows) {
+        // The latest (events come in the order they were made, so a later one wins a tie).
+        const e = data.events.filter((x) => x.kind === "qty_changed" && x.at >= from && x.requestId && [...r.requestIds, ...r.unknownIds].includes(x.requestId))
+          .reduce<StockEvent | undefined>((m, x) => (!m || x.at >= m.at ? x : m), undefined);
+        const was = e?.text?.match(/^was (-?\d+(?:\.\d+)?)$/)?.[1];
+        if (e && e.qty !== undefined) r.changed = { qty: e.qty, ...(was !== undefined ? { was: Number(was) } : {}), by: e.byName?.split(" ")[0], at: e.at };
+      }
+    }
+    for (const e of data.events.filter((x) => x.kind === "request_cancelled" && x.text === REMOVE_NOTE && x.at >= from)) {
+      const req = data.requests.find((r) => r.id === e.requestId);
+      const product = req && products.find((x) => x.id === req.productId);
+      if (!req || !product || !siteIds.includes(req.siteId)) continue;
+      group(req.supplierId).removed.push({ product, qty: wantedOf(req), siteId: req.siteId, by: e.byName?.split(" ")[0], at: e.at });
+    }
     for (const l of data.lines) {
       const req = data.requests.find((r) => r.id === l.requestId);
       const task = data.tasks.find((t) => t.id === l.taskId);
@@ -713,7 +739,7 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
     for (const r of g.rows) r.sites.sort((a, b) => a.siteId.localeCompare(b.siteId));
     g.drivers.sort((a, b) => a.task.createdAt - b.task.createdAt);
   }
-  return [...groups.values()].filter((g) => g.rows.length || g.drivers.length || g.ticked.length)
+  return [...groups.values()].filter((g) => g.rows.length || g.drivers.length || g.ticked.length || g.removed.length)
     .sort((a, b) => Number(!a.supplier) - Number(!b.supplier) || Number(a.production) - Number(b.production) || (a.supplier?.name ?? "").localeCompare(b.supplier?.name ?? ""));
 }
 
@@ -740,6 +766,35 @@ export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name
     if (!rows.length && !notes.length) continue;
     const sub = g.production ? "Production: tick when sent" : g.supplier ? methodOf(g.supplier.method)?.label : "Set a supplier in the catalogue";
     out.push({ heading: g.supplier?.name ?? "No supplier yet", sub, rows, notes });
+  }
+  return out;
+}
+
+/** The reason on a request someone at the restaurant took off Stock needed. */
+export const REMOVE_NOTE = "Removed on Stock needed";
+/** Nobody has any of it yet (not given to a driver, ordered or sent): the restaurant can still change or remove it. */
+export const stillWaiting = (p: Pick<Progress, "state">) => p.state === "waiting" || p.state === "needs_qty";
+
+/**
+ * How a product's waiting requests at one restaurant (oldest first) reach a new total: the newest takes the change; one
+ * brought down to nothing is removed (newest first). Nothing to do when the total is already that.
+ */
+export function qtyPlan(reqs: { id: string; wanted?: number }[], target: number): ({ id: string; qty: number } | { id: string; remove: true })[] {
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const total = round(reqs.reduce((t, r) => t + (r.wanted ?? 0), 0));
+  if (!reqs.length || target === total) return [];
+  const out: ({ id: string; qty: number } | { id: string; remove: true })[] = [];
+  if (target > total) {
+    const last = reqs[reqs.length - 1];
+    return [{ id: last.id, qty: round((last.wanted ?? 0) + target - total) }];
+  }
+  let cut = round(total - target);
+  for (const r of [...reqs].reverse()) {
+    if (cut <= 0) break;
+    const w = r.wanted ?? 0;
+    const take = Math.min(w, cut);
+    cut = round(cut - take);
+    if (w - take <= 0) out.push({ id: r.id, remove: true }); else out.push({ id: r.id, qty: round(w - take) });
   }
   return out;
 }
