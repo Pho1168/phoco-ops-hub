@@ -80,3 +80,16 @@ describe("an item sold at more than one shop", () => {
     expect(pdf).toContain("(Loon Fung/Lidl/Aldi/Asda)");
   });
 });
+
+describe("the shops line on screen", () => {
+  it("lists the card's shop first, then the other active shops that sell it; nothing when there's only one", async () => {
+    const { shopsLine } = await import("@/lib/domain/stock");
+    const sup = (id: string, name: string, method: "shop" | "production" = "shop", active = true) => ({ id, name, method, active }) as never;
+    const suppliers = [sup("lf", "Loon Fung"), sup("la", "Lidl/Aldi"), sup("as", "Asda"), sup("old", "Old shop", "shop", false), sup("wem", "Production", "production")];
+    const here = { id: "lf", name: "Loon Fung", method: "shop" as const };
+    expect(shopsLine(here, { supplierId: "lf", alsoFrom: ["la", "as", "old"] }, suppliers)).toBe("Loon Fung/Lidl/Aldi/Asda");
+    expect(shopsLine(here, { supplierId: "lf", alsoFrom: [] }, suppliers)).toBeUndefined();
+    expect(shopsLine({ id: "wem", name: "Production", method: "production" }, { supplierId: "wem", alsoFrom: ["la"] }, suppliers)).toBeUndefined();
+  });
+});
+

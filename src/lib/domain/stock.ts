@@ -761,7 +761,9 @@ export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name
       const sites = r.sites.filter((x) => x.qty > 0);
       const where = sites.length === 1 ? `For ${siteName(sites[0].siteId)}` : sites.map((x) => `${siteName(x.siteId)} ${fmt(x.qty)}`).join(" \u00b7 ");
       const unknown = r.sites.filter((x) => x.unknown > 0).map((x) => `${siteName(x.siteId)}: amount needed`);
-      const also = g.production ? [] : (r.product.alsoFrom ?? []).filter((id) => id !== g.supplier?.id).map(supplierName).filter((n): n is string => !!n);
+      // Its usual shop too, when it's been moved to another card ("Buy from…").
+      const also = g.production ? [] : [...new Set([r.product.supplierId, ...(r.product.alsoFrom ?? [])])].filter((id): id is string => !!id && id !== g.supplier?.id)
+        .map(supplierName).filter((n): n is string => !!n);
       // Sold at more than one shop: every one of them, this card's first ("Loon Fung/Lidl/Aldi/Asda").
       const shops = also.length ? [g.supplier?.name, ...also].filter(Boolean).join("/") : undefined;
       const info = [where, ...unknown, ...r.notes.map((t) => `\u201c${t}\u201d`)].filter(Boolean).join(" \u00b7 ");
@@ -891,4 +893,14 @@ export function neededReceipt(sheet: ReturnType<typeof neededSheet>): { heading:
       ...(g.notes ?? []).map((n) => ({ text: n, plain: true })),
     ],
   }));
+}
+
+/**
+ * Every shop that sells a product, as one line ("Loon Fung/Lidl/Aldi/Asda"): the card it's on first, then the others
+ * from the catalogue's "also sold at" (`buyFrom`). Only when there's more than one; a production kitchen's items never.
+ */
+export function shopsLine(here: Pick<Supplier, "id" | "name" | "method"> | undefined, product: Pick<Product, "supplierId" | "alsoFrom">, suppliers: Supplier[]): string | undefined {
+  if (!here || here.method === "production") return undefined;
+  const others = buyFrom(product, suppliers).filter((s) => s.id !== here.id).map((s) => s.name);
+  return others.length ? [here.name, ...others].join("/") : undefined;
 }
