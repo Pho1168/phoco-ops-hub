@@ -20,6 +20,8 @@ export interface SiteWeekInput {
   notes: ReportNote[]; prep: ReportPrep[]; shifts: TeamShift[];
   /** Equipment problems at the site (any that were open during the week). */
   faults?: ReportFault[];
+  /** Cleaning board jobs missed in this week (or in a month that ended in it): name and how many were done. */
+  cleaningMissed?: { name: string; note?: string }[];
 }
 
 export interface Attention { level: "critical" | "warn" | "info"; text: string }
@@ -33,6 +35,8 @@ export interface SiteWeekReport {
   prep: { sent: number; needed: number; carried: number };
   rota: { shifts: number; people: number; hours: number | null; byDay: number[]; bySection: { section: string; hours: number }[] };
   equipment: { reported: number; fixed: number; open: number; downHours: number; stillDown: { equipment: string; since: number }[] };
+  /** Cleaning board jobs missed (`cleaning.ts`). */
+  cleaning: { missed: { name: string; note?: string }[] };
   attention: Attention[];
 }
 
@@ -99,6 +103,7 @@ export function siteWeekReport(x: SiteWeekInput): SiteWeekReport {
       downHours: round1(downMs / 3_600_000),
       stillDown: openAtEnd.filter((f) => f.severity === "down").map((f) => ({ equipment: f.equipment, since: f.createdAt })).sort((a, b) => a.since - b.since),
     },
+    cleaning: { missed: x.cleaningMissed ?? [] },
     attention: [],
   };
   report.attention = attentionList(report, x);
@@ -121,6 +126,7 @@ function attentionList(r: SiteWeekReport, x: SiteWeekInput): Attention[] {
   for (const w of r.temps.worst.filter((w) => w.count >= 2).slice(0, 2)) a.push({ level: "warn", text: `${w.itemText} out of range ${w.count} times: worth checking the unit` });
   if (r.checks.late >= 3) a.push({ level: "warn", text: `${s(r.checks.late, "checklist")} signed off late` });
   if (r.handover.slow) a.push({ level: "warn", text: `${s(r.handover.slow, "handover action")} took more than a day to sort` });
+  if (r.cleaning.missed.length) a.push({ level: "warn", text: `Cleaning missed: ${r.cleaning.missed.map((m) => `${m.name}${m.note && !m.note.startsWith("0 of 1") ? ` (${m.note})` : ""}`).join(", ")}` });
   if (r.prep.carried) a.push({ level: "warn", text: `${s(r.prep.carried, "prep item")} not done by the next shift` });
   if (r.started && !r.temps.readings && r.checks.expected) a.push({ level: "warn", text: "No temperature readings recorded this week" });
   return a;
@@ -164,6 +170,7 @@ export function weeklyDigest(week: string, sites: { name: string; r: SiteWeekRep
     else if (!r.started) bits.push("checklists not in use yet");
     if (r.temps.critical) bits.push(`${s(r.temps.critical, "temperature")} past the safe limit`);
     if (r.alerts.open) bits.push(`${s(r.alerts.open, "alert")} open`);
+    if (r.cleaning.missed.length) bits.push(`${s(r.cleaning.missed.length, "cleaning job")} missed`);
     if (r.equipment.stillDown.length) bits.push(`${s(r.equipment.stillDown.length, "piece", "pieces")} of kit not working`);
     if (r.rota.hours !== null) bits.push(`${hoursText(r.rota.hours)} h planned`);
     return `${name}: ${bits.join(" · ") || "a quiet week"}`;

@@ -2841,3 +2841,26 @@ export async function saveProductionTargets(siteId: string, input: unknown): Pro
   revalidateStock();
   return { ok: true, changed: changed.length };
 }
+
+/**
+ * The cleaning board: claim a job for this week ("I'll do it"), let go of it, or tick it done. Anyone working at the
+ * site, on its tablet (full session); the board rules are checked again with the job locked (`canAct`).
+ */
+export async function cleaningAction(jobId: string, action: "claimed" | "released" | "done"): Promise<ActionResult> {
+  const who = await stockWho();
+  if (!who.ok) return who;
+  const { ctx } = who;
+  if (ctx.scope !== "full") return { ok: false, error: "Cleaning jobs are ticked on the restaurant's tablet" };
+  const p = z.object({ id: z.string().min(1).max(40), action: z.enum(["claimed", "released", "done"]) }).safeParse({ id: jobId, action });
+  if (!p.success) return { ok: false, error: "That job isn't on the board any more" };
+  const db = store();
+  const job = (await db.cleaningJobs([ctx.site.id])).find((j) => j.id === p.data.id);
+  if (!job) return { ok: false, error: `That job isn't on ${ctx.site.name}'s board` };
+  const r = await db.cleaningAct(job.id, p.data.action, ctx.person.id, Date.now());
+  if (!r.ok) return r;
+  const verb = p.data.action === "claimed" ? "will do" : p.data.action === "released" ? "let go of" : "did";
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: `cleaning.${p.data.action === "claimed" ? "claim" : p.data.action === "released" ? "release" : "done"}`,
+    detail: `Cleaning: ${ctx.person.name.split(" ")[0]} ${verb} "${job.name}"` });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}

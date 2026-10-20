@@ -22,6 +22,8 @@ import { MustRead } from "@/components/MustRead";
 import { TrainingDue } from "@/components/TrainingDue";
 import { myTraining } from "@/lib/training-service";
 import { allergenChangesToConfirm, sopsToRead } from "@/lib/library-service";
+import { CleaningBoard } from "@/components/CleaningBoard";
+import { boardRows, cleaningBoards } from "@/lib/cleaning-service";
 
 export const dynamic = "force-dynamic";
 
@@ -69,12 +71,13 @@ export default async function Today() {
     others.forEach((l, i) => seen.set(l.id, !!runs[i].signedAt));
     return all.map((l) => ({ name: l.name, due: l.due, signed: seen.get(l.id)! }));
   };
-  const [ready, gas, toRead, allergenChanges, training] = await Promise.all([
+  const [ready, gas, toRead, allergenChanges, training, cleaning] = await Promise.all([
     readyShown ? readyLists().then((lists) => readyFor(ctx.site, now, db, { lists, kit, openFaults: kitOpen, alerts }, { forStaff: !ctx.isManager })) : undefined,
     gasFor(ctx.site, now, db),
     sopsToRead(ctx.person, db),
     allergenChangesToConfirm(ctx.person, db),
     db.sites().then((sites) => myTraining(ctx.person, sites, db)),
+    cleaningBoards(db, [ctx.site.id], now).then((b) => b.get(ctx.site.id) ?? []),
   ]);
   const showReady = readyShown && ready;
   const faults = faultsOf(kitOpen).filter((f) => kit.some((eq) => eq.id === f.fault.equipmentId));
@@ -142,6 +145,8 @@ export default async function Today() {
             ))}
           </section>
         )}
+
+        <CleaningBoard site={ctx.site.name} rows={boardRows(cleaning, ctx.person.id)} canAct={ctx.scope === "full"} compact />
 
         <div className="cols two">
           <div className={`cols areas ${groups.length === 1 ? "one" : ""}`}>

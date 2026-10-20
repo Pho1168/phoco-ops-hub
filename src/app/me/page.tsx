@@ -6,6 +6,8 @@ import { addDays, londonDate, shortDay } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { vapidKeys } from "@/lib/push";
 import { RemindersToggle } from "./RemindersToggle";
+import { CleaningBoard } from "@/components/CleaningBoard";
+import { boardRows, cleaningBoards } from "@/lib/cleaning-service";
 import { TimeOffCard } from "./TimeOffCard";
 import { canCancel, kindLabel, rangeLabel } from "@/lib/domain/timeoff";
 import { NoticeBanner } from "@/components/NoticeBanner";
@@ -72,6 +74,10 @@ export default async function MyShifts() {
     return site && g && (g.state === "due" || g.state === "overdue" || g.state === "done") && g.day.closers.includes(ctx.person.id) ? { site, g } : undefined;
   }))).filter((x) => x !== undefined).filter((x) => !onTablet || x.site.id === ctx.site.id); // a tablet only does its own site
 
+  // The cleaning board for where they work (on a phone, read-only; on the tablet, its own site).
+  const cleanSites = allSites.filter((s) => s.status === "open" && (onTablet ? s.id === ctx.site.id : ctx.person.access.some((a) => a.siteId === s.id)));
+  const cleaning = await cleaningBoards(db, cleanSites.map((s) => s.id), now);
+
   // Shift cover: my latest request for each upcoming shift, and colleagues' shifts I could cover.
   const myCover = new Map<string, MyCover>();
   for (const r of await db.coverRequests({ personId: ctx.person.id, shiftEndsAfter: now })) { // newest first
@@ -114,6 +120,10 @@ export default async function MyShifts() {
         <NoticeBanner notices={unread.map((n) => ({ id: n.id, title: n.title, body: n.body, important: n.important, from: n.createdByName, when: when(n.createdAt) }))} />
         <MustRead docs={toRead} allergens={allergenChanges} />
         <TrainingDue overdue={training.tally.overdue} again={training.tally.again} />
+
+        {cleanSites.filter((s) => cleaning.has(s.id)).map((s) => (
+          <CleaningBoard key={s.id} site={s.name} rows={boardRows(cleaning.get(s.id)!, ctx.person.id)} canAct={onTablet} compact={!onTablet ? false : true} />
+        ))}
 
         {gasCards.map(({ site, g }) => (
           <GasCheck key={site.id} siteId={site.id} siteName={site.name} state={g.state as "due" | "overdue" | "done"} closeAt={londonHM(g.day.closeAt)} needsPin={onTablet}
