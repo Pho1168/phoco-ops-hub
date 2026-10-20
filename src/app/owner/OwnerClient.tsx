@@ -17,6 +17,8 @@ export interface SiteSummary {
   gas?: { text: string; tone: "good" | "bad" | "" };
   /** Kitchen closes ("21:30"): the gas check is due then. Unset: when the last shift ends. */
   gasBy?: string;
+  /** The weekly cleaning board at a glance (`cleaningSummary`). */
+  cleaning?: { text: string; tone: "good" | "bad" | "" };
 }
 /** `canEdit`: whoever is looking may change this account (an operations manager: staff and managers at their sites only). */
 export interface PersonRow { id: string; name: string; code: string; status: string; self: boolean; sites: string; canEdit: boolean }
@@ -56,6 +58,11 @@ export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, pe
             <div className="row"><h2 className="h-sec grow">{s.name}</h2><span className={`chip ${s.closed ? "bad" : "done"}`}>{s.closed ? "Closed · sign-in frozen" : "Open"}</span></div>
             {s.closed && s.reason && <div className="muted">{s.reason}</div>}
             {s.ready && <ReadyLight r={s.ready} />}
+            {s.cleaning && (
+              <div className={`alert ${s.cleaning.tone}`} style={{ padding: "10px 12px" }}>
+                <Icon name="check" /><div className="grow" style={{ fontSize: 14 }}>{s.cleaning.text}</div>
+              </div>
+            )}
             {s.gas && (
               <div className={`alert ${s.gas.tone}`} style={{ padding: "10px 12px" }}>
                 <Icon name="flame" /><div className="grow" style={{ fontSize: 14 }}>{s.gas.text}</div>

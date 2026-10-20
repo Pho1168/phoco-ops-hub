@@ -957,3 +957,21 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 
 /* Every shop that sells an item, under its name on Stock needed ("Loon Fung/Lidl/Aldi/Asda"). */
 .stock-shops { font-size: 13px; font-weight: 600; color: var(--teal-ink); }
+
+/* Cleaning board: weekly and monthly jobs on no set day (src/components/CleaningBoard.tsx). */
+.clean-row { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); flex-wrap: wrap; }
+.clean-row.soon { background: var(--amber-soft); }
+.clean-row.late { background: var(--accent-soft); }
+.clean-row.done { background: var(--teal-tint); }
+.clean-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--line, #cfcac2); align-self: flex-start; margin-top: 5px; }
+.clean-row.soon .clean-dot { background: var(--amber); }
+.clean-row.late .clean-dot { background: var(--accent, #C2611A); }
+.clean-row.done .clean-dot { background: var(--teal); }
+.clean-status { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.clean-status.late { color: var(--accent-soft-ink); }
+.clean-status.soon { color: var(--amber-ink); }
+.clean-btns { margin-left: auto; }
+@media (max-width: 560px) { .clean-btns { width: 100%; justify-content: flex-end; } }
+.clean-board.compact { gap: 6px !important; }
+.clean-board.compact .clean-row { padding: 6px 10px; gap: 10px; }
+.clean-board.compact .clean-row .btn.small { padding-top: 6px; padding-bottom: 6px; }

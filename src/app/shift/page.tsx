@@ -10,6 +10,8 @@ import { current } from "@/lib/session";
 import { myShift, siteLaneIds, siteLanes, type ShiftView } from "@/lib/shift-service";
 import { ShiftReply } from "@/app/me/ShiftReply";
 import { DayStrip, FirstUp, LaneTitle, OnShift, ShiftList, Summary } from "./parts";
+import { CleaningBoard } from "@/components/CleaningBoard";
+import { boardRows, cleaningBoards } from "@/lib/cleaning-service";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +38,9 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
   const view = params.view === "me" || params.view === "lanes" ? params.view : managerHere ? "lanes" : "me";
 
   const Bar = onPhone ? PhoneTopBar : TopBar;
+  // The weekly cleaning board sits at the top of every view on the tablet, for everyone.
+  const cleaning = onTablet ? (await cleaningBoards(db, [ctx.site.id], now)).get(ctx.site.id) ?? [] : [];
+  const board = cleaning.length ? <CleaningBoard site={ctx.site.name} rows={boardRows(cleaning, ctx.person.id)} canAct compact /> : null;
   const dateLine = (site: string, when = shortDay(today)) => `${site} · ${when}`;
 
   const more = (site: ShiftView["site"] | undefined) => (
@@ -57,6 +62,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
       <>
         <Bar ctx={ctx} title="Today’s lanes" eyebrow={dateLine(ctx.site.name)} />
         <main className="wide">
+          {board}
           <div className="row wrap" style={{ gap: 8 }}>
             <span className="muted lead">Every lane with people on today, side by side.</span>
             <div className="seg sm-seg" role="group" aria-label="View as">
@@ -105,6 +111,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
       <>
         <Bar ctx={ctx} title={`Hi ${firstName(ctx.person.name)}`} eyebrow={dateLine(ctx.site.name)} />
         <main>
+          {board}
           <div className="card stack" style={{ gap: 10 }}>
             <div className="strong" style={{ fontSize: 18 }}>You&apos;re not on today&apos;s published rota at {ctx.site.name}.</div>
             {elsewhere && <div className="muted">Your shift today is at {elsewhere.site.name}, {elsewhere.start}–{elsewhere.end}.</div>}
@@ -130,6 +137,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
     <>
       <Bar ctx={ctx} title={<LaneTitle lane={w.lane} />} eyebrow={`${dateLine(site.name, dayLabel(w.date, today))} · ${windowLabel(w)}${picked ? " · not on the rota" : ""}`} />
       <main>
+        {board}
         {(managerHere || picked) && (
           <div className="row wrap" style={{ gap: 8 }}>
             <span className="muted lead">{picked ? "Not on today's rota: showing the lane you picked." : "Your own shift."}</span>

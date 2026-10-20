@@ -1,3 +1,4 @@
+import { periodEnd } from "@/lib/domain/cleaning";
 import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import { datesBetween, readingLog, signoffLog } from "@/lib/domain/records";
@@ -13,7 +14,7 @@ export async function loadSiteReport(site: Site, week: string, now = Date.now(),
   const today = londonDate(now);
   const lastWeek = addDays(week, -7);
   const to = addDays(week, 6) < today ? addDays(week, 6) : today;
-  const [data, notes, prepOn, shifts, lastShifts, kit, kitEvents] = await Promise.all([
+  const [data, notes, prepOn, shifts, lastShifts, kit, kitEvents, cleanJobs, cleanEvents] = await Promise.all([
     db.recordsData(site.id, lastWeek, to < lastWeek ? lastWeek : to),
     db.handover(site.id, londonToUtc(lastWeek, "00:00")),
     db.prepEnabledSites().then((s) => s.includes(site.id)),
@@ -21,7 +22,17 @@ export async function loadSiteReport(site: Site, week: string, now = Date.now(),
     db.teamShifts(site.id, lastWeek),
     db.equipment(site.id, true),
     db.equipmentEvents({ siteId: site.id }),
+    db.cleaningJobs([site.id]),
+    db.cleaningEvents([site.id], `${addDays(lastWeek, -31).slice(0, 7)}-01`),
   ]);
+  // Cleaning missed in a week: its weekly jobs, and monthly ones whose month ended in it.
+  const cleaningMissed = (start: string) => cleanEvents.filter((e) => e.kind === "missed").flatMap((e) => {
+    const job = cleanJobs.find((j) => j.id === e.jobId);
+    if (!job) return [];
+    const ends = periodEnd(job.per, e.period);
+    const inWeek = job.per === "week" ? e.period === start : ends > start && ends <= addDays(start, 7);
+    return inWeek ? [{ name: job.name, note: e.note }] : [];
+  });
   const kitById = new Map(kit.map((e) => [e.id, e]));
   // Kit taken off the register ends any problem still open on it.
   const faults = faultsOf(kitEvents).map((f) => {
@@ -44,6 +55,7 @@ export async function loadSiteReport(site: Site, week: string, now = Date.now(),
       prep: prep.filter((h) => h.submittedAt && h.submittedAt >= from && h.submittedAt < until).map((h) => ({ submittedAt: h.submittedAt!, entries: h.entries })),
       shifts: weekShifts,
       faults: faults.filter((f) => f.createdAt < until),
+      cleaningMissed: cleaningMissed(start),
     });
   };
   return { site, week: one(week, shifts), last: one(lastWeek, lastShifts), people: Array.from(new Set(shifts.map((s) => s.personId))) };

@@ -12,6 +12,8 @@ import { ManageTiles, NeedsYou } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { RightNow } from "./RightNow";
+import { cleaningBoards } from "@/lib/cleaning-service";
+import { cleaningSummary } from "@/lib/domain/cleaning";
 import { teamRowsView, teamToday } from "@/lib/team-today";
 import { gasFor, lastClose, readyFor, shiftsAround } from "@/lib/daily-service";
 import { closeWords, readyShownUntil } from "@/lib/domain/daily";
@@ -34,6 +36,7 @@ export default async function Owner() {
   const [everyone, around, allSites] = await Promise.all([db.people(), shiftsAround(now, db), db.sites()]);
   const all = accountsFor(ctx.person, everyone);
   const sites = allSites.filter((s) => ctx.leads.includes(s.id) && (s.id !== "SYD" || s.status === "open"));
+  const cleaning = await cleaningBoards(db, sites.filter((s) => s.status === "open").map((s) => s.id), now);
   const summaries: SiteSummary[] = await Promise.all(sites.map(async (s) => {
     const lists = await db.checklists(s.id);
     let signed = 0, overdue = 0;
@@ -60,7 +63,13 @@ export default async function Owner() {
         : { text: `Gas check due now · ${gas.day.kitchen ? "the kitchen closes" : "the last shift ends"} at ${londonHM(gas.day.closeAt)}`, tone: "" as const }
       : last ? last.check ? { text: `Last close: gas off, checked by ${by(last.check)}`, tone: "good" as const } : { text: "Last close: no gas-off check", tone: "bad" as const }
       : undefined;
-    return { id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason, lists: lists.length, signed, overdue, alerts, ready, gas: gasLine, gasBy: s.gasBy };
+    const board = cleaning.get(s.id);
+    const c = board ? cleaningSummary(board) : undefined;
+    const cleaningLine = c ? {
+      text: `Weekly cleaning: ${c.complete} of ${c.total} done${c.late ? ` · ${c.late} due now` : c.soon ? ` · ${c.soon} due soon` : ""}${c.missedLast ? ` · ${c.missedLast} missed last time` : ""}`,
+      tone: c.late || c.missedLast ? "bad" as const : c.complete === c.total ? "good" as const : "" as const,
+    } : undefined;
+    return { id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason, lists: lists.length, signed, overdue, alerts, ready, gas: gasLine, gasBy: s.gasBy, cleaning: cleaningLine };
   }));
   const names = new Map(everyone.map((p) => [p.id, p.name]));
   const order = { active: 0, frozen: 1, left: 2 } as const;
