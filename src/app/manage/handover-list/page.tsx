@@ -2,6 +2,7 @@ import { store } from "@/lib/data";
 import { canEditPrepList, canRetirePrepItem } from "@/lib/domain/prep";
 import { requireManager } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
+import { Icon } from "@/components/Icon";
 import { redirect } from "next/navigation";
 import { ListEditor } from "./ListEditor";
 
@@ -24,6 +25,10 @@ export default async function HandoverList() {
       <TopBar ctx={ctx} title="Handover list" eyebrow="Manage · every site" back={ctx.isLead ? "/owner" : "/manage"} />
       <main>
         <p className="muted" style={{ margin: 0 }}>What the closing shift picks from on the prep handover: things to do, then things to prep, in groups. Changes show on the tablet straight away.</p>
+        <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
+          <span className="muted lead grow">A printed form with a box to tick for every item, for the receipt printer.</span>
+          <a className="btn small" href="/handover/list" target="_blank" rel="noreferrer"><Icon name="print" /> Print (80 mm receipt)</a>
+        </div>
         <ListEditor items={items} canRetire={canRetirePrepItem(ctx.person)} recipes={recipes} />
       </main>
       <BottomNav ctx={ctx} current={ctx.isLead ? "owner" : "manage"} />

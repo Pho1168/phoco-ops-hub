@@ -290,3 +290,15 @@ export function reportOrder<T extends { urgent: boolean; itemId: string }>(entri
 /** A completed item can be put back for a short while, in case it was tapped by mistake. */
 export const UNDO_MINUTES = 10;
 export const canUndo = (completedAt: number | undefined, now: number) => !!completedAt && now - completedAt <= UNDO_MINUTES * 60_000;
+
+/**
+ * The handover list as a printed form (one tall receipt): every item in use, a group at a time, to do first and then to
+ * prep, in the order the app shows them. A group is headed with its list ("To do · Bar").
+ */
+export function receiptSheet(items: PrepItem[]): { heading: string; rows: string[] }[] {
+  const live = items.filter((i) => i.active);
+  return prepGroups(live).map((g) => ({
+    heading: `${kindLabel(g.kind)} \u00b7 ${g.group}`,
+    rows: live.filter((i) => i.kind === g.kind && i.group === g.group).sort((a, b) => a.position - b.position).map((i) => i.name),
+  })).filter((g) => g.rows.length);
+}
