@@ -12,6 +12,8 @@ export interface BoardRow {
   unknown: { requestId: string; site?: string }[];
   /** Other suppliers that also sell it (it can be moved to one of them). */
   buyFrom: { id: string; name: string }[];
+  /** Every shop that sells it, this card's first ("Loon Fung/Lidl/Aldi/Asda"), when there's more than one. */
+  shops?: string;
   /** The latest change of amount today (someone at the restaurant, or the owner), ready to show. */
   changed?: string;
 }
@@ -120,6 +122,7 @@ export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers
                     <span className="grow stack" style={{ gap: 2, minWidth: 0 }}>
                       <span className="strong" style={done ? { textDecoration: "line-through", color: "var(--ink-2)" } : undefined}>{r.name}</span>
                       {r.pack && <span className="muted" style={{ fontSize: 13 }}>{r.pack}</span>}
+                      {r.shops && <span className="stock-shops">{r.shops}</span>}
                     </span>
                     {r.urgent && !done && <span className="chip bad">Urgent</span>}
                     {done && <span className="muted" style={{ fontSize: 13 }}>Saving…</span>}
@@ -134,7 +137,7 @@ export function NeededBoard({ groups, drivers }: { groups: BoardGroup[]; drivers
                   )}
                   {r.buyFrom.length > 0 && !done && (
                     <div className="stock-site no-print">
-                      <span className="muted">Also sold at {r.buyFrom.map((x) => x.name).join(", ")}</span>
+                      <span className="muted">Buying it somewhere else?</span>
                       <select className="txt" style={{ width: "auto" }} aria-label={`Buy ${r.name} from`} value="" disabled={busy}
                         onChange={(e) => { const to = e.target.value; if (to) run(() => moveNeededAction(g.key, r.productId, to)); }}>
                         <option value="">Buy from…</option>

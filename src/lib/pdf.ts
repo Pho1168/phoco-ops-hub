@@ -205,7 +205,7 @@ export const RECEIPT_W = 226.77;
 export const RECEIPT_H = 841.89;
 
 /** A line to tick: the text (big), and a small grey line under it when there is one. */
-export type ReceiptRow = string | { text: string; detail?: string; plain?: boolean };
+export type ReceiptRow = string | { text: string; detail?: string | string[]; plain?: boolean };
 export interface ReceiptGroup { heading: string; sub?: string; rows: ReceiptRow[] }
 
 /**
@@ -239,7 +239,7 @@ export function receiptPdf(o: { title: string; lines: string[]; groups: ReceiptG
   const rowBlock = (row: ReceiptRow): Block => {
     const { text, detail, plain } = typeof row === "string" ? { text: row, detail: undefined, plain: false } : row;
     const lines = wrap(text, W - 18, size);
-    const more = detail ? wrap(detail, W - 18, small) : [];
+    const more = (Array.isArray(detail) ? detail : detail ? [detail] : []).flatMap((d) => wrap(d, W - 18, small));
     return { h: lines.length * lead + more.length * smallLead + 4, draw: (y, ops) => {
       if (!plain) ops.push({ t: "rect", x: M, y: y - lead + 3, w: box, h: box, width: 1 });
       lines.forEach((l, i) => ops.push({ t: "text", x: M + 18, y: y - lead + 4.5 - i * lead, size, text: l, grey: plain ? 0.3 : 0 }));

@@ -1,15 +1,15 @@
 import { store } from "@/lib/data";
 import { redirect } from "next/navigation";
-import { buyFrom, canPurchase, editsSiteNeeded, lookAlikes, methodOf, runsPurchasing, siteWaitingRows, type NeededRow, type RemovedRow } from "@/lib/domain/stock";
+import { buyFrom, canPurchase, editsSiteNeeded, lookAlikes, methodOf, runsPurchasing, shopsLine, siteWaitingRows, type NeededRow, type RemovedRow } from "@/lib/domain/stock";
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { neededView, siteNeededView } from "@/lib/stock-service";
 import type { Ctx } from "@/lib/session";
-import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "../Bar";
 import { stockCtx } from "../load";
 import { NeededBoard, type BoardGroup } from "./NeededBoard";
 import { NewItemsCard } from "./NewItemsCard";
 import { ClearNeeded } from "./ClearNeeded";
+import { PrintStock } from "../PrintStock";
 import { SiteNeeded, type SiteGroup } from "./SiteNeeded";
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
@@ -55,6 +55,7 @@ export default async function NeededPage() {
       // Other shops that sell it, to move it to before a run (not for a production kitchen's items).
       buyFrom: g.production ? [] : buyFrom(r.product, catalog.suppliers).filter((s) => s.id !== g.supplier?.id).map((s) => ({ id: s.id, name: s.name })),
       changed: changedLine(r.changed),
+      shops: g.production ? undefined : shopsLine(g.supplier, r.product, catalog.suppliers),
     })),
     removed: g.removed.map((x) => removedLine(x, siteName.get(x.siteId) ?? x.siteId)),
     drivers: g.drivers.map((d) => ({ taskId: d.task.id, name: d.task.assigneeName ?? "Someone", items: d.items, open: d.open, done: d.done })),
@@ -68,13 +69,7 @@ export default async function NeededPage() {
     <>
       <StockBar ctx={ctx} onPhone={onPhone} title="Stock needed" back="/stock" eyebrow={`Stock · ${shortDay(londonDate(now))}`} />
       <main className="stack">
-        {(clearable > 0 || newItems.length > 0) && (
-          <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
-            <span className="muted grow" style={{ fontSize: 14 }}>Everything below on one page, with boxes to tick.</span>
-            <a className="btn small" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (PDF)</a>
-            <a className="btn small" href="/stock/needed/sheet?format=receipt" target="_blank" rel="noreferrer"><Icon name="print" /> Print (80 mm receipt)</a>
-          </div>
-        )}
+        <PrintStock label="Everything below, with boxes to tick." />
         {newItems.length > 0 && (
           <NewItemsCard owner={runsPurchasing(ctx.person)}
             items={newItems.map((n) => ({ id: n.id, name: n.name, size: n.size, qty: n.qty, note: n.note, site: siteName.get(n.siteId) ?? n.siteId,
@@ -93,13 +88,14 @@ export default async function NeededPage() {
 /** The restaurant's own Stock needed (the tablet): what it asked for, to change or remove while it's still waiting. */
 async function SitePage({ ctx }: { ctx: Ctx }) {
   const now = Date.now();
-  const { groups, items } = await siteNeededView(store(), ctx.site.id, now);
+  const { groups, items, catalog } = await siteNeededView(store(), ctx.site.id, now);
   const waiting = siteWaitingRows(groups, items);
   const view: SiteGroup[] = groups.map((g) => ({
     key: g.key, name: g.supplier?.name ?? "No supplier yet", methodLabel: g.production ? "Production" : g.supplier ? methodOf(g.supplier.method)?.label ?? "" : "Supplier to set",
     rows: waiting.filter((w) => w.group === g).map(({ row: r, editable, status }) => ({
       productId: r.product.id, name: r.product.name, pack: r.product.size, qty: r.qty, unknown: r.qty === 0 && r.unknownIds.length > 0, urgent: r.urgent, notes: r.notes,
-      editable, status: status === "kitchen" ? "On the kitchen's order" : status === "ordering" ? "Being ordered" : undefined, changed: changedLine(r.changed) })),
+      editable, status: status === "kitchen" ? "On the kitchen's order" : status === "ordering" ? "Being ordered" : undefined, changed: changedLine(r.changed),
+      shops: g.production ? undefined : shopsLine(g.supplier, r.product, catalog.suppliers) })),
     drivers: g.drivers.map((d) => ({ name: d.task.assigneeName?.split(" ")[0] ?? "a driver", items: d.items.map((x) => `${fmt(x.qty)} × ${x.name}`).join(" · ") })),
     ticked: g.ticked.map((t) => ({ name: t.product.name, qty: t.qty, who: londonHM(t.at) })),
     removed: g.removed.map((x) => removedLine(x)),
@@ -108,13 +104,7 @@ async function SitePage({ ctx }: { ctx: Ctx }) {
     <>
       <StockBar ctx={ctx} onPhone={false} title="Stock needed" back="/stock" eyebrow={`${ctx.site.name} · ${shortDay(londonDate(now))}`} />
       <main className="stack">
-        {view.some((g) => g.rows.length > 0) && (
-          <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
-            <span className="muted grow" style={{ fontSize: 14 }}>Everything below on one page, with boxes to tick.</span>
-            <a className="btn small" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (PDF)</a>
-            <a className="btn small" href="/stock/needed/sheet?format=receipt" target="_blank" rel="noreferrer"><Icon name="print" /> Print (80 mm receipt)</a>
-          </div>
-        )}
+        <PrintStock label={`${ctx.site.name}'s list below, with boxes to tick.`} />
         <SiteNeeded site={ctx.site.name} groups={view} />
       </main>
       <StockNav ctx={ctx} onPhone={false} />

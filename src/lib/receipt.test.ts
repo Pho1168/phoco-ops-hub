@@ -64,3 +64,32 @@ describe("Stock needed on the receipt printer", () => {
     expect(pdf).toContain("Shop trip");
   });
 });
+
+describe("an item sold at more than one shop", () => {
+  it("shows every shop, the card's own first, on a line of its own under the item", async () => {
+    const { neededReceipt } = await import("@/lib/domain/stock");
+    const out = neededReceipt([{ heading: "Loon Fung", sub: "Shop trip", rows: [
+      { qty: "3", item: "Pak choy", detail: "Loon Fung/Lidl/Aldi/Asda \u00b7 For Eastcote", flag: "URGENT", shops: "Loon Fung/Lidl/Aldi/Asda", info: "For Eastcote" },
+      { qty: "1", item: "Mint", detail: "For Eastcote" },
+    ] }]);
+    expect(out[0].rows).toEqual([
+      { text: "3 \u00d7 Pak choy", detail: ["Loon Fung/Lidl/Aldi/Asda", "URGENT \u00b7 For Eastcote"] },
+      { text: "1 \u00d7 Mint", detail: "For Eastcote" },
+    ]);
+    const pdf = Buffer.from(receiptPdf({ title: "PHO & CO stock needed", lines: [], groups: out, foot: "x" })).toString("latin1");
+    expect(pdf).toContain("(Loon Fung/Lidl/Aldi/Asda)");
+  });
+});
+
+describe("the shops line on screen", () => {
+  it("lists the card's shop first, then the other active shops that sell it; nothing when there's only one", async () => {
+    const { shopsLine } = await import("@/lib/domain/stock");
+    const sup = (id: string, name: string, method: "shop" | "production" = "shop", active = true) => ({ id, name, method, active }) as never;
+    const suppliers = [sup("lf", "Loon Fung"), sup("la", "Lidl/Aldi"), sup("as", "Asda"), sup("old", "Old shop", "shop", false), sup("wem", "Production", "production")];
+    const here = { id: "lf", name: "Loon Fung", method: "shop" as const };
+    expect(shopsLine(here, { supplierId: "lf", alsoFrom: ["la", "as", "old"] }, suppliers)).toBe("Loon Fung/Lidl/Aldi/Asda");
+    expect(shopsLine(here, { supplierId: "lf", alsoFrom: [] }, suppliers)).toBeUndefined();
+    expect(shopsLine({ id: "wem", name: "Production", method: "production" }, { supplierId: "wem", alsoFrom: ["la"] }, suppliers)).toBeUndefined();
+  });
+});
+

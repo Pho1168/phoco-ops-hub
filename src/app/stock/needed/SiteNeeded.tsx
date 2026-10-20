@@ -12,6 +12,8 @@ export interface SiteRow {
   status?: string;
   /** The latest change today, ready to show. */
   changed?: string;
+  /** Every shop that sells it, this card's first ("Loon Fung/Lidl/Aldi/Asda"), when there's more than one. */
+  shops?: string;
 }
 export interface SiteGroup {
   key: string; name: string; methodLabel: string; rows: SiteRow[];
@@ -71,6 +73,7 @@ export function SiteNeeded({ site, groups }: { site: string; groups: SiteGroup[]
                   <span className="grow stack" style={{ gap: 2, minWidth: 0 }}>
                     <span className="strong">{r.name}</span>
                     {r.pack && <span className="muted" style={{ fontSize: 13 }}>{r.pack}</span>}
+                    {r.shops && <span className="stock-shops">{r.shops}</span>}
                   </span>
                   {r.urgent && <span className="chip bad">Urgent</span>}
                   {r.editable && !ed && removing !== r.productId && (

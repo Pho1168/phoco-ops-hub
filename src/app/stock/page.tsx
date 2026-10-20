@@ -6,6 +6,7 @@ import { kitchenPlan, neededView, siteNeededView } from "@/lib/stock-service";
 import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "./Bar";
 import { stockCtx } from "./load";
+import { PrintStock } from "./PrintStock";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,7 @@ export default async function StockHome() {
     <>
       <StockBar ctx={ctx} onPhone={onPhone} title="Stock" />
       <main className="stack">
+        {!onPhone && (can.ordering || siteList) && <PrintStock label={can.ordering ? "Print everything on Stock needed." : `Print what ${ctx.site.name} has on Stock needed.`} />}
         <div className="tiles">
           {can.report && door("/stock/report", "box", "Report stock", draft && (drafted || draft.noIssues)
             ? `Not sent yet: ${plural(drafted, "item")}`
