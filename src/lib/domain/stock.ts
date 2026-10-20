@@ -866,3 +866,19 @@ export function orderSummary(t: PurchaseTask, views: TaskLineView[], products: P
 export function withProgress(d: { requests: StockRequest[]; lines: TaskLine[]; events: StockEvent[]; receipts: Receipt[]; tasks: Pick<PurchaseTask, "id" | "cancelledAt">[] }): { request: StockRequest; progress: Progress }[] {
   return d.requests.map((request) => ({ request, progress: progress(request, d.lines, d.events, d.receipts, d.tasks) }));
 }
+
+/**
+ * The tick-off sheet for the 80 mm receipt printer: the same groups as `neededSheet`, each line "amount × item · pack"
+ * with who it's for, any note and "also at" underneath, and URGENT or NEW at the front of that small line.
+ */
+export function neededReceipt(sheet: ReturnType<typeof neededSheet>): { heading: string; sub?: string; rows: { text: string; detail?: string; plain?: boolean }[] }[] {
+  return sheet.map((g) => ({
+    heading: g.heading,
+    sub: g.sub,
+    rows: [
+      ...g.rows.map((r) => ({ text: `${r.qty} \u00d7 ${r.item}`, detail: [r.flag, r.detail].filter(Boolean).join(" \u00b7 ") || undefined })),
+      // What a driver already has: shown, not ticked here.
+      ...(g.notes ?? []).map((n) => ({ text: n, plain: true })),
+    ],
+  }));
+}

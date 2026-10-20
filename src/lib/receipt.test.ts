@@ -48,3 +48,19 @@ describe("the handover list as a receipt", () => {
     expect(pdf).toContain("tub");
   });
 });
+
+describe("Stock needed on the receipt printer", () => {
+  it("puts the amount before the item and who it's for underneath, URGENT or NEW first", async () => {
+    const { neededReceipt } = await import("@/lib/domain/stock");
+    const out = neededReceipt([
+      { heading: "New items", sub: "Not in the catalogue yet", rows: [{ qty: "2", item: "Gloves · Box of 100", detail: "For Eastcote", flag: "NEW" }] },
+      { heading: "Lidl/Aldi", sub: "Shop trip", rows: [{ qty: "3", item: "Beansprout", detail: "For Eastcote", flag: "URGENT" }, { qty: "?", item: "Mint" }], notes: ["With Sam: 2 Eggs"] },
+    ]);
+    expect(out[0]).toEqual({ heading: "New items", sub: "Not in the catalogue yet", rows: [{ text: "2 × Gloves · Box of 100", detail: "NEW · For Eastcote" }] });
+    expect(out[1].rows).toEqual([{ text: "3 × Beansprout", detail: "URGENT · For Eastcote" }, { text: "? × Mint", detail: undefined }, { text: "With Sam: 2 Eggs", plain: true }]);
+    const pdf = Buffer.from(receiptPdf({ title: "PHO & CO stock needed", lines: [], groups: out, foot: "x" })).toString("latin1");
+    expect(pdf).toContain("Beansprout");
+    expect(pdf).toContain("URGENT");
+    expect(pdf).toContain("Shop trip");
+  });
+});
