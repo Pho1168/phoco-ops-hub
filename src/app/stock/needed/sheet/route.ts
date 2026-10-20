@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/data";
-import { editsSiteNeeded, neededCount, neededSheet, runsOrdering } from "@/lib/domain/stock";
+import { editsSiteNeeded, neededCount, neededReceipt, neededSheet, runsOrdering } from "@/lib/domain/stock";
 import { londonDate, londonHM, longDay } from "@/lib/domain/time";
-import { checklistPdf } from "@/lib/pdf";
+import { checklistPdf, receiptPdf } from "@/lib/pdf";
 import { current } from "@/lib/session";
 import { neededView, siteNeededView } from "@/lib/stock-service";
 
@@ -11,9 +11,11 @@ export const dynamic = "force-dynamic";
 /**
  * Everything on Stock needed as one tick-off sheet (PDF): new items, then each supplier's items with a box to tick,
  * the amount and who it's for. For owners and operations managers, to print or keep on a phone. On a restaurant's tablet,
- * everyone else who can see its Stock needed gets the same sheet for that restaurant only.
+ * everyone else who can see its Stock needed gets the same sheet for that restaurant only. `?format=receipt` makes it
+ * for the 80 mm receipt printer instead of A4 (`receiptPdf`, in parts no longer than A4).
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const receipt = new URL(req.url).searchParams.get("format") === "receipt";
   const ctx = await current();
   if (!ctx || ctx.person.pinMustChange) return new NextResponse("Sign in to see this", { status: 401 });
   const orders = runsOrdering(ctx.person);
@@ -32,12 +34,12 @@ export async function GET() {
   const items = neededCount(groups) + newItems.length;
   const suppliers = groups.filter((g) => g.rows.length).length;
   const today = londonDate(now);
-  const pdf = checklistPdf({
+  const head = {
     title: orders ? "PHO & CO stock needed" : `PHO & CO stock needed \u00b7 ${ctx.site.name}`,
     lines: [longDay(today), `${items} item${items === 1 ? "" : "s"} from ${suppliers} supplier${suppliers === 1 ? "" : "s"}`, `Printed by ${ctx.person.name.split(" ")[0]} at ${londonHM(now)}`],
-    groups: sheet,
     foot: "Tick in the app too, so the list stays right for everyone.",
-  });
+  };
+  const pdf = receipt ? receiptPdf({ ...head, groups: neededReceipt(sheet) }) : checklistPdf({ ...head, groups: sheet });
   return new NextResponse(Buffer.from(pdf), {
     headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="PHO-CO-stock-needed-${today}.pdf"`, "cache-control": "no-store", "x-content-type-options": "nosniff" },
   });

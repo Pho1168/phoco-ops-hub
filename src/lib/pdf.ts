@@ -204,7 +204,9 @@ export const RECEIPT_W = 226.77;
  */
 export const RECEIPT_H = 841.89;
 
-export interface ReceiptGroup { heading: string; rows: string[] }
+/** A line to tick: the text (big), and a small grey line under it when there is one. */
+export type ReceiptRow = string | { text: string; detail?: string; plain?: boolean };
+export interface ReceiptGroup { heading: string; sub?: string; rows: ReceiptRow[] }
 
 /**
  * A handover list for a receipt printer: 80 mm pages, each as long as A4 at most (the last one only as long as it needs).
@@ -224,19 +226,25 @@ export function receiptPdf(o: { title: string; lines: string[]; groups: ReceiptG
     return out.map((l) => fitText(l, sz, max, bold));
   };
   type Block = { h: number; draw: (y: number, ops: PdfOp[]) => void };
-  const headBlock = (text: string): Block => {
+  const headBlock = (text: string, sub?: string): Block => {
     const lines = wrap(text.toUpperCase(), W, headSize, true);
-    const h = 6 + lines.length * headLead + 5;
+    const h = 6 + lines.length * headLead + (sub ? 10 : 0) + 5;
     return { h, draw: (y, ops) => {
       lines.forEach((l, i) => ops.push({ t: "text", x: M, y: y - 6 - headSize + 1 - i * headLead, size: headSize, bold: true, text: l }));
+      if (sub) ops.push({ t: "text", x: M, y: y - 6 - lines.length * headLead - 6, size: 8, text: fitText(sub, 8, W), grey: 0.3 });
       ops.push({ t: "line", x1: M, y1: y - h + 2, x2: M + W, y2: y - h + 2, width: 1 });
     } };
   };
-  const rowBlock = (text: string): Block => {
+  const small = 8.5, smallLead = 10.5;
+  const rowBlock = (row: ReceiptRow): Block => {
+    const { text, detail, plain } = typeof row === "string" ? { text: row, detail: undefined, plain: false } : row;
     const lines = wrap(text, W - 18, size);
-    return { h: lines.length * lead + 4, draw: (y, ops) => {
-      ops.push({ t: "rect", x: M, y: y - lead + 3, w: box, h: box, width: 1 });
-      lines.forEach((l, i) => ops.push({ t: "text", x: M + 18, y: y - lead + 4.5 - i * lead, size, text: l }));
+    const more = detail ? wrap(detail, W - 18, small) : [];
+    return { h: lines.length * lead + more.length * smallLead + 4, draw: (y, ops) => {
+      if (!plain) ops.push({ t: "rect", x: M, y: y - lead + 3, w: box, h: box, width: 1 });
+      lines.forEach((l, i) => ops.push({ t: "text", x: M + 18, y: y - lead + 4.5 - i * lead, size, text: l, grey: plain ? 0.3 : 0 }));
+      const y2 = y - lines.length * lead;
+      more.forEach((l, i) => ops.push({ t: "text", x: M + 18, y: y2 - 6 - i * smallLead, size: small, text: l, grey: 0.3 }));
     } };
   };
   const pages: { ops: PdfOp[]; used: number }[] = [];
@@ -250,20 +258,24 @@ export function receiptPdf(o: { title: string; lines: string[]; groups: ReceiptG
   for (const l of o.lines) put({ h: 12, draw: (yy, p) => p.push({ t: "text", x: M, y: yy - 9, size: 8.5, text: fitText(l, 8.5, W), grey: 0.25 }) });
   put({ h: 8, draw: (yy, p) => p.push({ t: "line", x1: M, y1: yy - 4, x2: M + W, y2: yy - 4, width: 0.8 }) });
   for (const g of o.groups) {
-    const head = headBlock(g.heading);
+    const head = headBlock(g.heading, g.sub);
     const rows = g.rows.map(rowBlock);
     // A heading never sits alone at the foot of a page: it moves over with its first item.
     if (!fits(head.h + (rows[0]?.h ?? 0))) open();
     put(head);
     for (const r of rows) {
-      if (!fits(r.h)) { open(); put(headBlock(`${g.heading} (continued)`)); }
+      if (!fits(r.h)) { open(); put(headBlock(`${g.heading} (continued)`, g.sub)); }
       put(r);
     }
   }
   if (!o.groups.length) put({ h: 14, draw: (yy, p) => p.push({ t: "text", x: M, y: yy - 11, size, text: "Nothing on the list." }) });
-  const footH = 22;
+  const footLines = wrap(o.foot, W, 8.5);
+  const footH = 12 + footLines.length * 10.5;
   if (!fits(footH)) open();
-  put({ h: footH, draw: (yy, p) => { p.push({ t: "line", x1: M, y1: yy - 6, x2: M + W, y2: yy - 6, width: 0.8 }); p.push({ t: "text", x: M, y: yy - 17, size: 8.5, text: fitText(o.foot, 8.5, W - 60), grey: 0.25 }); } });
+  put({ h: footH, draw: (yy, p) => {
+    p.push({ t: "line", x1: M, y1: yy - 6, x2: M + W, y2: yy - 6, width: 0.8 });
+    footLines.forEach((l, i) => p.push({ t: "text", x: M, y: yy - 17 - i * 10.5, size: 8.5, text: l, grey: 0.25 }));
+  } });
   // Page numbers; the last page is only as long as it needs to be (shifted down so nothing moves off it).
   const sizes = pages.map((pg, i) => {
     const last = i === pages.length - 1;

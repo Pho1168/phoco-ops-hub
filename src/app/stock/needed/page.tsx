@@ -72,6 +72,7 @@ export default async function NeededPage() {
           <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
             <span className="muted grow" style={{ fontSize: 14 }}>Everything below on one page, with boxes to tick.</span>
             <a className="btn small" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (PDF)</a>
+            <a className="btn small" href="/stock/needed/sheet?format=receipt" target="_blank" rel="noreferrer"><Icon name="print" /> Print (80 mm receipt)</a>
           </div>
         )}
         {newItems.length > 0 && (
@@ -111,6 +112,7 @@ async function SitePage({ ctx }: { ctx: Ctx }) {
           <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
             <span className="muted grow" style={{ fontSize: 14 }}>Everything below on one page, with boxes to tick.</span>
             <a className="btn small" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (PDF)</a>
+            <a className="btn small" href="/stock/needed/sheet?format=receipt" target="_blank" rel="noreferrer"><Icon name="print" /> Print (80 mm receipt)</a>
           </div>
         )}
         <SiteNeeded site={ctx.site.name} groups={view} />
