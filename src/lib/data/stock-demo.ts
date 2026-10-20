@@ -85,7 +85,7 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
   return {
     async stockCatalog() {
       const s = S();
-      return { suppliers: [...s.suppliers].sort((a, b) => a.name.localeCompare(b.name)), products: [...s.products].sort((a, b) => a.position - b.position).map(({ position, ...p }) => { void position; return p; }),
+      return { suppliers: [...s.suppliers].sort((a, b) => a.name.localeCompare(b.name)), products: [...s.products].sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }) || (a.size ?? "").localeCompare(b.size ?? "", "en", { sensitivity: "base" }) || a.position - b.position).map(({ position, ...p }) => { void position; return p; }),
         prices: [...s.prices].sort((a, b) => b.on.localeCompare(a.on)) };
     },
     async saveSupplier(id, sup, active) {

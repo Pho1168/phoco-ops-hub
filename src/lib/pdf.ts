@@ -125,7 +125,8 @@ export function orderSheetPdf(o: { title: string; lines: string[]; rows: { qty: 
   return buildPdf(pages, o.title);
 }
 
-export interface SheetRow { qty: string; item: string; detail?: string; flag?: string }
+/** `shops`: every shop that sells it ("Loon Fung/Lidl/Aldi/Asda"), on a line of its own in dark text; then `info` (or `detail`) small and grey. */
+export interface SheetRow { qty: string; item: string; detail?: string; flag?: string; shops?: string; info?: string }
 export interface SheetGroup { heading: string; sub?: string; rows: SheetRow[]; notes?: string[] }
 
 /**
@@ -169,7 +170,8 @@ export function checklistPdf(o: { title: string; lines: string[]; groups: SheetG
     ops.push({ t: "line", x1: x, y1: y - 15, x2: x + colW, y2: y - 15, width: 1 });
     y -= 22;
     for (const r of g.rows) {
-      const h = r.detail ? 22 : 14;
+      const small = r.shops ? r.info : r.detail;
+      const h = 14 + (r.shops ? 11 : 0) + (small ? 8.5 : 0);
       room(h);
       const cx = x0();
       ops.push({ t: "rect", x: cx, y: y - 9, w: 8.5, h: 8.5, width: 0.8 });
@@ -177,7 +179,9 @@ export function checklistPdf(o: { title: string; lines: string[]; groups: SheetG
       const flagW = r.flag ? textWidth(r.flag, 7.5, true) + 4 : 0;
       ops.push({ t: "text", x: cx + 40, y: y - 8, size: 9.5, text: fitText(r.item, 9.5, colW - 42 - flagW) });
       if (r.flag) ops.push({ t: "text", x: cx + colW - flagW + 4, y: y - 8, size: 7.5, bold: true, text: r.flag });
-      if (r.detail) ops.push({ t: "text", x: cx + 40, y: y - 17.5, size: 7.5, text: fitText(r.detail, 7.5, colW - 42), grey: 0.4 });
+      let ly = y - 8;
+      if (r.shops) { ly -= 11; ops.push({ t: "text", x: cx + 40, y: ly, size: 9, bold: true, text: fitText(r.shops, 9, colW - 42, true) }); }
+      if (small) { ly -= r.shops ? 9 : 9.5; ops.push({ t: "text", x: cx + 40, y: ly, size: 7.5, text: fitText(small, 7.5, colW - 42), grey: 0.4 }); }
       y -= h;
     }
     for (const nt of g.notes ?? []) {

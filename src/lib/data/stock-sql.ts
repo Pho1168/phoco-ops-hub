@@ -96,7 +96,7 @@ export const stockSql: StockStore = {
   async stockCatalog() {
     const q = sql();
     const suppliers = (await q<SupplierRow[]>`select id, name, method, site_id, note, link, active from stock_suppliers order by lower(name)`).map(toSupplier);
-    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants, also_from from stock_products order by position, lower(name)`).map(toProduct);
+    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants, also_from from stock_products order by lower(name), lower(coalesce(size, '')), position`).map(toProduct);
     const prices = (await q<{ product_id: string; pence: number; on_date: string; note: string | null }[]>`
       select product_id, pence, to_char(on_date, 'YYYY-MM-DD') as on_date, note from stock_prices order by on_date desc, created_at desc`)
       .map((r): Price => ({ productId: r.product_id, pence: r.pence, on: r.on_date, note: opt(r.note) }));
