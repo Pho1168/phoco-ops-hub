@@ -196,55 +196,82 @@ export function checklistPdf(o: { title: string; lines: string[]; groups: SheetG
   return buildPdf(pages, o.title);
 }
 
-/** An 80 mm receipt roll: 226.77 pt wide (72 mm printable), as long as the list needs. */
+/** An 80 mm receipt roll: 226.77 pt wide (72 mm printable). */
 export const RECEIPT_W = 226.77;
-/** A PDF page can't be taller than this (14400 pt). */
-export const RECEIPT_MAX_H = 14400;
+/**
+ * Each page is as long as an A4 sheet (297 mm). Receipt printer drivers on Windows usually offer "80 x 297 mm" as their
+ * roll paper size and cut a longer page off there, so a long list runs on to more pages of that length instead.
+ */
+export const RECEIPT_H = 841.89;
 
 export interface ReceiptGroup { heading: string; rows: string[] }
 
 /**
- * A handover list for a receipt printer: one tall 80 mm page. A heading, then each group (a station) with a box to tick
- * beside every item, in big plain text; long names wrap onto a second line.
+ * A handover list for a receipt printer: 80 mm pages, each as long as A4 at most (the last one only as long as it needs).
+ * A heading, then each group (a station) with a box to tick beside every item, in big plain text; long names and long
+ * group headings wrap onto more lines. A group that runs on to the next page has its heading again ("continued").
  */
 export function receiptPdf(o: { title: string; lines: string[]; groups: ReceiptGroup[]; foot: string }): Uint8Array {
-  const M = 10, W = RECEIPT_W - 2 * M, size = 11, lead = 14.5, box = 9;
-  // Lay out from the top (y counts down from 0), then flip so the page is exactly as tall as the content.
-  const items: ({ t: "title"; text: string } | { t: "small"; text: string } | { t: "head"; text: string } | { t: "row"; lines: string[] } | { t: "gap"; h: number } | { t: "rule" })[] = [];
-  const wrap = (text: string, max: number): string[] => {
+  const M = 10, W = RECEIPT_W - 2 * M, size = 11, lead = 14.5, box = 9, top = 12, bottom = 24, headSize = 11, headLead = 13.5;
+  const wrap = (text: string, max: number, sz: number, bold = false): string[] => {
     const out: string[] = [];
     let line = "";
     for (const w of text.split(/\s+/).filter(Boolean)) {
       const next = line ? `${line} ${w}` : w;
-      if (textWidth(next, size) <= max || !line) line = next; else { out.push(line); line = w; }
+      if (textWidth(next, sz, bold) <= max || !line) line = next; else { out.push(line); line = w; }
     }
     if (line) out.push(line);
-    return out.map((l) => fitText(l, size, max));
+    return out.map((l) => fitText(l, sz, max, bold));
   };
-  items.push({ t: "title", text: o.title });
-  for (const l of o.lines) items.push({ t: "small", text: l });
-  items.push({ t: "rule" });
-  for (const g of o.groups) {
-    items.push({ t: "gap", h: 6 }, { t: "head", text: fitText(g.heading.toUpperCase(), 11, W, true) });
-    for (const r of g.rows) items.push({ t: "row", lines: wrap(r, W - 18) });
-  }
-  if (!o.groups.length) items.push({ t: "small", text: "Nothing on the list." });
-  items.push({ t: "gap", h: 6 }, { t: "rule" }, { t: "small", text: o.foot }, { t: "gap", h: 16 });
-  const heightOf = (it: (typeof items)[number]) => it.t === "title" ? 22 : it.t === "small" ? 12 : it.t === "head" ? 18 : it.t === "row" ? it.lines.length * lead + 4 : it.t === "gap" ? it.h : 8;
-  const total = Math.min(RECEIPT_MAX_H, Math.ceil(10 + items.reduce((h, it) => h + heightOf(it), 0)));
-  const ops: PdfOp[] = [];
-  let y = total - 10;
-  for (const it of items) {
-    const h = heightOf(it);
-    if (y - h < 0) break;
-    if (it.t === "title") ops.push({ t: "text", x: M, y: y - 15, size: 15, bold: true, text: fitText(it.text, 15, W, true) });
-    else if (it.t === "small") ops.push({ t: "text", x: M, y: y - 9, size: 8.5, text: fitText(it.text, 8.5, W), grey: 0.25 });
-    else if (it.t === "head") { ops.push({ t: "text", x: M, y: y - 11, size: 11, bold: true, text: it.text }); ops.push({ t: "line", x1: M, y1: y - 15, x2: M + W, y2: y - 15, width: 1 }); }
-    else if (it.t === "row") {
+  type Block = { h: number; draw: (y: number, ops: PdfOp[]) => void };
+  const headBlock = (text: string): Block => {
+    const lines = wrap(text.toUpperCase(), W, headSize, true);
+    const h = 6 + lines.length * headLead + 5;
+    return { h, draw: (y, ops) => {
+      lines.forEach((l, i) => ops.push({ t: "text", x: M, y: y - 6 - headSize + 1 - i * headLead, size: headSize, bold: true, text: l }));
+      ops.push({ t: "line", x1: M, y1: y - h + 2, x2: M + W, y2: y - h + 2, width: 1 });
+    } };
+  };
+  const rowBlock = (text: string): Block => {
+    const lines = wrap(text, W - 18, size);
+    return { h: lines.length * lead + 4, draw: (y, ops) => {
       ops.push({ t: "rect", x: M, y: y - lead + 3, w: box, h: box, width: 1 });
-      it.lines.forEach((l, i) => ops.push({ t: "text", x: M + 18, y: y - lead + 4 - i * lead + 0.5, size, text: l }));
-    } else if (it.t === "rule") ops.push({ t: "line", x1: M, y1: y - 4, x2: M + W, y2: y - 4, width: 0.8 });
-    y -= h;
+      lines.forEach((l, i) => ops.push({ t: "text", x: M + 18, y: y - lead + 4.5 - i * lead, size, text: l }));
+    } };
+  };
+  const pages: { ops: PdfOp[]; used: number }[] = [];
+  let ops: PdfOp[] = [], y = 0;
+  const open = () => { ops = []; y = RECEIPT_H - top; pages.push({ ops, used: 0 }); };
+  const fits = (h: number) => y - h >= bottom;
+  const put = (b: Block) => { b.draw(y, ops); y -= b.h; pages[pages.length - 1].used = RECEIPT_H - y; };
+  open();
+  // The heading block: title, small lines, a rule.
+  put({ h: 22, draw: (yy, p) => p.push({ t: "text", x: M, y: yy - 15, size: 15, bold: true, text: fitText(o.title, 15, W, true) }) });
+  for (const l of o.lines) put({ h: 12, draw: (yy, p) => p.push({ t: "text", x: M, y: yy - 9, size: 8.5, text: fitText(l, 8.5, W), grey: 0.25 }) });
+  put({ h: 8, draw: (yy, p) => p.push({ t: "line", x1: M, y1: yy - 4, x2: M + W, y2: yy - 4, width: 0.8 }) });
+  for (const g of o.groups) {
+    const head = headBlock(g.heading);
+    const rows = g.rows.map(rowBlock);
+    // A heading never sits alone at the foot of a page: it moves over with its first item.
+    if (!fits(head.h + (rows[0]?.h ?? 0))) open();
+    put(head);
+    for (const r of rows) {
+      if (!fits(r.h)) { open(); put(headBlock(`${g.heading} (continued)`)); }
+      put(r);
+    }
   }
-  return buildPdf([ops], o.title, [{ w: RECEIPT_W, h: total }]);
+  if (!o.groups.length) put({ h: 14, draw: (yy, p) => p.push({ t: "text", x: M, y: yy - 11, size, text: "Nothing on the list." }) });
+  const footH = 22;
+  if (!fits(footH)) open();
+  put({ h: footH, draw: (yy, p) => { p.push({ t: "line", x1: M, y1: yy - 6, x2: M + W, y2: yy - 6, width: 0.8 }); p.push({ t: "text", x: M, y: yy - 17, size: 8.5, text: fitText(o.foot, 8.5, W - 60), grey: 0.25 }); } });
+  // Page numbers; the last page is only as long as it needs to be (shifted down so nothing moves off it).
+  const sizes = pages.map((pg, i) => {
+    const last = i === pages.length - 1;
+    const h = last ? Math.min(RECEIPT_H, Math.ceil(pg.used + bottom)) : RECEIPT_H;
+    const shift = RECEIPT_H - h;
+    if (shift) for (const op of pg.ops) { if (op.t === "line") { op.y1 -= shift; op.y2 -= shift; } else op.y -= shift; }
+    if (pages.length > 1) pg.ops.push({ t: "text", x: M + W - 46, y: 8, size: 8, text: `Part ${i + 1} of ${pages.length}`, grey: 0.35 });
+    return { w: RECEIPT_W, h };
+  });
+  return buildPdf(pages.map((pg) => pg.ops), o.title, sizes);
 }
