@@ -1,0 +1,12 @@
+import { Icon } from "@/components/Icon";
+
+/** The Stock needed print buttons, at the top of a page: the 80 mm receipt (the Epson on the tablet) and the A4 tick-off sheet. */
+export function PrintStock({ label = "Print Stock needed, with boxes to tick." }: { label?: string }) {
+  return (
+    <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
+      <span className="muted lead grow" style={{ fontSize: 14 }}>{label}</span>
+      <a className="btn small" href="/stock/needed/sheet?format=receipt" target="_blank" rel="noreferrer"><Icon name="print" /> Print (80 mm receipt)</a>
+      <a className="btn small ghost" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (A4 PDF)</a>
+    </div>
+  );
+}

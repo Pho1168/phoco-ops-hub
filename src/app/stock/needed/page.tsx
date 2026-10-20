@@ -4,12 +4,12 @@ import { buyFrom, canPurchase, editsSiteNeeded, lookAlikes, methodOf, runsPurcha
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { neededView, siteNeededView } from "@/lib/stock-service";
 import type { Ctx } from "@/lib/session";
-import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "../Bar";
 import { stockCtx } from "../load";
 import { NeededBoard, type BoardGroup } from "./NeededBoard";
 import { NewItemsCard } from "./NewItemsCard";
 import { ClearNeeded } from "./ClearNeeded";
+import { PrintStock } from "../PrintStock";
 import { SiteNeeded, type SiteGroup } from "./SiteNeeded";
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
@@ -68,13 +68,7 @@ export default async function NeededPage() {
     <>
       <StockBar ctx={ctx} onPhone={onPhone} title="Stock needed" back="/stock" eyebrow={`Stock · ${shortDay(londonDate(now))}`} />
       <main className="stack">
-        {(clearable > 0 || newItems.length > 0) && (
-          <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
-            <span className="muted grow" style={{ fontSize: 14 }}>Everything below on one page, with boxes to tick.</span>
-            <a className="btn small" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (PDF)</a>
-            <a className="btn small" href="/stock/needed/sheet?format=receipt" target="_blank" rel="noreferrer"><Icon name="print" /> Print (80 mm receipt)</a>
-          </div>
-        )}
+        <PrintStock label="Everything below, with boxes to tick." />
         {newItems.length > 0 && (
           <NewItemsCard owner={runsPurchasing(ctx.person)}
             items={newItems.map((n) => ({ id: n.id, name: n.name, size: n.size, qty: n.qty, note: n.note, site: siteName.get(n.siteId) ?? n.siteId,
@@ -108,13 +102,7 @@ async function SitePage({ ctx }: { ctx: Ctx }) {
     <>
       <StockBar ctx={ctx} onPhone={false} title="Stock needed" back="/stock" eyebrow={`${ctx.site.name} · ${shortDay(londonDate(now))}`} />
       <main className="stack">
-        {view.some((g) => g.rows.length > 0) && (
-          <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
-            <span className="muted grow" style={{ fontSize: 14 }}>Everything below on one page, with boxes to tick.</span>
-            <a className="btn small" href="/stock/needed/sheet" target="_blank" rel="noreferrer"><Icon name="print" /> Tick-off sheet (PDF)</a>
-            <a className="btn small" href="/stock/needed/sheet?format=receipt" target="_blank" rel="noreferrer"><Icon name="print" /> Print (80 mm receipt)</a>
-          </div>
-        )}
+        <PrintStock label={`${ctx.site.name}'s list below, with boxes to tick.`} />
         <SiteNeeded site={ctx.site.name} groups={view} />
       </main>
       <StockNav ctx={ctx} onPhone={false} />

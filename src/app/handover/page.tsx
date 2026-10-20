@@ -100,6 +100,13 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
           </div>
         )}
 
+        {prepOn && !readOnly && (
+          <div className="row wrap no-print" style={{ gap: 8, alignItems: "center" }}>
+            <span className="muted lead grow" style={{ fontSize: 14 }}>The whole handover list on paper, with a box to tick for every item.</span>
+            <a className="btn small" href="/handover/list" target="_blank" rel="noreferrer"><Icon name="print" /> Print handover list (80 mm receipt)</a>
+          </div>
+        )}
+
         <div className="cols three">
           <section className="stack" aria-label="Notes" style={{ gap: 10 }}>
             <h2 className="grp-h">Notes <span>for this shift and the next</span></h2>
@@ -120,9 +127,6 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
               <div className="card" style={{ background: "color-mix(in srgb, var(--teal-tint) 55%, var(--surface))", fontSize: 13 }}>
                 Each item keeps who it&apos;s for. Change &ldquo;For&rdquo; to pass it on; the person sees it on their shift screen and phone.
               </div>
-            )}
-            {prepOn && !readOnly && (
-              <a className="btn ghost small no-print" href="/handover/list" target="_blank" rel="noreferrer" style={{ justifyContent: "flex-start" }}><Icon name="print" /> Print the handover list (80 mm receipt)</a>
             )}
             {prepOn && !readOnly && (
               <Link href="/handover/prep" className="cta-dark">
