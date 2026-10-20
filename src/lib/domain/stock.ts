@@ -748,7 +748,7 @@ export function neededGroups(items: { request: StockRequest; progress: Progress 
 
 /** The tick-off sheet: new items first, then each supplier's card as rows (amount, item and pack, who it's for). */
 export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name" | "size" | "qty" | "siteId" | "note">[], siteName: (id: SiteId) => string, supplierName: (id: string) => string | undefined = () => undefined):
-  { heading: string; sub?: string; rows: { qty: string; item: string; detail?: string; flag?: string }[]; notes?: string[] }[] {
+  { heading: string; sub?: string; rows: { qty: string; item: string; detail?: string; flag?: string; shops?: string; info?: string }[]; notes?: string[] }[] {
   const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
   const label = (name: string, size?: string) => (size ? `${name} \u00b7 ${size}` : name);
   const out: ReturnType<typeof neededSheet> = [];
@@ -762,8 +762,12 @@ export function neededSheet(groups: NeededGroup[], newItems: Pick<NewItem, "name
       const where = sites.length === 1 ? `For ${siteName(sites[0].siteId)}` : sites.map((x) => `${siteName(x.siteId)} ${fmt(x.qty)}`).join(" \u00b7 ");
       const unknown = r.sites.filter((x) => x.unknown > 0).map((x) => `${siteName(x.siteId)}: amount needed`);
       const also = g.production ? [] : (r.product.alsoFrom ?? []).filter((id) => id !== g.supplier?.id).map(supplierName).filter((n): n is string => !!n);
+      // Sold at more than one shop: every one of them, this card's first ("Loon Fung/Lidl/Aldi/Asda").
+      const shops = also.length ? [g.supplier?.name, ...also].filter(Boolean).join("/") : undefined;
+      const info = [where, ...unknown, ...r.notes.map((t) => `\u201c${t}\u201d`)].filter(Boolean).join(" \u00b7 ");
       return { qty: r.qty > 0 ? fmt(r.qty) : "?", item: label(r.product.name, r.product.size),
-        detail: [where, ...unknown, ...r.notes.map((t) => `\u201c${t}\u201d`), ...(also.length ? [`also at ${also.join(", ")}`] : [])].filter(Boolean).join(" \u00b7 ") || undefined, flag: r.urgent ? "URGENT" : undefined };
+        detail: [shops, info].filter(Boolean).join(" \u00b7 ") || undefined, flag: r.urgent ? "URGENT" : undefined,
+        ...(shops ? { shops, info } : {}) };
     });
     const notes = g.drivers.map((d) => `With ${d.task.assigneeName?.split(" ")[0] ?? "a driver"}: ${d.items.map((x) => `${fmt(x.qty)} ${x.name}`).join(", ")}`);
     if (!rows.length && !notes.length) continue;
@@ -869,14 +873,20 @@ export function withProgress(d: { requests: StockRequest[]; lines: TaskLine[]; e
 
 /**
  * The tick-off sheet for the 80 mm receipt printer: the same groups as `neededSheet`, each line "amount × item · pack"
- * with who it's for, any note and "also at" underneath, and URGENT or NEW at the front of that small line.
+ * with every shop that sells it on a line of its own ("Loon Fung/Lidl/Aldi/Asda", when there's more than one), then who it's
+ * for and any note, with URGENT or NEW at the front.
  */
-export function neededReceipt(sheet: ReturnType<typeof neededSheet>): { heading: string; sub?: string; rows: { text: string; detail?: string; plain?: boolean }[] }[] {
+export function neededReceipt(sheet: ReturnType<typeof neededSheet>): { heading: string; sub?: string; rows: { text: string; detail?: string | string[]; plain?: boolean }[] }[] {
   return sheet.map((g) => ({
     heading: g.heading,
     sub: g.sub,
     rows: [
-      ...g.rows.map((r) => ({ text: `${r.qty} \u00d7 ${r.item}`, detail: [r.flag, r.detail].filter(Boolean).join(" \u00b7 ") || undefined })),
+      ...g.rows.map((r) => {
+        // The shops get a line of their own under the item; who it's for and notes go under that.
+        const rest = [r.flag, r.shops ? r.info : r.detail].filter(Boolean).join(" \u00b7 ");
+        const detail = r.shops ? [r.shops, ...(rest ? [rest] : [])] : rest || undefined;
+        return { text: `${r.qty} \u00d7 ${r.item}`, detail };
+      }),
       // What a driver already has: shown, not ticked here.
       ...(g.notes ?? []).map((n) => ({ text: n, plain: true })),
     ],

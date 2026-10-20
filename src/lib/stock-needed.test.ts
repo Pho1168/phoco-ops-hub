@@ -245,6 +245,11 @@ describe("the tick-off sheet", () => {
     const w = sheet.find((g) => g.heading === "Wing Yip (demo)")!;
     expect(w.rows).toEqual([{ qty: "4", item: "Coconut Milk \u00b7 Can", detail: "For Eastcote", flag: "URGENT" }]);
     expect(w.notes).toEqual(["With Floater: 1 Che Lychee \u00b7 Can"]);
+    // With the shops' names: one sold at more than one shop lists them all, this card's first.
+    const { suppliers } = await db.stockCatalog();
+    const named = neededSheet(await groups(), [], (id) => names[id], (id) => suppliers.find((x) => x.id === id)?.name);
+    expect(named.find((g) => g.heading === "Wing Yip (demo)")!.rows[0]).toMatchObject({
+      shops: "Wing Yip (demo)/Lidl/Aldi (demo)", info: "For Eastcote", detail: "Wing Yip (demo)/Lidl/Aldi (demo) \u00b7 For Eastcote" });
   });
 
   it("is a valid PDF that runs on to more pages when the list is long", () => {
