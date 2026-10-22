@@ -6,9 +6,12 @@ import { useRouter } from "next/navigation";
 import { answerItem, recordAction, signOffRun } from "@/app/actions";
 import { Icon } from "@/components/Icon";
 import type { AnswerType, Outcome } from "@/lib/domain/types";
+import { freezerShown, freezerValue } from "@/lib/domain/temperature";
 
 export interface RunItemView {
   id: string; section: string; text: string; type: AnswerType; tag?: string; meta: string;
+  /** A freezer reading (rule Z): typed without the minus sign, which the box adds. */
+  freezer?: boolean;
   value: string; outcome: Outcome; action?: string;
   warnActions: string[]; badActions: string[]; warnMsg: string; badMsg: string;
 }
@@ -80,7 +83,8 @@ export function RunClient(p: Props) {
                           {it.outcome === "done" && <Icon name="check" />}
                         </button>
                       )}
-                      {it.type === "temp" && (
+                      {it.type === "temp" && it.freezer && <FreezerInput it={it} locked={locked} send={send} />}
+                      {it.type === "temp" && !it.freezer && (
                         <label className="row" style={{ gap: 6 }}>
                           <span className="sr-only">{it.text} in °C</span>
                           <input id={`v-${it.id}`} className={`num ${it.outcome === "todo" ? "" : it.outcome}`} inputMode="decimal" defaultValue={it.value} placeholder="—" disabled={locked}
@@ -170,5 +174,37 @@ export function RunClient(p: Props) {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * A freezer reading: a fixed minus sign before the box, so staff type just the number ("18" is saved as -18°C).
+ * "Above 0°C?" switches the sign for a freezer that really isn't frozen.
+ */
+function FreezerInput({ it, locked, send }: { it: RunItemView; locked: boolean; send: (id: string, value: string) => void }) {
+  const shown = freezerShown(it.value);
+  const [above, setAbove] = useState(shown.above);
+  const [typed, setTyped] = useState(shown.digits);
+  const save = (digits: string, up: boolean) => {
+    const v = freezerValue(digits, up);
+    if (v && v !== it.value) send(it.id, v);
+  };
+  return (
+    <span className="stack" style={{ gap: 4, alignItems: "flex-end" }}>
+      <label className="row" style={{ gap: 6 }}>
+        <span className="sr-only">{it.text} in °C, below zero</span>
+        <span className={`freezer-sign${above ? " up" : ""}`} aria-hidden="true">{above ? "+" : "−"}</span>
+        <input id={`v-${it.id}`} className={`num ${it.outcome === "todo" ? "" : it.outcome}`} inputMode="decimal" value={typed} placeholder="—" disabled={locked}
+          onChange={(e) => setTyped(e.target.value.replace(/[^0-9.,]/g, ""))}
+          onBlur={() => save(typed, above)}
+          onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
+        <span className="muted">°C</span>
+      </label>
+      {!locked && (
+        <button type="button" className="linkish" style={{ fontSize: 12 }} onClick={() => { const up = !above; setAbove(up); if (typed) save(typed, up); }}>
+          {above ? "Back to below 0°C" : "Above 0°C?"}
+        </button>
+      )}
+    </span>
   );
 }

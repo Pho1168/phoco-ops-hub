@@ -975,3 +975,8 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .clean-board.compact { gap: 6px !important; }
 .clean-board.compact .clean-row { padding: 6px 10px; gap: 10px; }
 .clean-board.compact .clean-row .btn.small { padding-top: 6px; padding-bottom: 6px; }
+
+/* A freezer reading: the minus sign is fixed before the box (RunClient FreezerInput). */
+.freezer-sign { font-family: var(--display); font-size: 30px; font-weight: 700; color: var(--brand); width: 18px; text-align: center; }
+.freezer-sign.up { color: var(--accent); }
+.linkish { background: none; border: 0; padding: 2px 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font: inherit; }
