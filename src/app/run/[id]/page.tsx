@@ -36,7 +36,7 @@ export default async function RunPage(props: { params: Promise<{ id: string }> }
     const rule = it.ruleCode ? rules[it.ruleCode] : undefined;
     const acts = it.ruleCode ? ACTIONS[it.ruleCode] : undefined;
     return {
-      id: it.id, section: it.section, text: it.text, type: it.type, tag: it.tag,
+      id: it.id, section: it.section, text: it.text, type: it.type, tag: it.tag, freezer: it.type === "temp" && it.ruleCode === "Z",
       meta: [rule ? describeRule(rule) : it.hint, it.tag === "new" ? "suggested" : it.tag].filter(Boolean).join(" · "),
       value: a?.value ?? "", outcome: a?.outcome ?? "todo", action: a?.action,
       warnActions: acts?.warn ?? [], badActions: acts?.bad ?? [], warnMsg: acts?.warnMsg ?? "", badMsg: acts?.badMsg ?? "",
