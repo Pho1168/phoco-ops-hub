@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { canAct, cleaningBoard, cleaningSummary, jobView, missedJobs, missedMessage, periodEnd, periodStart, previousPeriod, statusLine, urgencyOf, type CleaningEvent, type CleaningJob } from "@/lib/domain/cleaning";
+import { addMonths, canAct, cleaningBoard, cleaningSummary, comingDue, dueMessage, howOften, jobView, missedJobs, missedMessage, periodEnd, periodStart, previousPeriod, statusLine, urgencyOf, type CleaningEvent, type CleaningJob } from "@/lib/domain/cleaning";
 import { boardRows, cleaningBoards, queueCleaningMissed } from "@/lib/cleaning-service";
 import { londonToUtc } from "@/lib/domain/time";
 
@@ -105,7 +105,7 @@ describe("missed jobs", () => {
     expect((await db.notices("DEMO-MGR", 20)).some((x) => x.kind === "cleaning")).toBe(true);
     expect((await db.notices("DEMO-BOH", 20)).some((x) => x.kind === "cleaning")).toBe(false);
     const board = (await cleaningBoards(db, ["EAS"], now)).get("EAS")!;
-    expect(board.every((v) => v.missedLast)).toBe(true);
+    expect(board.filter((v) => v.job.per !== "every").every((v) => v.missedLast)).toBe(true);
   });
 });
 
@@ -122,6 +122,34 @@ describe("the board in the demo store", () => {
     expect((await db.cleaningAct(grease.id, "done", "DEMO-MGR", now + 1)).ok).toBe(true);
     expect((await db.cleaningAct(grease.id, "done", "DEMO-MGR", now + 2)).ok).toBe(false);
     rows = boardRows((await cleaningBoards(db, ["EAS"], now + 3)).get("EAS")!, "DEMO-BOH");
-    expect(rows[rows.length - 1]).toMatchObject({ id: grease.id, complete: true });
+    expect(rows.find((r) => r.id === grease.id)).toMatchObject({ complete: true });
+    expect(rows.findIndex((r) => r.id === grease.id)).toBeGreaterThan(rows.findIndex((r) => !r.complete));
   });
 });
+
+describe("jobs done every few months", () => {
+  const air = job({ id: "AC", name: "Air con cleaned", per: "every", times: 1, everyMonths: 6, firstDue: "2027-04-22" });
+  it("stay off the board until two weeks before they're due, then stay on until done", () => {
+    expect(addMonths("2026-08-31", 6)).toBe("2027-02-28");
+    expect(addMonths("2026-10-22", 6)).toBe("2027-04-22");
+    let v = jobView(air, [], at("2026-10-22"));
+    expect(v).toMatchObject({ complete: true, dueOn: "2027-04-22" });
+    expect(statusLine(v)).toBe("Next due 22 Apr 2027");
+    expect(howOften(air)).toBe("Every 6 months");
+    v = jobView(air, [], at("2027-04-09"));
+    expect(v).toMatchObject({ complete: false, urgency: "soon" });
+    expect(statusLine(v)).toBe("Nobody has taken it yet · due by 22 Apr 2027");
+    expect(jobView(air, [], at("2027-05-30")).urgency).toBe("late"); // overdue: still there
+    expect(comingDue([air], [], at("2027-04-09")).map((d) => d.due)).toEqual(["2027-04-22"]);
+    expect(comingDue([air], [], at("2027-04-07"))).toEqual([]);
+    expect(missedJobs([air], [], at("2027-06-01"))).toEqual([]);
+  });
+  it("once done, the next one is due six months after that", () => {
+    const events = [ev("claimed", "2027-04-22", at("2027-04-10"), "P1", "Jamie", "AC"), ev("done", "2027-04-22", at("2027-04-12"), "P1", "Jamie", "AC")];
+    const v = jobView(air, events, at("2027-04-13"));
+    expect(v).toMatchObject({ complete: true, dueOn: "2027-10-12" });
+    expect(statusLine(v)).toBe("Next due 12 Oct 2027 · last done 12 Apr 2027 by Jamie");
+    expect(dueMessage("Eastcote", air, "2027-04-22").title).toBe("Eastcote: Air con cleaned due by 22 Apr 2027");
+  });
+});
+

@@ -15,7 +15,7 @@ function seed(): CleaningState {
   return {
     jobs: [
       job("EAS", "BOH", "Grease traps", 2), job("EAS", "BOH", "Canopy / extraction grills and hood"), job("EAS", "BOH", "6 ring burner"),
-      job("EAS", "BOH", "Inside fridges and freezers"), job("EAS", "BOH", "Electronic fly killer", 1, "month"),
+      job("EAS", "BOH", "Inside fridges and freezers"), { ...job("EAS", "FOH", "Air con cleaned", 1, "every"), everyMonths: 6, firstDue: "2027-04-22" },
       job("EAS", "FOH", "Light pendants wiped"), job("EAS", "FOH", "Main windows cleaned"),
       job("WEM", "PROD", "Grease traps", 2), job("WEM", "PROD", "Extraction grills and hood"), job("WEM", "PROD", "Cold room evaporators", 1, "month"),
     ],
