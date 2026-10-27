@@ -41,3 +41,24 @@ export function describeRule(rule: TempRule): string {
   if (rule.legalMin !== undefined) parts.push(`≥ ${rule.legalMin}°C`);
   return parts.join(" · ");
 }
+
+/**
+ * Freezer readings (rule Z) are typed without the minus sign: the box shows a fixed "−" and the number typed is
+ * saved below zero, so a slip like "18" for -18 can't raise an alert. A freezer that really is above zero (broken)
+ * is recorded by switching the sign to "+" first (`above`). Anything that isn't a number comes back as typed, for
+ * the usual check to refuse.
+ */
+export function freezerValue(typed: string, above: boolean): string {
+  const t = typed.trim().replace(/^[-−–+]\s*/, "").replace(",", ".").replace(/\s*°c?$/i, "");
+  if (!t) return "";
+  const n = Number(t);
+  if (!Number.isFinite(n)) return typed.trim();
+  if (n === 0) return "0";
+  return `${above ? "" : "-"}${Math.abs(n)}`;
+}
+/** What the freezer box shows for a saved reading: the number without its sign, and whether it was above zero. */
+export function freezerShown(value: string): { digits: string; above: boolean } {
+  const n = Number(value);
+  if (!value.trim() || !Number.isFinite(n)) return { digits: value, above: false };
+  return { digits: String(Math.abs(n)), above: n > 0 };
+}

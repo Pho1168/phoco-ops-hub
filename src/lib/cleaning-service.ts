@@ -1,12 +1,11 @@
 import type { Store } from "@/lib/data/store";
 import { canManage } from "@/lib/domain/access";
-import { AREA_LABEL, cleaningBoard, howOften, missedJobs, missedMessage, periodStart, previousPeriod, statusLine, type CleaningJob, type JobView } from "@/lib/domain/cleaning";
-import { afterQuietHours } from "@/lib/domain/time";
+import { AREA_LABEL, cleaningBoard, comingDue, dueMessage, howOften, missedJobs, missedMessage, statusLine, type CleaningJob, type JobView } from "@/lib/domain/cleaning";
+import { addDays, afterQuietHours, londonDate } from "@/lib/domain/time";
 import type { SiteId } from "@/lib/domain/types";
 
-/** Far enough back to see last month's "missed" (the earliest period any board looks at). */
-const since = (now: number) => previousPeriod("month", periodStart("month", now)) < previousPeriod("week", periodStart("week", now))
-  ? previousPeriod("month", periodStart("month", now)) : previousPeriod("week", periodStart("week", now));
+/** Far enough back for last month's "missed" and when a job done every few months was last done (about 13 months). */
+const since = (now: number) => addDays(londonDate(now), -400);
 
 /** Each site's cleaning board as it stands now (only sites with jobs). */
 export async function cleaningBoards(db: Store, siteIds: SiteId[], now: number): Promise<Map<SiteId, JobView[]>> {
@@ -33,9 +32,19 @@ export async function queueCleaningMissed(now: number, db: Store): Promise<numbe
   for (const m of missedJobs(jobs, events, now)) {
     if (await db.cleaningMissed(m.job.id, m.period, `${m.count} of ${m.job.times} done`)) marked.push(m);
   }
-  if (!marked.length) return 0;
+  const due = comingDue(jobs, events, now);
+  if (!marked.length && !due.length) return 0;
   const people = (await db.people()).filter((p) => p.status === "active");
   let queued = 0;
+  // A job done every few months has come up on the board: one reminder per person, job and due date.
+  for (const d of due) {
+    const site = sites.find((s) => s.id === d.job.siteId);
+    if (!site) continue;
+    const msg = dueMessage(site.name, d.job, d.due);
+    for (const p of people.filter((x) => canManage(x, site.id))) {
+      if (await db.queueNotice({ personId: p.id, kind: "cleaning", title: msg.title, body: msg.body, dedupeKey: `cleaningdue|${d.job.id}|${d.due}|${p.id}`, sendAfter: afterQuietHours(now), url: "/today" })) queued++;
+    }
+  }
   for (const site of sites) {
     for (const period of [...new Set(marked.filter((m) => m.job.siteId === site.id).map((m) => `${m.job.per}|${m.period}`))]) {
       const list = marked.filter((m) => m.job.siteId === site.id && `${m.job.per}|${m.period}` === period);
