@@ -6,6 +6,7 @@ import { sectionsFor } from "@/lib/domain/staff";
 import { londonDate } from "@/lib/domain/time";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { TaskDone, UndoTask } from "@/components/TaskDone";
+import { ClearAlerts } from "@/components/ClearAlerts";
 import { requireManager } from "@/lib/session";
 import { centreFor } from "@/lib/task-centre";
 import { ResolveAlert } from "./ResolveAlert";
@@ -85,6 +86,8 @@ export default async function TaskCentre(props: { searchParams: Promise<{ site?:
         {sites.length === 0
           ? <div className="card muted">None of the sites you manage is open, so there&apos;s nothing to show.</div>
           : <TaskForm key={sites.map((s) => s.id).join(",")} sites={choices.filter((c) => sites.some((s) => s.id === c.id))} today={today} />}
+
+        <ClearAlerts siteId={picked.length ? picked[0].id : undefined} count={items.filter((i) => i.alertId).length} />
 
         {items.length === 0 && <div className="alert good" role="status"><div className="strong">Nothing open. Everything is up to date.</div></div>}
         {PRIORITIES.map((p) => {
