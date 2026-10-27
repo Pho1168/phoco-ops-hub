@@ -633,6 +633,29 @@ export async function resolveAlert(id: string, note: string): Promise<ActionResu
   return { ok: true };
 }
 
+/**
+ * Clear every open alert at the sites this person manages (or just one site) in one go. Each alert is still kept,
+ * resolved with a note saying who cleared it, so the records show it was raised and when it was dealt with.
+ */
+export async function clearAlerts(siteId?: string): Promise<ActionResult & { cleared?: number }> {
+  const ctx = await requireCtx();
+  const db = store();
+  const allowed = ctx.isOwner ? (await db.sites()).map((s) => s.id) : managedSites(ctx.person);
+  const only = siteId === undefined ? undefined : SiteIdZ.parse(siteId);
+  const sites = only ? allowed.filter((s) => s === only) : allowed;
+  if (!sites.length) return { ok: false, error: "Only managers of that site can clear its alerts" };
+  const open = (await Promise.all(sites.map((s) => db.alerts(s)))).flat().filter((a) => !a.resolvedAt);
+  if (!open.length) return { ok: true, cleared: 0 };
+  const note = `Cleared by ${ctx.person.name}`;
+  for (const a of open) await db.resolveAlert(a.id, ctx.person.id, note);
+  for (const s of new Set(open.map((a) => a.siteId))) {
+    const mine = open.filter((a) => a.siteId === s);
+    await db.audit({ actorId: ctx.person.id, siteId: s, action: "alert.clear", detail: `${mine.length} alerts cleared: ${mine.map((a) => a.title).join("; ").slice(0, 500)}` });
+  }
+  revalidatePath("/owner"); revalidatePath("/today"); revalidatePath("/manage/tasks");
+  return { ok: true, cleared: open.length };
+}
+
 /** Owners and operations managers move their session to another site they have access to. */
 export async function switchSite(siteId: string): Promise<void> {
   const ctx = await requireLead();

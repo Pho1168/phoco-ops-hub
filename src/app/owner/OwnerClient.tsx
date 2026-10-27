@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { ClearAlerts } from "@/components/ClearAlerts";
 import { closeSite, createSite, logOutEverywhere, reopenSite, resolveAlert, setFrozen, setKitchenClose, switchSite } from "@/app/actions";
 import { Icon } from "@/components/Icon";
 import { ReadyLight } from "@/components/ReadyLight";
@@ -81,6 +82,7 @@ export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, pe
                 <button type="button" className="btn ghost small" onClick={() => { setErr(""); setModal({ type: "resolve", id: a.id }); }}>Resolve</button>
               </div>
             ))}
+            {s.alerts.length > 0 && <ClearAlerts siteId={s.id} count={s.alerts.length} />}
             {!s.closed && s.id !== currentSite && <button type="button" className="btn ghost" disabled={pending} onClick={() => start(() => switchSite(s.id))}>Work at {s.name}</button>}
             {lead === "owner" && (s.closed
               ? <button type="button" className="btn" disabled={pending} onClick={() => run(() => reopenSite(s.id), `${s.name} reopened`)}>Reopen {s.name}</button>
