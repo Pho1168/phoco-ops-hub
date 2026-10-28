@@ -904,7 +904,7 @@ export async function replyToShift(input: unknown): Promise<ActionResult> {
   const shift = await db.shift(r.data.shiftId);
   if (!shift) return { ok: false, error: "That shift isn't on the rota any more" };
   const now = Date.now();
-  const check = canReply(shift, ctx.person.id, now);
+  const check = canReply(shift, ctx.person.id, now, r.data.kind);
   if (!check.ok) return check;
   const reply = { kind: r.data.kind, lateMinutes: r.data.lateMinutes as LateMinutes | undefined };
   // A repeat (second tap, or a retry after something failed) adds nothing, but its messages are queued again below:
