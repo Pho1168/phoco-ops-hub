@@ -55,17 +55,16 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
     </nav>
   );
 
-  // A manager's view: the lanes with people on today, one at a time (tabs to switch), so the screen stays simple.
+  // A manager's view: every lane with people on today, one under the other in a single column.
   if (view === "lanes" && managerHere) {
     const lanes = await siteLanes(ctx.site, now, db);
-    const shown = lanes.find((l) => l.lane.lane === params.show) ?? lanes[0];
-    return (
+        return (
       <>
         <Bar ctx={ctx} title="Today’s lanes" eyebrow={dateLine(ctx.site.name)} />
         <main>
           {board}
           <div className="row wrap" style={{ gap: 8 }}>
-            <span className="muted lead">One lane at a time: tap a lane to switch.</span>
+            <span className="muted lead">Every lane with people on today.</span>
             <div className="seg sm-seg" role="group" aria-label="View as">
               <Link href="/shift?view=lanes" aria-current="page" className="sm-seg-on">Every lane</Link>
               <Link href="/shift?view=me">My shift</Link>
@@ -78,29 +77,21 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
               <div className="row wrap" style={{ gap: 8 }}>{siteLaneIds(ctx.site).map((l) => <Link key={l} className="btn ghost small" href={`/shift?view=me&lane=${l}`}>{laneName(l)}</Link>)}</div>
             </div>
           )}
-          {lanes.length > 1 && (
-            <div className="seg sm-seg sm-lane-tabs" role="tablist" aria-label="Lane">
-              {lanes.map(({ lane }) => {
-                const on = lane.lane === shown?.lane.lane;
-                return <Link key={lane.lane} role="tab" aria-selected={on} href={`/shift?view=lanes&show=${lane.lane}`} className={on ? "sm-seg-on" : undefined}>{laneName(lane.lane)}</Link>;
-              })}
-            </div>
-          )}
-          {shown && (
-            <section className="sm-lane" aria-label={`${laneName(shown.lane.lane)} lane`}>
+          {lanes.map(({ lane, view: v }) => (
+            <section key={lane.lane} className="sm-lane" aria-label={`${laneName(lane.lane)} lane`}>
               <div className="sm-lane-head">
                 <div className="row wrap" style={{ gap: 8, alignItems: "baseline" }}>
-                  <h2 className="h-sec" style={{ fontSize: 24 }}>{laneName(shown.lane.lane)}</h2>
-                  <span className="muted">{windowLabel(shown.lane)}</span>
+                  <h2 className="h-sec" style={{ fontSize: 24 }}>{laneName(lane.lane)}</h2>
+                  <span className="muted">{windowLabel(lane)}</span>
                 </div>
-                <OnShift on={shown.view.on} label="On this lane" />
-                <Summary view={shown.view} />
+                <OnShift on={v.on} label="On this lane" />
+                <Summary view={v} />
               </div>
-              <DayStrip view={shown.view} now={now} />
-              {shown.view.first && <FirstUp item={shown.view.first} />}
-              <ShiftList view={shown.view} needsPin={needsPin} />
+              <DayStrip view={v} now={now} />
+              {v.first && <FirstUp item={v.first} />}
+              <ShiftList view={v} needsPin={needsPin} />
             </section>
-          )}
+          ))}
           {more(ctx.site)}
         </main>
         <BottomNav ctx={ctx} current="shift" />

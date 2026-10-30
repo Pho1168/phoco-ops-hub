@@ -984,6 +984,12 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 /* Cleaning board: when a job was last cleaned and by whom, in small print. */
 .clean-last { font-size: 12px; color: var(--ink-2); }
 
-/* Shift tab: one lane at a time, with a lane switch above it. */
-.sm-lane-tabs { align-self: flex-start; }
-.sm-lane-tabs a { font-size: 16px; padding: 10px 18px; }
+/* Who's on a lane: a clear card per person, name large, shift time underneath. */
+.sm-team { display: flex; flex-direction: column; gap: 8px; }
+.sm-team-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.sm-team-person { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--line, #E9E6E0); border-radius: 12px; padding: 8px 12px; min-width: 0; }
+.sm-team-person .sm-avatar { width: 36px; height: 36px; font-size: 14px; flex: none; }
+.sm-team-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.sm-team-name { font-weight: 700; font-size: 16px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sm-team-time { font-size: 14px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sm-lane + .sm-lane { margin-top: 8px; }
