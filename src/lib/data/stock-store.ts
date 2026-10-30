@@ -1,4 +1,4 @@
-import type { DraftLine, NewItem, NewItemLine, Price, Product, PurchaseTask, Receipt, StockEvent, StockReport, StockRequest, Supplier, TaskLine } from "@/lib/domain/stock";
+import type { CatalogueLine, DraftLine, OnTopPlan, NewItem, NewItemLine, Price, Product, PurchaseTask, Receipt, StockEvent, StockReport, StockRequest, Supplier, TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
 import type { SiteId } from "@/lib/domain/types";
 
@@ -35,6 +35,13 @@ export interface StockStore {
    * if it was already sent (a second tap, another tab).
    */
   submitStockReport(reportId: string, by: string, lines: DraftLine[], products: Pick<Product, "id" | "supplierId">[], extras?: NewItemLine[]): Promise<{ created: StockRequest[]; again: number; newItems: NewItem[] } | false>;
+
+  /**
+   * Adds what was picked from a round supplier's catalogue to the order at the delivery site, on top of what's already
+   * waiting there (`planOnTop`, planned inside the transaction with the site's requests for those products locked, like
+   * sending a report). New requests have no report.
+   */
+  addOnTop(siteId: SiteId, by: string, lines: CatalogueLine[], products: Pick<Product, "id" | "supplierId">[]): Promise<{ created: StockRequest[]; raised: OnTopPlan["bump"] }>;
 
   /** New items (not in the catalogue): still waiting for the owner, or every one from a time, optionally at some sites. Oldest first. */
   stockNewItems(f: { open?: boolean; since?: number; siteIds?: SiteId[] }): Promise<NewItem[]>;

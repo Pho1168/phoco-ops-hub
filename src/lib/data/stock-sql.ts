@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, laterReportNote, lineEnd, planSubmit, progress, reqCode, shortOf, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, laterReportNote, lineEnd, onTopNote, planOnTop, planSubmit, progress, reqCode, shortOf, TERMINAL, withProgress,
   type DraftLine, type EventKind, type NewItem, type NewItemLine, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { CountLine, StockCount } from "@/lib/domain/stock-count";
 import { londonDate } from "@/lib/domain/time";
@@ -17,9 +17,9 @@ const day = (d: Date | string | null) => (d === null ? undefined : typeof d === 
 interface SupplierRow { id: string; name: string; method: Supplier["method"]; site_id: string | null; note: string | null; link: string | null; active: boolean; delivery_days: number[] | null }
 const toSupplier = (r: SupplierRow): Supplier => ({ id: r.id, name: r.name, method: r.method, siteId: opt(r.site_id), note: opt(r.note), link: opt(r.link), active: r.active,
   ...(r.delivery_days?.length ? { deliveryDays: r.delivery_days.map(Number) } : {}) });
-interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null; for_restaurants: boolean; also_from: string[] | null }
+interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null; for_restaurants: boolean; also_from: string[] | null; copy_of: string | null }
 const toProduct = (r: ProductRow): Product => ({ id: r.id, name: r.name, size: opt(r.size), category: opt(r.category), supplierId: opt(r.supplier_id), active: r.active, link: opt(r.link), importName: opt(r.import_name),
-  ...(r.for_restaurants === false ? { forRestaurants: false } : {}), ...(r.also_from?.length ? { alsoFrom: r.also_from } : {}) });
+  ...(r.for_restaurants === false ? { forRestaurants: false } : {}), ...(r.also_from?.length ? { alsoFrom: r.also_from } : {}), ...(r.copy_of ? { copyOf: r.copy_of } : {}) });
 
 interface ReportRow { id: string; site_id: string; person_id: string; person_name: string | null; business_date: string; lines: DraftLine[]; no_issues: boolean; submitted_at: Date | null; updated_at: Date; extras: NewItemLine[] | null }
 const toReport = (r: ReportRow): StockReport => ({ id: r.id, siteId: r.site_id, personId: r.person_id, personName: opt(r.person_name), date: day(r.business_date)!, lines: r.lines ?? [], noIssues: r.no_issues, submittedAt: r.submitted_at?.getTime(), updatedAt: r.updated_at.getTime(), extras: r.extras ?? [] });
@@ -97,7 +97,7 @@ export const stockSql: StockStore = {
   async stockCatalog() {
     const q = sql();
     const suppliers = (await q<SupplierRow[]>`select id, name, method, site_id, note, link, active, delivery_days from stock_suppliers order by lower(name)`).map(toSupplier);
-    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants, also_from from stock_products order by lower(name), lower(coalesce(size, '')), position`).map(toProduct);
+    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants, also_from, copy_of from stock_products order by lower(name), lower(coalesce(size, '')), position`).map(toProduct);
     const prices = (await q<{ product_id: string; pence: number; on_date: string; note: string | null }[]>`
       select product_id, pence, to_char(on_date, 'YYYY-MM-DD') as on_date, note from stock_prices order by on_date desc, created_at desc`)
       .map((r): Price => ({ productId: r.product_id, pence: r.pence, on: r.on_date, note: opt(r.note) }));
@@ -199,6 +199,27 @@ export const stockSql: StockStore = {
       }
       const newItems = newIds.length ? (await tx<NewItemRow[]>`${newItemSelect(tx)} where n.id = any(${newIds}::uuid[]) order by n.created_at`).map(toNewItem) : [];
       return { created, again: plan.again.length, newItems };
+    });
+  },
+
+  async addOnTop(siteId, by, lines, products) {
+    return withTx(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${"stock-report:" + siteId}))`;
+      const ids = (await tx<{ id: string }[]>`select id from stock_requests where site_id = ${siteId} and cancelled_at is null
+        and product_id = any(${lines.map((l) => l.productId)}::uuid[])`).map((r) => r.id);
+      const plan = planOnTop(lines, siteId, withProgress(await lockRequests(tx, ids)), products);
+      const made: string[] = [];
+      for (const l of plan.create) {
+        const [r] = await tx<{ id: string }[]>`insert into stock_requests (site_id, product_id, level, qty, requested_by, supplier_id)
+          values (${siteId}, ${l.productId}, 'low', ${l.qty}, ${by}, ${l.supplierId ?? null}) returning id`;
+        made.push(r.id);
+      }
+      for (const b of plan.bump) {
+        await tx`update stock_requests set fixed_qty = ${b.to} where id = ${b.requestId}`;
+        await tx`insert into stock_events (by, kind, request_id, qty, text) values (${by}, 'qty_changed', ${b.requestId}, ${b.to}, ${onTopNote(b.add, b.was)})`;
+      }
+      const created = made.length ? (await tx<RequestRow[]>`${requestSelect(tx)} where r.id = any(${made}::uuid[]) order by r.code`).map(toRequest) : [];
+      return { created, raised: plan.bump };
     });
   },
 

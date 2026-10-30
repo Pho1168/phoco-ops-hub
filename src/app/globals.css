@@ -1016,3 +1016,15 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .sm-clean-side .clean-row .strong { font-size: 15px; }
 .sm-clean-side .clean-status { font-size: 12px; }
 .sm-clean-side .clean-btns .btn.small { min-height: 32px; padding: 0 12px; }
+
+/* A round supplier's catalogue on its order page (tick, amount, add to the order). */
+.round-cat .stock-list { grid-template-columns: 1fr; }
+@media (min-width: 900px) { .round-cat .stock-list { grid-template-columns: 1fr 1fr; } }
+.round-cat-qty { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0 14px 12px 54px; }
+.round-cat-qty .stepper button { width: 42px; height: 42px; font-size: 22px; }
+.round-cat-qty .stepper .txt { width: 70px; min-height: 42px; font-size: 18px; }
+.round-cat-bar { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 -16px -14px; padding: 12px 16px;
+  background: color-mix(in srgb, var(--teal-tint) 55%, var(--surface)); border-top: 1px solid var(--teal-tint); border-radius: 0 0 16px 16px; z-index: 1; }
+.round-cat .stock-item { border-color: var(--line); }
+.round-cat .stock-item.on { border-color: var(--warn-soft); }
+.round-want { font-size: 13px; font-weight: 600; color: var(--teal-ink); }

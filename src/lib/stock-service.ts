@@ -2,7 +2,7 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner, leadSites } from "@/lib/domain/access";
-import { buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier, orderableAt, ordersByRound, nextDelivery, neededCount, roundRemindersDue, roundReminderMessage, runsOrdering } from "@/lib/domain/stock";
+import { buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier, orderableAt, ordersByRound, nextDelivery, neededCount, roundRemindersDue, roundReminderMessage, runsOrdering, cleanCatalogueLines, type CatalogueLine } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
@@ -178,6 +178,36 @@ export async function queueRoundReminders(now = Date.now(), db: Store = store())
     }
   }
   return queued;
+}
+
+/** Where a round supplier's order is delivered (its production kitchen), as a site id. */
+export async function roundSite(db: Store, supplierId: string): Promise<string | undefined> {
+  return (await db.supplierDelivers()).find((x) => x.supplierId === supplierId)?.deliversTo;
+}
+
+/**
+ * The person ordering picks from a round supplier's catalogue (Surelygrow's): each product and how many more, added to
+ * the order for the kitchen it delivers to, on top of what's already on it (`planOnTop`). Only someone who orders for
+ * that kitchen (`orderingSites`).
+ */
+export async function addFromCatalogue(db: Store, person: Pick<Person, "id" | "status" | "access">, supplierId: string, lines: CatalogueLine[]):
+  Promise<Done<{ supplier: string; site: string; added: { name: string; qty: number; to: number }[] }>> {
+  const [{ products, suppliers }, sites] = await Promise.all([db.stockCatalog(), db.sites()]);
+  const supplier = suppliers.find((s) => s.id === supplierId);
+  if (!supplier || !ordersByRound(supplier)) return { ok: false, error: "That supplier isn't ordered on delivery days" };
+  const siteId = await roundSite(db, supplier.id);
+  const site = sites.find((s) => s.id === siteId && s.status === "open");
+  if (!site) return { ok: false, error: `${supplier.name} has no open kitchen to deliver to. Set where it delivers first` };
+  if (!orderingSites(person, sites.filter((s) => s.status === "open").map((s) => s.id)).includes(site.id)) return { ok: false, error: `You don't order for ${site.name}` };
+  const clean = cleanCatalogueLines(lines, products, supplier.id);
+  if (!clean.ok) return clean;
+  const r = await db.addOnTop(site.id, person.id, clean.value, products);
+  const name = (id: string) => products.find((p) => p.id === id)?.name ?? "?";
+  const added = [
+    ...r.created.map((c) => ({ name: name(c.productId), qty: c.qty ?? 0, to: c.qty ?? 0 })),
+    ...r.raised.map((b) => ({ name: name(b.productId), qty: b.add, to: b.to })),
+  ];
+  return { ok: true, value: { supplier: supplier.name, site: site.name, added } };
 }
 
 // ---------- Stock needed ----------

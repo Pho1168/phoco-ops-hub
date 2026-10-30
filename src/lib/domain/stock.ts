@@ -53,6 +53,8 @@ export interface Product {
   link?: string;
   /** The name it had in the order sheet it was imported from, kept so it can be traced. */
   importName?: string;
+  /** A production kitchen's copy of a supplier's product (restaurants order the copy): the product it was copied from. */
+  copyOf?: string;
   /** False: restaurants can't ask for it when its supplier delivers only to a kitchen (raw ingredients). Default true. */
   forRestaurants?: boolean;
   /** Other suppliers that also sell it (not the preferred one), for buying it wherever suits the run. */
@@ -492,6 +494,87 @@ export function planSubmit(lines: DraftLine[], siteId: SiteId, open: { request: 
   }
   return plan;
 }
+
+/** A line picked from a round supplier's catalogue on its order page: a product and how many more. */
+export interface CatalogueLine { productId: string; qty: number }
+export interface OnTopPlan {
+  /** A waiting request goes up by the amount picked (`to`); `was` unset: it had no amount. */
+  bump: { requestId: string; productId: string; add: number; to: number; was?: number }[];
+  create: (CatalogueLine & { supplierId?: string })[];
+}
+
+/**
+ * Lines picked from a round supplier's catalogue (Surelygrow's, by the person ordering), checked: that supplier's active
+ * products, once each (the same product picked twice is added up), 1–QTY_MAX of each, at least one.
+ */
+export function cleanCatalogueLines(lines: CatalogueLine[], products: Pick<Product, "id" | "active" | "supplierId">[], supplierId: string):
+  { ok: true; value: CatalogueLine[] } | { ok: false; error: string } {
+  if (!lines.length) return { ok: false, error: "Tick what you need and say how many" };
+  if (lines.length > 300) return { ok: false, error: "That's too many lines at once" };
+  const out = new Map<string, number>();
+  for (const l of lines) {
+    const p = products.find((x) => x.id === l.productId);
+    if (!p || !p.active || p.supplierId !== supplierId) return { ok: false, error: "One of those isn't in this supplier's catalogue any more. Refresh and try again" };
+    const q = Number(l.qty);
+    if (!Number.isFinite(q) || q <= 0 || q > QTY_MAX) return { ok: false, error: `Say how many of each, from 1 to ${QTY_MAX}` };
+    out.set(l.productId, Math.round(((out.get(l.productId) ?? 0) + q) * 100) / 100);
+  }
+  if ([...out.values()].some((q) => q > QTY_MAX)) return { ok: false, error: `Quantities are from 1 to ${QTY_MAX}` };
+  return { ok: true, value: [...out].map(([productId, qty]) => ({ productId, qty })) };
+}
+
+/**
+ * What picking from the catalogue does at the delivery site: what's picked goes on top of what's already on the order.
+ * A product still waiting there (nothing of it ordered yet) has its latest waiting request raised by the amount picked
+ * (one with no amount gets the amount picked); anything else is a new request from that product's supplier.
+ */
+export function planOnTop(lines: CatalogueLine[], siteId: SiteId, open: { request: StockRequest; progress: Progress }[], products: Pick<Product, "id" | "supplierId">[]): OnTopPlan {
+  const plan: OnTopPlan = { bump: [], create: [] };
+  const round = (n: number) => Math.round(n * 100) / 100;
+  for (const l of lines) {
+    const waiting = open.filter((o) => o.request.siteId === siteId && o.request.productId === l.productId && !o.request.cancelledAt && stillWaiting(o.progress))
+      .sort((a, b) => b.request.createdAt - a.request.createdAt)[0];
+    if (waiting) {
+      const was = waiting.progress.wanted;
+      plan.bump.push({ requestId: waiting.request.id, productId: l.productId, add: l.qty, to: round((was ?? 0) + l.qty), ...(was !== undefined ? { was } : {}) });
+    } else plan.create.push({ ...l, supplierId: products.find((p) => p.id === l.productId)?.supplierId });
+  }
+  return plan;
+}
+
+/** What the restaurants want of a supplier's product: still to send of the production kitchen's copies of it. */
+export interface Demand { qty: number; sizes: string[]; sites: { siteId: SiteId; qty: number }[] }
+
+/**
+ * How much the restaurants want of each product copied for the production kitchen (`Product.copyOf`): what's still to
+ * send on the kitchen's orders (its production groups on Stock needed), added up by the product it was copied from.
+ * The kitchen's own site is left out. Copies' packs can differ from the supplier's case, so they're listed (`sizes`).
+ */
+export function restaurantDemand(groups: Pick<NeededGroup, "production" | "rows">[], products: Pick<Product, "id" | "copyOf">[], kitchenId?: SiteId): Map<string, Demand> {
+  const out = new Map<string, Demand>();
+  const round = (n: number) => Math.round(n * 100) / 100;
+  for (const g of groups.filter((x) => x.production)) {
+    for (const r of g.rows) {
+      const from = products.find((p) => p.id === r.product.id)?.copyOf;
+      if (!from) continue;
+      const sites = r.sites.filter((x) => x.siteId !== kitchenId && x.qty > 0);
+      if (!sites.length) continue;
+      const d = out.get(from) ?? { qty: 0, sizes: [], sites: [] };
+      for (const x of sites) {
+        d.qty = round(d.qty + x.qty);
+        const at = d.sites.find((y) => y.siteId === x.siteId);
+        if (at) at.qty = round(at.qty + x.qty); else d.sites.push({ siteId: x.siteId, qty: x.qty });
+      }
+      const size = r.product.size ?? "Each";
+      if (!d.sizes.includes(size)) d.sizes.push(size);
+      out.set(from, d);
+    }
+  }
+  return out;
+}
+
+/** The log line on a request raised from the catalogue. */
+export const onTopNote = (add: number, was?: number) => `${was === undefined ? "was not sure" : `was ${was}`}, ${add} more added from the catalogue`;
 
 /** Urgent: reported out, or the open request was reported out again. */
 export const isUrgent = (r: Pick<StockRequest, "id" | "level">, events: StockEvent[]) =>
