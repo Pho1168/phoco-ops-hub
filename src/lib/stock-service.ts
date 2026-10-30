@@ -1,10 +1,10 @@
 import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
-import { isOwner } from "@/lib/domain/access";
-import { buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier, orderableAt, ordersByRound } from "@/lib/domain/stock";
+import { isOwner, leadSites } from "@/lib/domain/access";
+import { buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier, orderableAt, ordersByRound, nextDelivery, neededCount, roundRemindersDue, roundReminderMessage, runsOrdering } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
-import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
+import { afterQuietHours, londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
 
 /**
@@ -145,6 +145,36 @@ export async function queueStockEscalations(now = Date.now(), db: Store = store(
       if (await db.queueNotice({ personId: o.id, kind: "stock", title: `Out of stock, nobody assigned · ${sites.get(r.siteId) ?? r.siteId}`,
         body: `${product ? productLabel(product) : "A product"} (${reqCode(r)}) was reported out and nobody has it yet.`,
         dedupeKey: `stockurgent|${r.id}|${o.id}`, sendAfter: afterQuietHours(now, true), url: "/stock/needed" })) queued++;
+    }
+  }
+  return queued;
+}
+
+/**
+ * On a round supplier's cut-off day (Surelygrow: Sunday and Thursday), remind whoever orders it: the owners, and the
+ * operations managers of the kitchen it delivers to (any ops if that isn't set). 15:00 always, 20:00 if anything is
+ * still waiting. Run by `tick()`; one message per stage, delivery and person.
+ */
+export async function queueRoundReminders(now = Date.now(), db: Store = store()): Promise<number> {
+  const [{ catalog, data, items }, sites, people, delivers] = await Promise.all([stockView(db, now), db.sites(), db.people(), db.supplierDelivers()]);
+  const open = sites.filter((s) => s.status === "open").map((s) => s.id);
+  const groups = neededGroups(items, data, catalog.products, catalog.suppliers, open, now);
+  const today = londonDate(now), hm = londonHM(now);
+  let queued = 0;
+  for (const s of catalog.suppliers.filter((x) => ordersByRound(x))) {
+    const next = nextDelivery(s.deliveryDays ?? [], now);
+    const g = groups.find((x) => x.supplier?.id === s.id);
+    const waiting = g ? neededCount([g]) : 0;
+    const stages = roundRemindersDue(next, today, hm, waiting);
+    if (!next || !stages.length) continue;
+    const to = delivers.find((d) => d.supplierId === s.id)?.deliversTo;
+    const who = people.filter((p) => p.status === "active" && (isOwner(p) || (runsOrdering(p) && (!to || leadSites(p, open).includes(to)))));
+    for (const stage of stages) {
+      const msg = roundReminderMessage(s.name, next, waiting, stage, shortDay);
+      for (const p of who) {
+        if (await db.queueNotice({ personId: p.id, kind: "stock", title: msg.title, body: msg.body,
+          dedupeKey: `round|${s.id}|${next.date}|${stage}|${p.id}`, sendAfter: now, url: `/stock/order/${s.id}` })) queued++;
+      }
     }
   }
   return queued;

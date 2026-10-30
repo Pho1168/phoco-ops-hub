@@ -188,6 +188,25 @@ export function nextDelivery(days: number[], now: number): { date: string; order
   return undefined;
 }
 
+/**
+ * The reminders due for a round supplier's order on its cut-off day: "first" from 15:00 (always, so the order isn't
+ * forgotten), and "last" from 20:00 while something is still waiting to be ordered. Each is sent once (its key).
+ */
+export type RoundStage = "first" | "last";
+export function roundRemindersDue(next: { orderBy: string } | undefined, today: string, hm: string, waiting: number): RoundStage[] {
+  if (!next || next.orderBy !== today) return [];
+  const out: RoundStage[] = [];
+  if (hm >= "15:00" && hm < "20:00") out.push("first");
+  if (hm >= "20:00" && waiting > 0) out.push("last");
+  return out;
+}
+export function roundReminderMessage(supplier: string, next: { date: string }, waiting: number, stage: RoundStage, day: (date: string) => string): { title: string; body: string } {
+  const items = `${waiting} item${waiting === 1 ? "" : "s"}`;
+  return stage === "first"
+    ? { title: `${supplier} order closes tonight`, body: `For ${day(next.date)}. ${waiting ? `${items} on it so far.` : "Nothing on it yet."} Check the kitchen's stock, then send the order and tick it off.` }
+    : { title: `Last call: ${supplier} order`, body: `${items} for ${day(next.date)} still not ticked as ordered. Send it tonight.` };
+}
+
 /** "Monday and Friday" */
 export function deliveryDaysText(days: number[]): string {
   const NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
