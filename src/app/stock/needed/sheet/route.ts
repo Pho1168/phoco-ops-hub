@@ -41,6 +41,6 @@ export async function GET(req: Request) {
   };
   const pdf = receipt ? receiptPdf({ ...head, groups: neededReceipt(sheet) }) : checklistPdf({ ...head, groups: sheet });
   return new NextResponse(Buffer.from(pdf), {
-    headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="PHO-CO-stock-needed-${today}.pdf"`, "cache-control": "no-store", "x-content-type-options": "nosniff" },
+    headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="PHO-CO-stock-needed-${today}-${londonHM(now).replace(":", "")}.pdf"`, "cache-control": "no-store, no-cache, must-revalidate, max-age=0", pragma: "no-cache", expires: "0", "x-content-type-options": "nosniff" },
   });
 }
