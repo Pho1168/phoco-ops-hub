@@ -299,7 +299,8 @@ describe("stock rules", () => {
   it("keeps different sizes and suppliers as different products", () => {
     const existing = [{ id: "x", name: "Basil Seed", size: "Bag Large", supplierId: "wy" }];
     expect(cleanProduct({ name: "basil seed", size: "bag large", supplierId: "wy" }, [{ id: "wy" }], existing).ok).toBe(false);
-    expect(cleanProduct({ name: "Basil Seed", size: "Bag Medium", supplierId: "wy" }, [{ id: "wy" }], existing).ok).toBe(true);
+    expect(cleanProduct({ name: "Basil Seed", size: "Bag Medium", supplierId: "wy" }, [{ id: "wy" }], existing).ok).toBe(false); // no category
+    expect(cleanProduct({ name: "Basil Seed", size: "Bag Medium", category: "Che & Drinks", supplierId: "wy" }, [{ id: "wy" }], existing).ok).toBe(true);
     expect(cleanProduct({ name: "Basil Seed", size: "Bag Large", link: "http://x" }, [{ id: "wy" }], existing).ok).toBe(false);
   });
   it("a production supplier names its kitchen; links are https", () => {
