@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/data";
-import { editsSiteNeeded, neededCount, neededReceipt, neededSheet, runsOrdering } from "@/lib/domain/stock";
+import { editsSiteNeeded, neededCount, neededReceipt, neededSheet, ordersByRound, runsOrdering } from "@/lib/domain/stock";
 import { londonDate, londonHM, longDay } from "@/lib/domain/time";
 import { checklistPdf, receiptPdf } from "@/lib/pdf";
 import { current } from "@/lib/session";
@@ -25,7 +25,8 @@ export async function GET(req: Request) {
   // Owners and ops: everything they order for. The tablet: this restaurant's list (new items go to the owner, not shown).
   const view = orders ? await neededView(db, ctx.person, now) : undefined;
   const mine = view ? undefined : await siteNeededView(db, ctx.site.id, now);
-  const groups = view?.groups ?? mine!.groups;
+  // A round supplier's order (Surelygrow) is its own list, kept off Stock needed and so off this sheet.
+  const groups = view ? view.groups.filter((g) => !ordersByRound(g.supplier)) : mine!.groups;
   const sites = view?.sites ?? [ctx.site];
   const newItems = view ? await db.stockNewItems({ open: true, siteIds: view.siteIds }) : [];
   const name = new Map(sites.map((s) => [s.id, s.name]));

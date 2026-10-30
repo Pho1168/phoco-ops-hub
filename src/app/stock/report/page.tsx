@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { store } from "@/lib/data";
-import { editsSiteNeeded, frequent, isClosed, siteWaitingRows, STATE_LABEL, typicalQty } from "@/lib/domain/stock";
+import { editsSiteNeeded, frequent, isClosed, orderableAt, siteWaitingRows, STATE_LABEL, typicalQty } from "@/lib/domain/stock";
 import { siteNeededView, stockView } from "@/lib/stock-service";
 import { StockBar, StockNav } from "../Bar";
 import { stockCtx } from "../load";
@@ -23,7 +23,7 @@ export default async function ReportPage() {
   const history = items.map((x) => x.request);
   // A production kitchen doesn't order what it makes itself.
   const ownSupplier = new Set(catalog.suppliers.filter((s) => s.method === "production" && s.siteId === ctx.site.id).map((s) => s.id));
-  const products = catalog.products.filter((p) => p.active && !(p.supplierId && ownSupplier.has(p.supplierId)))
+  const products = catalog.products.filter((p) => orderableAt(p, ctx.site) && !(p.supplierId && ownSupplier.has(p.supplierId)))
     .map((p) => ({ id: p.id, name: p.name, size: p.size, category: p.category, typical: typicalQty(history, p.id, ctx.site.id) }));
   const open = items.filter((x) => !isClosed(x.progress)).map((x) => ({ productId: x.request.productId, state: STATE_LABEL[x.progress.state] }));
   const waiting: Waiting[] = siteWaitingRows(site.groups, site.items).map(({ row, group, editable, status }) => ({

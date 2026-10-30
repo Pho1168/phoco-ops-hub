@@ -211,10 +211,10 @@ describe("clearing Stock needed", () => {
     await db.addStockEvent({ by: "DEMO-FLT", kind: "bought", lineId: l2.id, qty: 1 });
     expect((await clearNeeded(db, (await db.person("DEMO-BOH"))!, NOW)).ok).toBe(false); // staff can't
     const r = await clearNeeded(db, (await db.person("DEMO-OPS"))!, NOW);
-    expect(r).toMatchObject({ ok: true, value: { cancelled: 3, kept: 1, lists: 1 } });
+    expect(r).toMatchObject({ ok: true, value: { cancelled: 2, kept: 1, lists: 1 } }); // Lime is Surelygrow's (a round order): left alone
     expect((await db.stockTask(task.tasks[0].id))!.tasks[0].cancelledAt).toBeDefined();
     const left = await groups();
-    expect(left.flatMap((g) => g.rows.map((x) => [x.product.name, x.qty]))).toEqual([["Che Lychee", 1]]);
+    expect(left.flatMap((g) => g.rows.map((x) => [x.product.name, x.qty])).sort()).toEqual([["Che Lychee", 1], ["Lime", 2]]);
     expect(await state(created.find((c) => c.productId === (wy.rows.find((x) => x.product.name === "Coconut Milk")!.product.id))!.id)).toBe("cancelled");
   });
 });

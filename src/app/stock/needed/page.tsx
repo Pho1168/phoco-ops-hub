@@ -1,12 +1,14 @@
 import { store } from "@/lib/data";
 import { redirect } from "next/navigation";
-import { buyFrom, canPurchase, editsSiteNeeded, lookAlikes, methodOf, runsPurchasing, shopsLine, siteWaitingRows, type NeededRow, type RemovedRow } from "@/lib/domain/stock";
+import { canPurchase, deliveryDaysText, editsSiteNeeded, lookAlikes, methodOf, neededCount, nextDelivery, ordersByRound, runsPurchasing, shopsLine, siteWaitingRows, type NeededRow, type RemovedRow } from "@/lib/domain/stock";
+import { boardGroups } from "./board";
+import Link from "next/link";
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { neededView, siteNeededView } from "@/lib/stock-service";
 import type { Ctx } from "@/lib/session";
 import { StockBar, StockNav } from "../Bar";
 import { stockCtx } from "../load";
-import { NeededBoard, type BoardGroup } from "./NeededBoard";
+import { NeededBoard } from "./NeededBoard";
 import { NewItemsCard } from "./NewItemsCard";
 import { ClearNeeded } from "./ClearNeeded";
 import { PrintStock } from "../PrintStock";
@@ -39,32 +41,15 @@ export default async function NeededPage() {
   const newItems = await db.stockNewItems({ open: true, siteIds });
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   // What clearing would take off: every row and every item with a driver, and new items (the owner's to decide).
-  const clearable = groups.reduce((n, g) => n + g.rows.length + g.drivers.reduce((m, d) => m + d.open, 0), 0) + (runsPurchasing(ctx.person) ? newItems.length : 0);
+  const clearable = groups.filter((g) => !ordersByRound(g.supplier)).reduce((n, g) => n + g.rows.length + g.drivers.reduce((m, d) => m + d.open, 0), 0) + (runsPurchasing(ctx.person) ? newItems.length : 0);
   const drivers = people.filter((p) => canPurchase({ ...p, purchaser: purchasers.includes(p.id) }))
     .map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
-  const board: BoardGroup[] = groups.map((g) => ({
-    key: g.key, name: g.supplier?.name ?? "No supplier yet", method: g.supplier?.method ?? "shop", methodLabel: g.supplier ? methodOf(g.supplier.method)?.label ?? "" : "Set one in the catalogue",
-    production: g.production, pdf: g.supplier?.method === "delivery",
-    rows: g.rows.map((r) => ({
-      productId: r.product.id, name: r.product.name, pack: r.product.size, qty: r.qty, urgent: r.urgent, notes: r.notes, photoIds: r.photoIds,
-      sites: r.sites.filter((s) => s.qty > 0).map((s) => ({ name: siteName.get(s.siteId) ?? s.siteId, qty: s.qty })),
-      unknown: r.unknownIds.map((id) => {
-        const siteId = items.find((x) => x.request.id === id)?.request.siteId;
-        return { requestId: id, site: siteId ? siteName.get(siteId) ?? siteId : undefined };
-      }),
-      // Other shops that sell it, to move it to before a run (not for a production kitchen's items).
-      buyFrom: g.production ? [] : buyFrom(r.product, catalog.suppliers).filter((s) => s.id !== g.supplier?.id).map((s) => ({ id: s.id, name: s.name })),
-      changed: changedLine(r.changed),
-      shops: g.production ? undefined : shopsLine(g.supplier, r.product, catalog.suppliers),
-    })),
-    removed: g.removed.map((x) => removedLine(x, siteName.get(x.siteId) ?? x.siteId)),
-    drivers: g.drivers.map((d) => ({ taskId: d.task.id, name: d.task.assigneeName ?? "Someone", items: d.items, open: d.open, done: d.done })),
-    ticked: g.ticked.map((t) => ({
-      productId: t.product.id, name: t.product.name, pack: t.product.size, qty: t.qty,
-      sites: t.sites.map((s) => ({ name: siteName.get(s.siteId) ?? s.siteId, qty: s.qty })),
-      who: `${t.by.length ? `${t.by.join(", ")} · ` : ""}${londonHM(t.at)}`,
-    })),
-  }));
+  // A round supplier's order (Surelygrow, Monday and Friday) has its own page: kept off this list.
+  const rounds = catalog.suppliers.filter((s) => ordersByRound(s)).map((s) => {
+    const g = groups.find((x) => x.supplier?.id === s.id);
+    return { supplier: s, items: g ? neededCount([g]) : 0, next: nextDelivery(s.deliveryDays ?? [], now) };
+  });
+  const board = boardGroups(groups.filter((g) => !ordersByRound(g.supplier)), { siteName, items, suppliers: catalog.suppliers });
   return (
     <>
       <StockBar ctx={ctx} onPhone={onPhone} title="Stock needed" back="/stock" eyebrow={`Stock · ${shortDay(londonDate(now))}`} />
@@ -77,6 +62,16 @@ export default async function NeededPage() {
             suppliers={catalog.suppliers.filter((x) => x.active).map((x) => ({ id: x.id, name: x.name })).sort((a, b) => a.name.localeCompare(b.name))}
             categories={[...new Set(catalog.products.map((p) => p.category).filter((c): c is string => !!c))].sort()} />
         )}
+        {rounds.map(({ supplier: s, items: n, next }) => (
+          <Link key={s.id} className="card row wrap stock-round-link" href={`/stock/order/${s.id}`} style={{ gap: 10, alignItems: "center", textDecoration: "none", color: "inherit" }}>
+            <span className="grow stack" style={{ gap: 2 }}>
+              <span className="strong">{s.name} order · separate list</span>
+              <span className="muted">Delivers {deliveryDaysText(s.deliveryDays ?? [])}{next ? ` · next ${shortDay(next.date)}, order by end of ${shortDay(next.orderBy)}` : ""}</span>
+            </span>
+            {n > 0 && <span className="chip warn">{n} item{n === 1 ? "" : "s"}</span>}
+            <span className="btn small ghost">Open</span>
+          </Link>
+        ))}
         <NeededBoard groups={board} drivers={drivers} />
         {(clearable > 0) && <ClearNeeded count={clearable} />}
       </main>

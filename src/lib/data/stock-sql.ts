@@ -14,8 +14,9 @@ const opt = <T,>(v: T | null) => (v === null ? undefined : v);
 const num = (v: string | number | null) => (v === null ? undefined : Number(v));
 const day = (d: Date | string | null) => (d === null ? undefined : typeof d === "string" ? d.slice(0, 10) : d.toISOString().slice(0, 10));
 
-interface SupplierRow { id: string; name: string; method: Supplier["method"]; site_id: string | null; note: string | null; link: string | null; active: boolean }
-const toSupplier = (r: SupplierRow): Supplier => ({ id: r.id, name: r.name, method: r.method, siteId: opt(r.site_id), note: opt(r.note), link: opt(r.link), active: r.active });
+interface SupplierRow { id: string; name: string; method: Supplier["method"]; site_id: string | null; note: string | null; link: string | null; active: boolean; delivery_days: number[] | null }
+const toSupplier = (r: SupplierRow): Supplier => ({ id: r.id, name: r.name, method: r.method, siteId: opt(r.site_id), note: opt(r.note), link: opt(r.link), active: r.active,
+  ...(r.delivery_days?.length ? { deliveryDays: r.delivery_days.map(Number) } : {}) });
 interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null; for_restaurants: boolean; also_from: string[] | null }
 const toProduct = (r: ProductRow): Product => ({ id: r.id, name: r.name, size: opt(r.size), category: opt(r.category), supplierId: opt(r.supplier_id), active: r.active, link: opt(r.link), importName: opt(r.import_name),
   ...(r.for_restaurants === false ? { forRestaurants: false } : {}), ...(r.also_from?.length ? { alsoFrom: r.also_from } : {}) });
@@ -95,7 +96,7 @@ async function lockRequests(tx: postgres.ReservedSql, ids: string[]): Promise<St
 export const stockSql: StockStore = {
   async stockCatalog() {
     const q = sql();
-    const suppliers = (await q<SupplierRow[]>`select id, name, method, site_id, note, link, active from stock_suppliers order by lower(name)`).map(toSupplier);
+    const suppliers = (await q<SupplierRow[]>`select id, name, method, site_id, note, link, active, delivery_days from stock_suppliers order by lower(name)`).map(toSupplier);
     const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants, also_from from stock_products order by lower(name), lower(coalesce(size, '')), position`).map(toProduct);
     const prices = (await q<{ product_id: string; pence: number; on_date: string; note: string | null }[]>`
       select product_id, pence, to_char(on_date, 'YYYY-MM-DD') as on_date, note from stock_prices order by on_date desc, created_at desc`)

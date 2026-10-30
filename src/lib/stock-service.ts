@@ -2,7 +2,7 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner } from "@/lib/domain/access";
-import { buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier } from "@/lib/domain/stock";
+import { buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier, orderableAt, ordersByRound } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
@@ -28,8 +28,10 @@ export async function stockView(db: Store, now: number, siteIds?: string[], days
 export async function sendStockReport(db: Store, person: Pick<Person, "id">, site: Pick<Site, "id">, now: number): Promise<Done<{ created: StockRequest[]; again: number; noIssues: boolean; newItems: NewItem[] }>> {
   const draft = await db.stockDraft(site.id, person.id);
   if (!draft) return { ok: false, error: "There's nothing to send. Add what you need, or tap No stock issues today" };
-  const { catalog } = await stockView(db, now, [site.id]);
-  const clean = cleanLines(draft.lines, catalog.products);
+  const [{ catalog }, here] = await Promise.all([stockView(db, now, [site.id]), db.site(site.id)]);
+  // Kitchen-only items (a delivery supplier's raw ingredients) can't be sent from a restaurant (`orderableAt`).
+  const kind = here?.kind ?? "restaurant";
+  const clean = cleanLines(draft.lines, catalog.products.map((p) => (orderableAt(p, { kind }) ? p : { ...p, active: false })));
   if (!clean.ok) return clean;
   const extras = cleanNewItems(draft.extras);
   if (!extras.ok) return extras;
@@ -280,8 +282,10 @@ const CLEAR_NOTE = "Cleared from Stock needed";
  * that's partly bought already can't be cancelled; it's left on the list and counted.
  */
 export async function clearNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, now: number): Promise<Done<{ cancelled: number; kept: number; lists: number; newItems: number }>> {
-  const v = await neededView(db, person, now);
-  if (!v.siteIds.length) return { ok: false, error: "Only the owner and operations managers order stock" };
+  const all = await neededView(db, person, now);
+  if (!all.siteIds.length) return { ok: false, error: "Only the owner and operations managers order stock" };
+  // A round supplier's order (Surelygrow) has its own page and isn't on Stock needed, so clearing leaves it alone.
+  const v = { ...all, groups: all.groups.filter((g) => !ordersByRound(g.supplier)) };
   let lists = 0;
   for (const t of v.groups.flatMap((g) => g.drivers.map((d) => d.task))) if (await db.cancelStockTask(t.id, person.id, CLEAR_NOTE)) lists++;
   const lineReq = new Map(v.data.lines.map((l) => [l.id, l.requestId]));

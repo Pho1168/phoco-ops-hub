@@ -23,7 +23,7 @@ function seed(): StockState {
   const sup = (name: string, method: Supplier["method"], extra: Partial<Supplier> = {}): Supplier => ({ id: randomUUID(), name, method, active: true, ...extra });
   const suppliers = [
     sup("Production (demo)", "production", { siteId: "WEM", note: "The Wembley production kitchen" }),
-    sup("Surelygrow (demo)", "delivery"), sup("Wing Yip (demo)", "shop"), sup("Lidl/Aldi (demo)", "shop"),
+    sup("Surelygrow (demo)", "delivery", { deliveryDays: [1, 5] }), sup("Wing Yip (demo)", "shop"), sup("Lidl/Aldi (demo)", "shop"),
     sup("Amazon (demo)", "online", { link: "https://www.amazon.co.uk" }),
   ];
   const [prod, main, wy, lidl, amz] = suppliers;
