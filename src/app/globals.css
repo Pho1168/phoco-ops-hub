@@ -980,3 +980,6 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .freezer-sign { font-family: var(--display); font-size: 30px; font-weight: 700; color: var(--brand); width: 18px; text-align: center; }
 .freezer-sign.up { color: var(--accent); }
 .linkish { background: none; border: 0; padding: 2px 0; color: var(--ink-2); text-decoration: underline; cursor: pointer; font: inherit; }
+
+/* Cleaning board: when a job was last cleaned and by whom, in small print. */
+.clean-last { font-size: 12px; color: var(--ink-2); }

@@ -1,6 +1,6 @@
 import type { Store } from "@/lib/data/store";
 import { canManage } from "@/lib/domain/access";
-import { AREA_LABEL, cleaningBoard, comingDue, dueMessage, howOften, missedJobs, missedMessage, statusLine, type CleaningJob, type JobView } from "@/lib/domain/cleaning";
+import { AREA_LABEL, cleaningBoard, comingDue, dueMessage, howOften, lastCleanedLine, missedJobs, missedMessage, statusLine, type CleaningJob, type JobView } from "@/lib/domain/cleaning";
 import { addDays, afterQuietHours, londonDate } from "@/lib/domain/time";
 import type { SiteId } from "@/lib/domain/types";
 
@@ -64,10 +64,12 @@ export interface BoardRow {
   /** Claimed by the person looking (they can let go). */
   mine: boolean;
   missedLast: boolean;
+  /** Small print: when it was last cleaned and by whom. */
+  last?: string;
 }
-export function boardRows(board: JobView[], meId: string): BoardRow[] {
+export function boardRows(board: JobView[], meId: string, now = Date.now()): BoardRow[] {
   return board.map((v) => ({
     id: v.job.id, name: v.job.name, area: AREA_LABEL[v.job.area], often: howOften(v.job), status: statusLine(v),
-    urgency: v.urgency, complete: v.complete, mine: v.claimed?.personId === meId, missedLast: v.missedLast,
+    urgency: v.urgency, complete: v.complete, mine: v.claimed?.personId === meId, missedLast: v.missedLast, last: lastCleanedLine(v, now),
   }));
 }

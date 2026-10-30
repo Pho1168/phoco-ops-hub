@@ -178,6 +178,20 @@ export function statusLine(v: JobView): string {
 }
 
 /**
+ * The small print under a job: when it was last cleaned and by whom, from any week ("Last cleaned today 14:05 by Jamie",
+ * "yesterday 21:30", "Tue 27 Oct 20:15"). Nothing for a job done every few months (its status already says).
+ */
+export function lastCleanedLine(v: JobView, now: number): string | undefined {
+  if (v.job.per === "every") return undefined;
+  const e = v.lastDone;
+  if (!e) return "Not cleaned since the board started";
+  const today = londonDate(now), on = londonDate(e.at);
+  const time = new Date(e.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+  const when = on === today ? "today" : on === addDays(today, -1) ? "yesterday" : shortDay(on);
+  return `Last cleaned ${when} ${time} by ${e.personName ? e.personName.split(" ")[0] : "someone"}`;
+}
+
+/**
  * Jobs to mark missed: each active job's period before this one, when it was done fewer times than it should be and
  * isn't marked yet. A period only counts if the job was on the board for at least 4 days of it (a job added on a
  * Saturday isn't missed that weekend).
