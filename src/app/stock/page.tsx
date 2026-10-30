@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { store } from "@/lib/data";
-import { editsSiteNeeded, lineEnd, neededCount, sentTodayLine } from "@/lib/domain/stock";
-import { londonDate, londonHM } from "@/lib/domain/time";
+import { deliveryDaysText, editsSiteNeeded, lineEnd, neededCount, nextDelivery, ordersByRound, sentTodayLine } from "@/lib/domain/stock";
+import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { kitchenPlan, neededView, siteNeededView } from "@/lib/stock-service";
 import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "./Bar";
@@ -29,8 +29,14 @@ export default async function StockHome() {
   const sentToday = sent.filter((r) => r.date === today);
   const drafted = draft ? draft.lines.length + draft.extras.length : 0;
   const newCount = can.ordering ? (await db.stockNewItems({ open: true, siteIds: view.siteIds })).length : 0;
-  const needed = neededCount(view.groups) + newCount;
-  const suppliers = view.groups.filter((g) => g.rows.length).length;
+  // A round supplier's order (Surelygrow) has its own door, not counted in Stock needed.
+  const listed = view.groups.filter((g) => !ordersByRound(g.supplier));
+  const needed = neededCount(listed) + newCount;
+  const suppliers = listed.filter((g) => g.rows.length).length;
+  const rounds = can.ordering ? view.catalog.suppliers.filter((s) => ordersByRound(s)).map((s) => {
+    const g = view.groups.find((x) => x.supplier?.id === s.id);
+    return { s, n: g ? neededCount([g]) : 0, next: nextDelivery(s.deliveryDays ?? [], now) };
+  }) : [];
   // On the tablet, everyone else sees what their restaurant has asked for (and can change it).
   const siteList = !can.ordering && !onPhone && editsSiteNeeded(ctx.person, ctx.site, ctx.scope) ? (await siteNeededView(db, ctx.site.id, now)).groups : undefined;
   const siteItems = siteList ? neededCount(siteList) : 0;
@@ -65,6 +71,8 @@ export default async function StockHome() {
             : sentTodayLine(sentToday, londonHM) ?? `What ${ctx.site.name} needs ordered, and how many`,
             drafted ? { n: drafted, tone: "warn" } : undefined)}
           {can.ordering && door("/stock/needed", "cart", "Stock needed", needed ? `${plural(needed - newCount, "item")} from ${plural(suppliers, "supplier")}${newCount ? ` · ${newCount} new to add` : ""}` : "Nothing waiting", { n: needed })}
+          {rounds.map(({ s, n, next }) => <span key={s.id} style={{ display: "contents" }}>{door(`/stock/order/${s.id}`, "truck", `${s.name} order`,
+            next ? `For ${shortDay(next.date)} · order by end of ${shortDay(next.orderBy)}` : `Delivers ${deliveryDaysText(s.deliveryDays ?? [])}`, { n, tone: "warn" })}</span>)}
           {siteList && door("/stock/needed", "cart", "Stock needed", siteItems ? `${plural(siteItems, "item")} ${ctx.site.name} has asked for · change or remove` : "Nothing waiting", { n: siteItems })}
           {(myItems > 0 || can.purchaser) && door("/stock/tasks", "truck", "My shopping list", myItems ? `${plural(myItems, "item")} to get` : "Nothing for you right now", { n: myItems })}
         </div>

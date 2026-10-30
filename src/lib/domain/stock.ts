@@ -34,6 +34,11 @@ export interface Supplier {
   /** The supplier's website (https only). */
   link?: string;
   active: boolean;
+  /**
+   * The days it delivers on (ISO weekday, 1 = Monday … 7 = Sunday). A supplier with delivery days is ordered as a round
+   * (Surelygrow: Monday and Friday): its items are kept off Stock needed and go on its own order page instead.
+   */
+  deliveryDays?: number[];
 }
 
 export interface Product {
@@ -153,6 +158,42 @@ export const runsPurchasing = (p: Pick<Person, "status" | "access">) => p.status
 /** Stock needed (tick off, give to a driver, the order sheet): owners, and operations managers for their sites. */
 export const runsOrdering = (p: Pick<Person, "status" | "access">) => p.status === "active" && isLead(p);
 export const orderingSites = (p: Pick<Person, "status" | "access">, all: SiteId[]): SiteId[] => (runsOrdering(p) ? leadSites(p, all) : []);
+
+/**
+ * What can be asked for at a site: active products, except kitchen-only ones (`forRestaurants` false: the raw
+ * ingredients a production kitchen orders from its delivery supplier), which only a production kitchen asks for.
+ * Restaurants get those from the kitchen as its own products instead.
+ */
+export const orderableAt = (product: Pick<Product, "active" | "forRestaurants">, site: Pick<Site, "kind">) =>
+  product.active && (product.forRestaurants !== false || site.kind === "production");
+
+/** A supplier ordered as a round on set delivery days (its items have their own order page, not Stock needed). */
+export const ordersByRound = (s: Pick<Supplier, "deliveryDays" | "active"> | undefined) => !!s && s.active && (s.deliveryDays?.length ?? 0) > 0;
+
+/** ISO weekday (1 = Monday … 7 = Sunday) of a London date. */
+const isoDay = (date: string) => { const d = new Date(`${date}T12:00:00Z`).getUTCDay(); return d === 0 ? 7 : d; };
+
+/**
+ * The next delivery a round supplier's order is for, and the last day to send it: orders close at the end of the day
+ * before a delivery (Sunday for Monday, Thursday for Friday), so on a delivery day itself the order is for the next one.
+ */
+export function nextDelivery(days: number[], now: number): { date: string; orderBy: string } | undefined {
+  const valid = days.filter((d) => Number.isInteger(d) && d >= 1 && d <= 7);
+  if (!valid.length) return undefined;
+  const today = londonDate(now);
+  for (let i = 1; i <= 7; i++) {
+    const date = addDays(today, i);
+    if (valid.includes(isoDay(date))) return { date, orderBy: addDays(date, -1) };
+  }
+  return undefined;
+}
+
+/** "Monday and Friday" */
+export function deliveryDaysText(days: number[]): string {
+  const NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const names = [...new Set(days)].filter((d) => d >= 1 && d <= 7).sort((a, b) => a - b).map((d) => NAMES[d]);
+  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
 
 /** The production team at a production kitchen: production staff there, its managers, and owners. */
 export const onProductionTeam = (p: Pick<Person, "status" | "access">, siteId: SiteId) =>
