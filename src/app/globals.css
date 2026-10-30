@@ -983,3 +983,7 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 
 /* Cleaning board: when a job was last cleaned and by whom, in small print. */
 .clean-last { font-size: 12px; color: var(--ink-2); }
+
+/* Shift tab: one lane at a time, with a lane switch above it. */
+.sm-lane-tabs { align-self: flex-start; }
+.sm-lane-tabs a { font-size: 16px; padding: 10px 18px; }
