@@ -82,14 +82,16 @@ export function FirstUp({ item }: { item: ShiftItem }) {
 export function OnShift({ on, label, showTimes = true }: { on: OnLane[]; label: string; showTimes?: boolean }) {
   if (!on.length) return null;
   return (
-    <div className="sm-on-row">
-      <span className="sm-on-label">{label}</span>
-      <ul className="sm-on" aria-label={label}>
+    <div className="sm-team">
+      <div className="sm-on-label">{label}</div>
+      <ul className="sm-team-list" aria-label={label}>
         {on.map((p) => (
-          <li key={p.shiftId}>
+          <li key={p.shiftId} className="sm-team-person">
             <span className="avatar sm-avatar" aria-hidden>{initials(p.name)}</span>
-            <span className="strong" style={{ fontSize: 14 }}>{p.name}</span>
-            {showTimes && <span className="muted">{p.time}</span>}
+            <span className="sm-team-text">
+              <span className="sm-team-name">{p.name}</span>
+              {showTimes && <span className="sm-team-time">{p.time}</span>}
+            </span>
             {p.reply && <span className={`chip ${p.reply.tone}`}>{p.reply.text}</span>}
           </li>
         ))}
