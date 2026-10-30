@@ -11,8 +11,8 @@ const THANKS: Record<Kind, string> = {
   cant_make_it: "Your manager can see this now. Please phone them as well.",
 };
 
-/** On my way / Running late / Can't make it, under a shift that starts soon or is on now. */
-export function ShiftReply({ shiftId, current }: { shiftId: string; current?: { text: string; tone: string } }) {
+/** On my way (only before the shift starts) / Running late / Can't make it, under a shift that starts soon or is on now. */
+export function ShiftReply({ shiftId, current, started = false }: { shiftId: string; current?: { text: string; tone: string }; started?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [late, setLate] = useState(false);
@@ -32,7 +32,7 @@ export function ShiftReply({ shiftId, current }: { shiftId: string; current?: { 
     <div className="stack" style={{ gap: 8, marginTop: 8 }}>
       {current && <div><span className={`chip ${current.tone}`}>You said: {current.text}</span></div>}
       <div className="row wrap" style={{ gap: 6 }}>
-        <button type="button" className="btn small" disabled={pending} onClick={() => send("on_my_way")}>On my way</button>
+        {!started && <button type="button" className="btn small" disabled={pending} onClick={() => send("on_my_way")}>On my way</button>}
         <button type="button" className="btn ghost small" disabled={pending} aria-expanded={late} onClick={() => setLate(!late)}>Running late</button>
         <button type="button" className="btn ghost small" disabled={pending} onClick={() => {
           if (confirm("Tell your manager you can't make this shift? Please phone them as well.")) send("cant_make_it");

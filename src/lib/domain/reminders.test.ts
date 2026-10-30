@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canReply, dueReminders, forYou, forYouLine, latestReplies, PHONE_COUNT_CATEGORIES, PHONE_TEXT_CATEGORIES, phoneNote, reminderAt, reminderKey, replyAlertUntil,
+  canReply, canSayOnMyWay, ON_MY_WAY_OVER, shiftStart, dueReminders, forYou, forYouLine, latestReplies, PHONE_COUNT_CATEGORIES, PHONE_TEXT_CATEGORIES, phoneNote, reminderAt, reminderKey, replyAlertUntil,
   replyMessages, replyOpen, replySendAfter, sameReply, shiftEnd, shiftReminderMessage, startingLaterToday, TABLET_ONLY_CATEGORIES, teamDay, todaysShifts,
   waitingFrom, waitingLines, type ReminderShift, type ShiftReply,
 } from "./reminders";
@@ -210,6 +210,16 @@ describe("replies", () => {
     expect(canReply(live, "p1", at("2026-10-14", "11:20")).ok).toBe(true);
     expect(canReply(live, "p1", at("2026-10-14", "22:15"))).toMatchObject({ ok: false, error: "That shift has finished" });
     expect(canReply({ ...live, start: "18:00", end: "01:00" }, "p1", at("2026-10-15", "00:30")).ok).toBe(true);
+  });
+  it("on my way only before the shift starts; late and can't make it still work after", () => {
+    const start = shiftStart(live);
+    expect(canReply(live, "p1", start - 60_000, "on_my_way").ok).toBe(true);
+    expect(canReply(live, "p1", start, "on_my_way")).toMatchObject({ ok: false });
+    expect(canReply(live, "p1", start + 60_000, "on_my_way")).toMatchObject({ ok: false, error: ON_MY_WAY_OVER });
+    expect(canReply(live, "p1", start + 60_000, "late").ok).toBe(true);
+    expect(canReply(live, "p1", start + 60_000, "cant_make_it").ok).toBe(true);
+    expect(canSayOnMyWay(live, start - 1)).toBe(true);
+    expect(canSayOnMyWay(live, start)).toBe(false);
   });
   it("a shift just after midnight can be answered from its reminder the evening before", () => {
     const early = shift({ date: "2026-10-15", start: "00:30", end: "06:00" });

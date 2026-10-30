@@ -162,7 +162,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
           </div>
           <DayStrip view={v} now={now} />
           <OnShift on={v.on.filter((p) => p.personId !== ctx.person.id)} label="On with you" />
-          {v.reply && <ShiftReply shiftId={v.reply.shiftId} current={v.reply.current} />}
+          {v.reply && <ShiftReply shiftId={v.reply.shiftId} current={v.reply.current} started={v.reply.started} />}
         </div>
 
         {v.first && <FirstUp item={v.first} />}

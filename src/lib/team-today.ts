@@ -40,7 +40,7 @@ export function teamRowsView(rows: TeamDayRow[], now = Date.now()): TeamRowView[
     const status = reply
       ? { text: `${reply.kind === "on_my_way" ? "On my way" : reply.kind === "late" ? `About ${reply.lateMinutes} min late` : "Can't make it"} · ${stamp(reply.createdAt)}`,
           tone: reply.kind === "on_my_way" ? "done" as const : reply.kind === "late" ? "late" as const : "bad" as const }
-      : r.remindedAt && !r.ended ? { text: "No reply yet", tone: "" as const } : undefined;
+      : r.remindedAt && !r.started ? { text: "No reply yet", tone: "" as const } : undefined;
     const when = r.remindedAt ? `Reminded ${stamp(r.remindedAt)}` : r.started ? "Not reminded" : `Reminder at ${stamp(reminderAt(r))}`;
     return {
       shiftId: r.shiftId, name: r.name, siteId: r.siteId, site: r.siteName, section: sectionName(r.section),

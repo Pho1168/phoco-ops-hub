@@ -186,11 +186,16 @@ export interface ShiftReply { id: string; shiftId: string; personId: string; sit
 export const replyOpensAt = (s: ShiftTimes) => Math.min(londonToUtc(s.date, "00:00"), reminderAt(s));
 export const replyOpen = (s: ShiftTimes, now: number) => now >= replyOpensAt(s) && now < shiftEnd(s);
 
-export function canReply(shift: ShiftTimes & { personId: string; published: boolean; cancelled: boolean }, personId: string, now: number): { ok: true } | { ok: false; error: string } {
+/** "On my way" is for before the shift starts. Once it has, saying nothing means they are at work, on time. */
+export const canSayOnMyWay = (s: ShiftTimes, now: number) => now < shiftStart(s);
+export const ON_MY_WAY_OVER = "\"On my way\" is only for before your shift starts. If you say nothing, you count as at work and on time.";
+
+export function canReply(shift: ShiftTimes & { personId: string; published: boolean; cancelled: boolean }, personId: string, now: number, kind?: ReplyKind): { ok: true } | { ok: false; error: string } {
   if (shift.personId !== personId) return { ok: false, error: "That isn't your shift" };
   if (!shift.published || shift.cancelled) return { ok: false, error: "That shift isn't on the rota any more" };
   if (now >= shiftEnd(shift)) return { ok: false, error: "That shift has finished" };
   if (now < replyOpensAt(shift)) return { ok: false, error: "You can reply on the day of the shift" };
+  if (kind === "on_my_way" && !canSayOnMyWay(shift, now)) return { ok: false, error: ON_MY_WAY_OVER };
   return { ok: true };
 }
 

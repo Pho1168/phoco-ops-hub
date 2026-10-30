@@ -16,7 +16,7 @@ import { certStatus, expectedKinds, statusText, visibleTypes } from "@/lib/domai
 import { CHIP } from "@/app/manage/certificates/cells";
 import { dueText, isForPerson, priorityCode, taskOrder } from "@/lib/domain/tasks";
 import { TaskDone } from "@/components/TaskDone";
-import { latestReplies, replyOpen, replyText, sectionName, type ShiftReply as Reply } from "@/lib/domain/reminders";
+import { canSayOnMyWay, latestReplies, replyOpen, replyText, sectionName, type ShiftReply as Reply } from "@/lib/domain/reminders";
 import { ShiftReply } from "./ShiftReply";
 import { GasCheck } from "@/components/GasCheck";
 import { CoverAsk, type MyCover } from "./CoverAsk";
@@ -165,7 +165,7 @@ export default async function MyShifts() {
                   return (
                     <div key={s.id}><span className="stat" style={{ fontSize: 24 }}>{s.start}–{s.end}</span>
                       <div className="muted">{s.siteName} · {sectionName(s.section)}</div>
-                      {replyOpen(s, now) && <ShiftReply shiftId={s.id} current={r ? { text: replyText(r), tone: TONE[r.kind] } : undefined} />}
+                      {replyOpen(s, now) && <ShiftReply shiftId={s.id} started={!canSayOnMyWay(s, now)} current={r ? { text: replyText(r), tone: TONE[r.kind] } : undefined} />}
                       {now < shiftStart(s) && <CoverAsk shiftId={s.id} cover={myCover.get(s.id)} />}
                     </div>
                   );

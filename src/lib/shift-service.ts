@@ -31,7 +31,7 @@ export interface ShiftView {
   /** The person's own rota shift, when they're on one (not when they picked a lane). */
   shift?: MyShift;
   /** Replying to today's shift: open from the start of the day until it ends. */
-  reply?: { shiftId: string; current?: { text: string; tone: string } };
+  reply?: { shiftId: string; started: boolean; current?: { text: string; tone: string } };
   gas?: GasNow; ready?: Ready;
   /** Who's on this lane today, for a manager's view. */
   on: OnLane[];
@@ -152,7 +152,7 @@ export async function myShift(ctx: Ctx, opts: { onTablet: boolean; lane?: Lane; 
   if (mine && replyOpen(mine, now)) {
     const latest = latestReplies(await db.shiftReplies([mine.id])).get(mine.id);
     const TONE: Record<ShiftReply["kind"], string> = { on_my_way: "done", late: "late", cant_make_it: "bad" };
-    reply = { shiftId: mine.id, current: latest ? { text: replyText(latest), tone: TONE[latest.kind] } : undefined };
+    reply = { shiftId: mine.id, started: now >= mine.startsAt, current: latest ? { text: replyText(latest), tone: TONE[latest.kind] } : undefined };
   }
   const on = laneOn(shifts.filter((s) => s.siteId === site.id), window.lane, today, now, new Map());
   return { kind: "shift", view: { site, window, shift: mine, reply, on, ...gathered } };
