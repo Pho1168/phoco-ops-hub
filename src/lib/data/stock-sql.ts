@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, laterReportNote, lineEnd, planSubmit, progress, reqCode, shortOf, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, laterReportNote, lineEnd, onTopNote, planOnTop, planSubmit, progress, reqCode, shortOf, TERMINAL, withProgress,
   type DraftLine, type EventKind, type NewItem, type NewItemLine, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { CountLine, StockCount } from "@/lib/domain/stock-count";
 import { londonDate } from "@/lib/domain/time";
@@ -199,6 +199,27 @@ export const stockSql: StockStore = {
       }
       const newItems = newIds.length ? (await tx<NewItemRow[]>`${newItemSelect(tx)} where n.id = any(${newIds}::uuid[]) order by n.created_at`).map(toNewItem) : [];
       return { created, again: plan.again.length, newItems };
+    });
+  },
+
+  async addOnTop(siteId, by, lines, products) {
+    return withTx(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${"stock-report:" + siteId}))`;
+      const ids = (await tx<{ id: string }[]>`select id from stock_requests where site_id = ${siteId} and cancelled_at is null
+        and product_id = any(${lines.map((l) => l.productId)}::uuid[])`).map((r) => r.id);
+      const plan = planOnTop(lines, siteId, withProgress(await lockRequests(tx, ids)), products);
+      const made: string[] = [];
+      for (const l of plan.create) {
+        const [r] = await tx<{ id: string }[]>`insert into stock_requests (site_id, product_id, level, qty, requested_by, supplier_id)
+          values (${siteId}, ${l.productId}, 'low', ${l.qty}, ${by}, ${l.supplierId ?? null}) returning id`;
+        made.push(r.id);
+      }
+      for (const b of plan.bump) {
+        await tx`update stock_requests set fixed_qty = ${b.to} where id = ${b.requestId}`;
+        await tx`insert into stock_events (by, kind, request_id, qty, text) values (${by}, 'qty_changed', ${b.requestId}, ${b.to}, ${onTopNote(b.add, b.was)})`;
+      }
+      const created = made.length ? (await tx<RequestRow[]>`${requestSelect(tx)} where r.id = any(${made}::uuid[]) order by r.code`).map(toRequest) : [];
+      return { created, raised: plan.bump };
     });
   },
 

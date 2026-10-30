@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { deliveryDaysText, nextDelivery, orderableAt, ordersByRound, roundRemindersDue } from "@/lib/domain/stock";
+import { cleanCatalogueLines, deliveryDaysText, nextDelivery, orderableAt, ordersByRound, roundRemindersDue } from "@/lib/domain/stock";
 import { londonToUtc } from "@/lib/domain/time";
-import { clearNeeded, neededView, queueRoundReminders, sendStockReport } from "@/lib/stock-service";
+import { addFromCatalogue, clearNeeded, neededView, queueRoundReminders, sendStockReport } from "@/lib/stock-service";
 
 // Runs against the in-memory demo store only, never a real database.
 const at = (date: string, hm = "12:00") => londonToUtc(date, hm);
@@ -63,5 +63,35 @@ describe("a supplier ordered as a round (Surelygrow: Monday and Friday)", () => 
     expect((await db.notices("DEMO-OPS", 20)).some((n) => n.title.includes("order closes tonight"))).toBe(true);
     expect((await db.notices("DEMO-BOH", 20)).some((n) => n.title.includes("order closes tonight"))).toBe(false);
     expect(await queueRoundReminders(at("2026-11-05", "20:30"), db)).toBe(0); // nothing waiting: no last call
+  });
+
+  it("checks what's picked from the catalogue: that supplier's products, an amount each, the same one added up", () => {
+    const ps = [{ id: "a", active: true, supplierId: "S" }, { id: "b", active: true, supplierId: "X" }, { id: "c", active: false, supplierId: "S" }];
+    expect(cleanCatalogueLines([], ps, "S").ok).toBe(false);
+    expect(cleanCatalogueLines([{ productId: "b", qty: 1 }], ps, "S").ok).toBe(false);
+    expect(cleanCatalogueLines([{ productId: "c", qty: 1 }], ps, "S").ok).toBe(false);
+    expect(cleanCatalogueLines([{ productId: "a", qty: 0 }], ps, "S").ok).toBe(false);
+    expect(cleanCatalogueLines([{ productId: "a", qty: 2 }, { productId: "a", qty: 1.5 }], ps, "S")).toEqual({ ok: true, value: [{ productId: "a", qty: 3.5 }] });
+  });
+
+  it("the catalogue adds to the Surelygrow order for Wembley, on top of what's already on it", async () => {
+    const { products, suppliers } = await db.stockCatalog();
+    const sg = suppliers.find((s) => s.name.startsWith("Surelygrow"))!;
+    const lime = products.find((p) => p.name === "Lime")!;
+    const tofu = products.find((p) => p.name === "Tofu")!;
+    const owner = (await db.people()).find((p) => p.id === "DEMO-OWN")!;
+    await db.saveStockDraft("WEM", "DEMO-PRD", "2026-10-16", [{ productId: lime.id, level: "low", qty: 3 }], false);
+    expect((await sendStockReport(db, { id: "DEMO-PRD" }, { id: "WEM" }, NOW)).ok).toBe(true);
+    const r = await addFromCatalogue(db, owner, sg.id, [{ productId: lime.id, qty: 5 }, { productId: tofu.id, qty: 2 }]);
+    expect(r.ok && r.value.site).toBe("Wembley");
+    const g = (await neededView(db, owner, NOW)).groups.find((x) => x.supplier?.id === sg.id)!;
+    const qty = (id: string) => g.rows.find((x) => x.product.id === id)?.qty;
+    expect(qty(lime.id)).toBe(8);
+    expect(qty(tofu.id)).toBe(2);
+    // Not this supplier's product, or someone who doesn't order: refused.
+    const wings = products.find((p) => p.name === "Wings")!;
+    expect((await addFromCatalogue(db, owner, sg.id, [{ productId: wings.id, qty: 1 }])).ok).toBe(false);
+    const staff = (await db.people()).find((p) => p.id === "DEMO-PRD")!;
+    expect((await addFromCatalogue(db, staff, sg.id, [{ productId: lime.id, qty: 1 }])).ok).toBe(false);
   });
 });

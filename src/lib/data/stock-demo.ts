@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, laterReportNote, lineEnd, planSubmit, progress, reqCode, sameProduct, shortOf, TERMINAL, withProgress,
+import { checkLineEnd, checkReceipt, checkTaskLines, canCancelRequest, canChangeSupplier, laterReportNote, lineEnd, onTopNote, planOnTop, planSubmit, progress, reqCode, sameProduct, shortOf, TERMINAL, withProgress,
   type NewItem, type Price, type Product, type PurchaseTask, type Receipt, type StockEvent, type StockReport, type StockRequest, type Supplier, type TaskLine } from "@/lib/domain/stock";
 import type { StockCount, StockTarget } from "@/lib/domain/stock-count";
 import type { SiteId } from "@/lib/domain/types";
@@ -157,6 +157,21 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
         s.newItems.push(n); newItems.push({ ...n, requestedByName: deps.personName(by) });
       }
       return { created: made, again: plan.again.length, newItems };
+    },
+    async addOnTop(siteId, by, lines, products) {
+      const s = S();
+      const ids = s.requests.filter((r) => r.siteId === siteId && !r.cancelledAt && lines.some((l) => l.productId === r.productId)).map((r) => r.id);
+      const plan = planOnTop(lines, siteId, withProgress(gather(ids, [])), products);
+      const created: StockRequest[] = [];
+      for (const l of plan.create) {
+        const r: StockRequest = { id: randomUUID(), code: s.nextRequest++, siteId, productId: l.productId, level: "low", qty: l.qty, requestedBy: by, supplierId: l.supplierId, createdAt: Date.now() };
+        s.requests.push(r); created.push({ ...r, requestedByName: deps.personName(by) });
+      }
+      for (const b of plan.bump) {
+        s.requests.find((x) => x.id === b.requestId)!.fixedQty = b.to;
+        event({ by, kind: "qty_changed", requestId: b.requestId, qty: b.to, text: onTopNote(b.add, b.was) });
+      }
+      return { created, raised: plan.bump };
     },
     async stockNewItems(f) {
       return S().newItems.filter((n) => (!f.open || !n.decidedAt) && (f.since === undefined || n.createdAt >= f.since || !n.decidedAt) && (!f.siteIds || f.siteIds.includes(n.siteId)))

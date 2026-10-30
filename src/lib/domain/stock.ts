@@ -491,6 +491,56 @@ export function planSubmit(lines: DraftLine[], siteId: SiteId, open: { request: 
   return plan;
 }
 
+/** A line picked from a round supplier's catalogue on its order page: a product and how many more. */
+export interface CatalogueLine { productId: string; qty: number }
+export interface OnTopPlan {
+  /** A waiting request goes up by the amount picked (`to`); `was` unset: it had no amount. */
+  bump: { requestId: string; productId: string; add: number; to: number; was?: number }[];
+  create: (CatalogueLine & { supplierId?: string })[];
+}
+
+/**
+ * Lines picked from a round supplier's catalogue (Surelygrow's, by the person ordering), checked: that supplier's active
+ * products, once each (the same product picked twice is added up), 1–QTY_MAX of each, at least one.
+ */
+export function cleanCatalogueLines(lines: CatalogueLine[], products: Pick<Product, "id" | "active" | "supplierId">[], supplierId: string):
+  { ok: true; value: CatalogueLine[] } | { ok: false; error: string } {
+  if (!lines.length) return { ok: false, error: "Tick what you need and say how many" };
+  if (lines.length > 300) return { ok: false, error: "That's too many lines at once" };
+  const out = new Map<string, number>();
+  for (const l of lines) {
+    const p = products.find((x) => x.id === l.productId);
+    if (!p || !p.active || p.supplierId !== supplierId) return { ok: false, error: "One of those isn't in this supplier's catalogue any more. Refresh and try again" };
+    const q = Number(l.qty);
+    if (!Number.isFinite(q) || q <= 0 || q > QTY_MAX) return { ok: false, error: `Say how many of each, from 1 to ${QTY_MAX}` };
+    out.set(l.productId, Math.round(((out.get(l.productId) ?? 0) + q) * 100) / 100);
+  }
+  if ([...out.values()].some((q) => q > QTY_MAX)) return { ok: false, error: `Quantities are from 1 to ${QTY_MAX}` };
+  return { ok: true, value: [...out].map(([productId, qty]) => ({ productId, qty })) };
+}
+
+/**
+ * What picking from the catalogue does at the delivery site: what's picked goes on top of what's already on the order.
+ * A product still waiting there (nothing of it ordered yet) has its latest waiting request raised by the amount picked
+ * (one with no amount gets the amount picked); anything else is a new request from that product's supplier.
+ */
+export function planOnTop(lines: CatalogueLine[], siteId: SiteId, open: { request: StockRequest; progress: Progress }[], products: Pick<Product, "id" | "supplierId">[]): OnTopPlan {
+  const plan: OnTopPlan = { bump: [], create: [] };
+  const round = (n: number) => Math.round(n * 100) / 100;
+  for (const l of lines) {
+    const waiting = open.filter((o) => o.request.siteId === siteId && o.request.productId === l.productId && !o.request.cancelledAt && stillWaiting(o.progress))
+      .sort((a, b) => b.request.createdAt - a.request.createdAt)[0];
+    if (waiting) {
+      const was = waiting.progress.wanted;
+      plan.bump.push({ requestId: waiting.request.id, productId: l.productId, add: l.qty, to: round((was ?? 0) + l.qty), ...(was !== undefined ? { was } : {}) });
+    } else plan.create.push({ ...l, supplierId: products.find((p) => p.id === l.productId)?.supplierId });
+  }
+  return plan;
+}
+
+/** The log line on a request raised from the catalogue. */
+export const onTopNote = (add: number, was?: number) => `${was === undefined ? "was not sure" : `was ${was}`}, ${add} more added from the catalogue`;
+
 /** Urgent: reported out, or the open request was reported out again. */
 export const isUrgent = (r: Pick<StockRequest, "id" | "level">, events: StockEvent[]) =>
   r.level === "out" || events.some((e) => e.requestId === r.id && e.kind === "reported_again" && e.text === "out");

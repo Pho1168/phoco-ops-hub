@@ -8,7 +8,7 @@ import { cleanNewSite } from "@/lib/domain/sites";
 import { raisesAlert } from "@/lib/domain/temperature";
 import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode, editsSiteNeeded } from "@/lib/domain/stock";
-import { addNewItem, clearNeeded, driverTick, driverUntick, editSiteNeeded, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
+import { addFromCatalogue, addNewItem, clearNeeded, driverTick, driverUntick, editSiteNeeded, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
 import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
 import { DEMO_MODE, store } from "@/lib/data";
 import { canUseDeviceForSite, formatPairCode, makePairCode, normalizePairCode, PAIR_TTL_MINUTES } from "@/lib/domain/devices";
@@ -2582,6 +2582,27 @@ export async function clearNeededAction(): Promise<ActionResult & { cancelled?: 
     detail: `Stock needed cleared: ${v.cancelled} request${v.cancelled === 1 ? "" : "s"} cancelled${v.lists ? `, ${v.lists} driver list${v.lists === 1 ? "" : "s"} taken back` : ""}${v.newItems ? `, ${v.newItems} new item${v.newItems === 1 ? "" : "s"} not needed` : ""}${v.kept ? `, ${v.kept} left (partly bought)` : ""}` });
   revalidateStock();
   return { ok: true, cancelled: v.cancelled, kept: v.kept };
+}
+
+/**
+ * The person ordering adds products from a round supplier's catalogue (Surelygrow's) to its order: how many more of
+ * each, on top of what's already on it.
+ */
+export async function addFromCatalogueAction(supplierId: string, lines: { productId: string; qty: number }[]): Promise<ActionResult & { added?: number }> {
+  const who = await orderingLead();
+  if (!who.ok) return who;
+  const p = z.object({ supplier: StockIdZ, lines: z.array(z.object({ productId: StockIdZ, qty: z.number().finite() })).min(1).max(300) })
+    .safeParse({ supplier: supplierId, lines });
+  if (!p.success) return { ok: false, error: "Tick what you need and say how many" };
+  const db = store();
+  const r = await addFromCatalogue(db, who.ctx.person, p.data.supplier, p.data.lines);
+  if (!r.ok) return r;
+  const { supplier, site, added } = r.value;
+  const names = added.map((a) => (a.to !== a.qty ? `${a.name} +${a.qty} (now ${a.to})` : `${a.qty} × ${a.name}`));
+  await db.audit({ actorId: who.ctx.person.id, action: "stock.catalogue",
+    detail: `${supplier} order for ${site}: ${names.slice(0, 8).join(", ")}${names.length > 8 ? ` and ${names.length - 8} more` : ""}` });
+  revalidateStock();
+  return { ok: true, added: added.length };
 }
 
 /** Ticks products off a supplier's list (ordered or bought, so done; production: sent). */
