@@ -47,6 +47,7 @@ export function CatalogueEditor({ suppliers, products, productionSites, sites, p
             <select value={sup} onChange={(e) => setSup(e.target.value)} aria-label="Supplier"><option value="">Every supplier</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}<option value="none">No supplier</option></select>
             <button type="button" className="btn accent small" onClick={() => setEdit("new")}>Add product</button>
           </div>
+          <datalist id="catalogue-categories">{[...new Set(products.map((x) => x.category).filter((c): c is string => !!c))].sort().map((c) => <option key={c} value={c} />)}</datalist>
           {edit === "new" && <ProductForm suppliers={suppliers} pending={pending} onCancel={() => setEdit(undefined)} onSave={(v) => run(() => saveStockProduct(undefined, v), `${v.name} added`)} />}
           <div className="stock-list">
             {shown.map((p) => edit === p.id
@@ -128,7 +129,7 @@ function ProductForm({ p, suppliers, pending, today, onSave, onCancel, onPrice }
         <input className="txt" maxLength={40} placeholder="Size, e.g. Case x 14" value={v.size} onChange={(e) => setV({ ...v, size: e.target.value })} aria-label="Size" />
       </div>
       <div className="row wrap" style={{ gap: 8 }}>
-        <input className="txt" maxLength={40} placeholder="Category" value={v.category} onChange={(e) => setV({ ...v, category: e.target.value })} aria-label="Category" />
+        <input className="txt" maxLength={40} placeholder="Category (required)" required list="catalogue-categories" value={v.category} onChange={(e) => setV({ ...v, category: e.target.value })} aria-label="Category" />
         <select className="txt grow" value={v.supplierId} onChange={(e) => setV({ ...v, supplierId: e.target.value })} aria-label="Preferred supplier">
           <option value="">No supplier</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
