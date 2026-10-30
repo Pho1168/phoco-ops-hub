@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { store } from "@/lib/data";
-import { canPurchase, deliveryDaysText, neededCount, nextDelivery, ordersByRound } from "@/lib/domain/stock";
+import { canPurchase, deliveryDaysText, restaurantDemand, neededCount, nextDelivery, ordersByRound } from "@/lib/domain/stock";
 import { londonDate, longDay } from "@/lib/domain/time";
 import { neededView, roundSite } from "@/lib/stock-service";
 import { RoundCatalogue } from "./RoundCatalogue";
@@ -38,6 +38,10 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
     .map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
   const n = group ? neededCount([group]) : 0;
   const closesToday = next?.orderBy === today;
+  // What the restaurants want of each one: still to send of the kitchen's copies (restaurants order those).
+  const demand = restaurantDemand(groups, catalog.products, kitchen?.id);
+  const wanted: Record<string, { qty: number; sizes: string[]; sites: string }> = {};
+  for (const [pid, d] of demand) wanted[pid] = { qty: d.qty, sizes: d.sizes, sites: d.sites.map((x) => `${siteName.get(x.siteId) ?? x.siteId} ${x.qty}`).join(", ") };
   const onOrder: Record<string, number> = {};
   for (const r of group?.rows ?? []) if (kitchen && r.sites.some((x) => x.siteId === kitchen.id)) onOrder[r.product.id] = r.sites.filter((x) => x.siteId === kitchen.id).reduce((t, x) => t + x.qty, 0);
   return (
@@ -56,7 +60,7 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
           <div className="strong">{n ? `${n} item${n === 1 ? "" : "s"} to order` : "Nothing to order yet"}</div>
         </section>
         {board.length > 0 && <NeededBoard groups={board} drivers={drivers} />}
-        {kitchen && range.length > 0 && <RoundCatalogue supplierId={supplier.id} supplierName={supplier.name} siteName={kitchen.name} products={range} onOrder={onOrder} />}
+        {kitchen && range.length > 0 && <RoundCatalogue supplierId={supplier.id} supplierName={supplier.name} siteName={kitchen.name} products={range} onOrder={onOrder} wanted={wanted} />}
         <nav className="row wrap" style={{ gap: 8 }}>
           <Link className="btn ghost small" href="/stock/needed">Back to Stock needed</Link>
         </nav>

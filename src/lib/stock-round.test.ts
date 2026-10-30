@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { cleanCatalogueLines, deliveryDaysText, nextDelivery, orderableAt, ordersByRound, roundRemindersDue } from "@/lib/domain/stock";
+import { cleanCatalogueLines, deliveryDaysText, nextDelivery, restaurantDemand, orderableAt, ordersByRound, roundRemindersDue } from "@/lib/domain/stock";
 import { londonToUtc } from "@/lib/domain/time";
 import { addFromCatalogue, clearNeeded, neededView, queueRoundReminders, sendStockReport } from "@/lib/stock-service";
 
@@ -93,5 +93,20 @@ describe("a supplier ordered as a round (Surelygrow: Monday and Friday)", () => 
     expect((await addFromCatalogue(db, owner, sg.id, [{ productId: wings.id, qty: 1 }])).ok).toBe(false);
     const staff = (await db.people()).find((p) => p.id === "DEMO-PRD")!;
     expect((await addFromCatalogue(db, staff, sg.id, [{ productId: lime.id, qty: 1 }])).ok).toBe(false);
+  });
+});
+
+describe("what the restaurants want of a round supplier's product", () => {
+  it("adds up what's still to send of the kitchen's copies, by the product they were copied from", () => {
+    const row = (id: string, size: string, sites: [string, number][]) => ({ product: { id, name: id, size, active: true }, qty: 0, sites: sites.map(([siteId, qty]) => ({ siteId, qty, unknown: 0 })),
+      requestIds: [], lineIds: [], unknownIds: [], notes: [], photoIds: [], urgent: false });
+    const groups = [
+      { production: true, rows: [row("copyA", "900g", [["EAS", 4], ["SYD", 2], ["WEM", 9]]), row("copyA2", "Case", [["EAS", 1]]), row("other", "1kg", [["EAS", 3]])] },
+      { production: false, rows: [row("A", "Case of 6", [["WEM", 5]])] },
+    ];
+    const products = [{ id: "copyA", copyOf: "A" }, { id: "copyA2", copyOf: "A" }, { id: "other" }, { id: "A" }];
+    const d = restaurantDemand(groups, products, "WEM");
+    expect(d.get("A")).toEqual({ qty: 7, sizes: ["900g", "Case"], sites: [{ siteId: "EAS", qty: 5 }, { siteId: "SYD", qty: 2 }] });
+    expect(d.size).toBe(1);
   });
 });

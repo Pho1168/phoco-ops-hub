@@ -53,6 +53,8 @@ export interface Product {
   link?: string;
   /** The name it had in the order sheet it was imported from, kept so it can be traced. */
   importName?: string;
+  /** A production kitchen's copy of a supplier's product (restaurants order the copy): the product it was copied from. */
+  copyOf?: string;
   /** False: restaurants can't ask for it when its supplier delivers only to a kitchen (raw ingredients). Default true. */
   forRestaurants?: boolean;
   /** Other suppliers that also sell it (not the preferred one), for buying it wherever suits the run. */
@@ -536,6 +538,37 @@ export function planOnTop(lines: CatalogueLine[], siteId: SiteId, open: { reques
     } else plan.create.push({ ...l, supplierId: products.find((p) => p.id === l.productId)?.supplierId });
   }
   return plan;
+}
+
+/** What the restaurants want of a supplier's product: still to send of the production kitchen's copies of it. */
+export interface Demand { qty: number; sizes: string[]; sites: { siteId: SiteId; qty: number }[] }
+
+/**
+ * How much the restaurants want of each product copied for the production kitchen (`Product.copyOf`): what's still to
+ * send on the kitchen's orders (its production groups on Stock needed), added up by the product it was copied from.
+ * The kitchen's own site is left out. Copies' packs can differ from the supplier's case, so they're listed (`sizes`).
+ */
+export function restaurantDemand(groups: Pick<NeededGroup, "production" | "rows">[], products: Pick<Product, "id" | "copyOf">[], kitchenId?: SiteId): Map<string, Demand> {
+  const out = new Map<string, Demand>();
+  const round = (n: number) => Math.round(n * 100) / 100;
+  for (const g of groups.filter((x) => x.production)) {
+    for (const r of g.rows) {
+      const from = products.find((p) => p.id === r.product.id)?.copyOf;
+      if (!from) continue;
+      const sites = r.sites.filter((x) => x.siteId !== kitchenId && x.qty > 0);
+      if (!sites.length) continue;
+      const d = out.get(from) ?? { qty: 0, sizes: [], sites: [] };
+      for (const x of sites) {
+        d.qty = round(d.qty + x.qty);
+        const at = d.sites.find((y) => y.siteId === x.siteId);
+        if (at) at.qty = round(at.qty + x.qty); else d.sites.push({ siteId: x.siteId, qty: x.qty });
+      }
+      const size = r.product.size ?? "Each";
+      if (!d.sizes.includes(size)) d.sizes.push(size);
+      out.set(from, d);
+    }
+  }
+  return out;
 }
 
 /** The log line on a request raised from the catalogue. */

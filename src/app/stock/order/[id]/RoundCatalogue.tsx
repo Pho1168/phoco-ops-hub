@@ -12,8 +12,9 @@ const fmt = (n: number) => String(Math.round(n * 100) / 100);
  * A round supplier's whole catalogue (Surelygrow's) on its order page: tick what the kitchen needs, say how many, and
  * add it to the order. What's already on the order stays; the amount ticked here goes on top of it.
  */
-export function RoundCatalogue({ supplierId, supplierName, siteName, products, onOrder }:
-  { supplierId: string; supplierName: string; siteName: string; products: P[]; onOrder: Record<string, number> }) {
+export function RoundCatalogue({ supplierId, supplierName, siteName, products, onOrder, wanted }:
+  { supplierId: string; supplierName: string; siteName: string; products: P[]; onOrder: Record<string, number>;
+    wanted: Record<string, { qty: number; sizes: string[]; sites: string }> }) {
   const router = useRouter();
   const [picked, setPicked] = useState<Record<string, number | undefined>>({});
   const [query, setQuery] = useState("");
@@ -23,8 +24,9 @@ export function RoundCatalogue({ supplierId, supplierName, siteName, products, o
 
   const cats = useMemo(() => [...new Set(products.map((p) => p.category ?? "Other"))].sort((a, b) => a.localeCompare(b)), [products]);
   const q = query.trim().toLowerCase();
+  const nWanted = products.filter((p) => wanted[p.id]).length;
   const shown = products.filter((p) => (q ? `${p.name} ${p.size ?? ""}`.toLowerCase().includes(q)
-    : cat === "all" || (cat === "ticked" ? p.id in picked : (p.category ?? "Other") === cat)));
+    : cat === "all" || (cat === "ticked" ? p.id in picked : cat === "wanted" ? !!wanted[p.id] : (p.category ?? "Other") === cat)));
   const ids = Object.keys(picked);
   const missing = ids.filter((id) => !(picked[id]! > 0)).length;
 
@@ -52,6 +54,7 @@ export function RoundCatalogue({ supplierId, supplierName, siteName, products, o
       <input className="txt" type="search" style={{ width: "100%", maxWidth: "none" }} placeholder="Search, e.g. lime" aria-label="Search the catalogue" value={query} onChange={(e) => setQuery(e.target.value)} />
       <div className="chips stock-cats" role="group" aria-label="Show">
         <button type="button" className={`chip ${cat === "all" && !q ? "done" : ""}`} onClick={() => setCat("all")}>All ({products.length})</button>
+        {nWanted > 0 && <button type="button" className={`chip ${cat === "wanted" && !q ? "done" : ""}`} onClick={() => setCat("wanted")}>Restaurants want ({nWanted})</button>}
         {ids.length > 0 && <button type="button" className={`chip ${cat === "ticked" && !q ? "done" : ""}`} onClick={() => setCat("ticked")}>Ticked ({ids.length})</button>}
         {cats.map((c) => <button key={c} type="button" className={`chip ${cat === c && !q ? "done" : ""}`} onClick={() => setCat(c)}>{c}</button>)}
       </div>
@@ -61,6 +64,7 @@ export function RoundCatalogue({ supplierId, supplierName, siteName, products, o
           const on = p.id in picked;
           const v = picked[p.id];
           const have = onOrder[p.id];
+          const want = wanted[p.id];
           return (
             <div key={p.id} className={`stock-item ${on ? "on" : ""}`}>
               <button type="button" className="stock-head" aria-pressed={on} onClick={() => toggle(p)}>
@@ -68,6 +72,7 @@ export function RoundCatalogue({ supplierId, supplierName, siteName, products, o
                 <span className="grow stack" style={{ gap: 2, textAlign: "left" }}>
                   <span className="strong">{p.name}</span>
                   <span className="muted" style={{ fontSize: 13 }}>{p.size ?? "Each"}{have ? ` · on the order: ${fmt(have)}` : ""}</span>
+                  {want && <span className="round-want">Restaurants want {fmt(want.qty)} × {want.sizes.join(" / ")} <span className="muted">({want.sites})</span></span>}
                 </span>
                 {on && v ? <span className="chip warn">{have ? `+${fmt(v)}` : fmt(v)}</span> : null}
               </button>

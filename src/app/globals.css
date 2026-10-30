@@ -1027,3 +1027,4 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
   background: color-mix(in srgb, var(--teal-tint) 55%, var(--surface)); border-top: 1px solid var(--teal-tint); border-radius: 0 0 16px 16px; z-index: 1; }
 .round-cat .stock-item { border-color: var(--line); }
 .round-cat .stock-item.on { border-color: var(--warn-soft); }
+.round-want { font-size: 13px; font-weight: 600; color: var(--teal-ink); }

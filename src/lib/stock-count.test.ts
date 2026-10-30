@@ -120,7 +120,7 @@ describe("production count: sending one (demo store)", () => {
       { lines: [{ productId: soup.id, qty: 2 }, { productId: brisket.id, qty: 12 }], note: "rolls not counted" }, NOW);
     expect(sent.ok).toBe(true);
     if (!sent.ok) return;
-    expect(sent.value).toMatchObject({ counted: 2, of: 4, below: 1 });
+    expect(sent.value).toMatchObject({ counted: 2, of: 6, below: 1 });
 
     const plan = await kitchenPlan(db, "WEM", NOW + 1000);
     expect(plan.latest?.id).toBe(sent.value.count.id);
@@ -128,7 +128,7 @@ describe("production count: sending one (demo store)", () => {
     // Target 4 (demo), 6 still to send to Eastcote, 2 on the shelf: make 8.
     expect(soupRow).toMatchObject({ onHand: 2, target: 4, toSend: 6, make: 8, state: "make" });
     expect(plan.rows.find((r) => r.product.id === brisket.id)).toMatchObject({ onHand: 12, target: 10, make: 0, state: "ok" });
-    expect(plan.rows.filter((r) => r.state === "not_counted")).toHaveLength(2);
+    expect(plan.rows.filter((r) => r.state === "not_counted")).toHaveLength(4);
 
     const ownerNotes = await db.notices("DEMO-OWN", 10);
     expect(ownerNotes.find((n) => n.title === "Production count · Wembley")).toMatchObject({ kind: "stock", url: "/stock/plan?site=WEM", body: expect.stringContaining("1 item to make, 1 below target") });

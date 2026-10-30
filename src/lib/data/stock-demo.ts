@@ -39,6 +39,8 @@ function seed(): StockState {
     p("Wings", "1kg", lidl, "Meat"), p("Condensed Milk", "Can", lidl, "Che"),
     p("Z-Fold Tissue", "Pack", amz, "Cleaning"), p("Blue Rolls", "Pack", amz, "Cleaning"),
   ];
+  // The kitchen's copies of the main supplier's products, which restaurants order from the kitchen.
+  products.push({ ...p("Tofu", "Pack", prod, "From production"), copyOf: products[6].id }, { ...p("Lime", "Case", prod, "From production"), copyOf: products[4].id });
   // Some products are sold at more than one shop.
   products[9].alsoFrom = [lidl.id]; // Coconut Milk: Wing Yip, or Lidl/Aldi
   products[13].alsoFrom = [wy.id]; // Condensed Milk: Lidl/Aldi, or Wing Yip
