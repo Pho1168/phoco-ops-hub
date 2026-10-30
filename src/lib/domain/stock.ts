@@ -84,7 +84,9 @@ export function cleanProduct(input: { name: string; size?: string; category?: st
   const name = input.name.trim().replace(/\s+/g, " ");
   if (name.length < 2 || name.length > 80) return { ok: false, error: "Give the product a name" };
   const size = input.size?.trim().replace(/\s+/g, " ").slice(0, 40) || undefined;
-  const category = input.category?.trim().slice(0, 40) || undefined;
+  const category = input.category?.trim().replace(/\s+/g, " ").slice(0, 40) || undefined;
+  // Every product has a category, so the catalogue and Report stock stay sorted.
+  if (!category) return { ok: false, error: "Pick a category for it" };
   const supplierId = input.supplierId || undefined;
   if (supplierId && !suppliers.some((s) => s.id === supplierId)) return { ok: false, error: "That supplier isn't in the list" };
   const link = input.link?.trim() || undefined;

@@ -82,7 +82,7 @@ function Item({ item, owner, suppliers }: { item: NewItemView; owner: boolean; s
         <div className="row wrap" style={{ gap: 8 }}>
           <input className="txt" aria-label="Name" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} style={{ width: 220 }} />
           <input className="txt" aria-label="Pack or size" maxLength={40} placeholder="Pack or size" value={size} onChange={(e) => setSize(e.target.value)} style={{ width: 150 }} />
-          <input className="txt" aria-label="Category" maxLength={40} placeholder="Category" list="stock-categories" value={category} onChange={(e) => setCategory(e.target.value)} style={{ width: 150 }} />
+          <input className="txt" aria-label="Category" maxLength={40} placeholder="Category (required)" required list="stock-categories" value={category} onChange={(e) => setCategory(e.target.value)} style={{ width: 150 }} />
           <select className="txt" aria-label="Bought from" value={supplierId} onChange={(e) => setSupplierId(e.target.value)} style={{ width: 190 }}>
             <option value="">Bought from…</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -92,7 +92,7 @@ function Item({ item, owner, suppliers }: { item: NewItemView; owner: boolean; s
       <div className="row wrap" style={{ gap: 8 }}>
         <span className="muted">How many</span>
         <input className="txt" aria-label="How many" inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} style={{ width: 84, textAlign: "center" }} />
-        <button type="button" className="btn small" disabled={busy || !okQty || (!same && (!supplierId || name.trim().length < 2))}
+        <button type="button" className="btn small" disabled={busy || !okQty || (!same && (!supplierId || name.trim().length < 2 || !category.trim()))}
           onClick={() => run(() => addNewStockItem(item.id, same ? { productId: same, qty: n } : { name, size: size || undefined, category: category || undefined, supplierId, qty: n }))}>
           {same ? "Order it" : "Add to catalogue and order"}
         </button>
