@@ -55,43 +55,47 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
     </nav>
   );
 
-  // A manager's view: every lane with people on today, one under the other in a single column.
+  // A manager's view: every lane with people on today in one column, the weekly cleaning board beside it (below on a phone).
   if (view === "lanes" && managerHere) {
     const lanes = await siteLanes(ctx.site, now, db);
-        return (
+    return (
       <>
         <Bar ctx={ctx} title="Today’s lanes" eyebrow={dateLine(ctx.site.name)} />
-        <main>
-          {board}
+        <main className="wide">
           <div className="row wrap" style={{ gap: 8 }}>
-            <span className="muted lead">Every lane with people on today.</span>
+            <span className="muted lead">Every lane with people on today, cleaning on the right.</span>
             <div className="seg sm-seg" role="group" aria-label="View as">
               <Link href="/shift?view=lanes" aria-current="page" className="sm-seg-on">Every lane</Link>
               <Link href="/shift?view=me">My shift</Link>
             </div>
           </div>
-          {lanes.length === 0 && (
-            <div className="card stack">
-              <div className="strong">Nobody is on the published rota at {ctx.site.name} today.</div>
-              <div className="muted">Lanes appear as soon as a rota week is published. Until then, pick one to see what&apos;s waiting:</div>
-              <div className="row wrap" style={{ gap: 8 }}>{siteLaneIds(ctx.site).map((l) => <Link key={l} className="btn ghost small" href={`/shift?view=me&lane=${l}`}>{laneName(l)}</Link>)}</div>
-            </div>
-          )}
-          {lanes.map(({ lane, view: v }) => (
-            <section key={lane.lane} className="sm-lane" aria-label={`${laneName(lane.lane)} lane`}>
-              <div className="sm-lane-head">
-                <div className="row wrap" style={{ gap: 8, alignItems: "baseline" }}>
-                  <h2 className="h-sec" style={{ fontSize: 24 }}>{laneName(lane.lane)}</h2>
-                  <span className="muted">{windowLabel(lane)}</span>
+          <div className="cols two sm-lanes-page">
+            <div className="stack" style={{ gap: 12 }}>
+              {lanes.length === 0 && (
+                <div className="card stack">
+                  <div className="strong">Nobody is on the published rota at {ctx.site.name} today.</div>
+                  <div className="muted">Lanes appear as soon as a rota week is published. Until then, pick one to see what&apos;s waiting:</div>
+                  <div className="row wrap" style={{ gap: 8 }}>{siteLaneIds(ctx.site).map((l) => <Link key={l} className="btn ghost small" href={`/shift?view=me&lane=${l}`}>{laneName(l)}</Link>)}</div>
                 </div>
-                <OnShift on={v.on} label="On this lane" />
-                <Summary view={v} />
-              </div>
-              <DayStrip view={v} now={now} />
-              {v.first && <FirstUp item={v.first} />}
-              <ShiftList view={v} needsPin={needsPin} />
-            </section>
-          ))}
+              )}
+              {lanes.map(({ lane, view: v }) => (
+                <section key={lane.lane} className="sm-lane" aria-label={`${laneName(lane.lane)} lane`}>
+                  <div className="sm-lane-head">
+                    <div className="row wrap" style={{ gap: 8, alignItems: "baseline" }}>
+                      <h2 className="h-sec" style={{ fontSize: 22 }}>{laneName(lane.lane)}</h2>
+                      <span className="muted">{windowLabel(lane)}</span>
+                      <span style={{ marginLeft: "auto" }}><Summary view={v} /></span>
+                    </div>
+                    <OnShift on={v.on} label="On this lane" />
+                  </div>
+                  <ShiftList view={v} needsPin={needsPin} compact />
+                </section>
+              ))}
+            </div>
+            <aside className="stack sm-clean-side" style={{ gap: 12 }}>
+              {board ?? <div className="card muted">No weekly cleaning jobs at {ctx.site.name}.</div>}
+            </aside>
+          </div>
           {more(ctx.site)}
         </main>
         <BottomNav ctx={ctx} current="shift" />

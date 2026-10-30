@@ -993,3 +993,26 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .sm-team-name { font-weight: 700; font-size: 16px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sm-team-time { font-size: 14px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .sm-lane + .sm-lane { margin-top: 8px; }
+
+/* Shift tab, every lane: lanes on the left, cleaning on the right; tighter so both lanes fit on a tablet screen. */
+@media (min-width: 900px) {
+  .cols.two.sm-lanes-page { grid-template-columns: minmax(0, 1fr) 380px; }
+  .sm-clean-side { position: sticky; top: 12px; }
+}
+.sm-lanes-page .sm-lane { padding: 12px 14px; gap: 8px; }
+.sm-lanes-page .sm-team-list { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.sm-lanes-page .sm-team-person { padding: 6px 10px; }
+.sm-clean-side .clean-row { flex-wrap: wrap; }
+.sm-clean-side .clean-btns { width: 100%; justify-content: flex-end; }
+.sm-lanes-page .sm-item, .sm-lanes-page .sm-item.sm-row { min-height: 44px; padding: 6px 10px; border-radius: 12px; gap: 10px; }
+.sm-lanes-page .sm-item .ring { width: 34px; height: 34px; font-size: 11px; }
+.sm-lanes-page .sm-item .strong { font-size: 15px; }
+.sm-lanes-page .sm-item .muted { font-size: 12px; }
+.sm-lanes-page .sm-item .btn.small { min-height: 32px; padding: 0 12px; }
+.sm-lanes-page section.stack { gap: 4px !important; }
+.sm-lanes-page .sm-team-name { white-space: normal; overflow: visible; font-size: 15px; line-height: 1.2; }
+.sm-clean-side .clean-board { padding: 12px; gap: 6px !important; }
+.sm-clean-side .clean-row { padding: 8px 10px; gap: 6px; }
+.sm-clean-side .clean-row .strong { font-size: 15px; }
+.sm-clean-side .clean-status { font-size: 12px; }
+.sm-clean-side .clean-btns .btn.small { min-height: 32px; padding: 0 12px; }
