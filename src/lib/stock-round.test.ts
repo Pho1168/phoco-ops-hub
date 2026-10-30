@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { deliveryDaysText, nextDelivery, orderableAt, ordersByRound } from "@/lib/domain/stock";
+import { deliveryDaysText, nextDelivery, orderableAt, ordersByRound, roundRemindersDue } from "@/lib/domain/stock";
 import { londonToUtc } from "@/lib/domain/time";
-import { clearNeeded, neededView, sendStockReport } from "@/lib/stock-service";
+import { clearNeeded, neededView, queueRoundReminders, sendStockReport } from "@/lib/stock-service";
 
 // Runs against the in-memory demo store only, never a real database.
 const at = (date: string, hm = "12:00") => londonToUtc(date, hm);
@@ -45,5 +45,23 @@ describe("a supplier ordered as a round (Surelygrow: Monday and Friday)", () => 
     expect((await clearNeeded(db, ownerP, NOW + 1000)).ok).toBe(true);
     const g = (await neededView(db, ownerP, NOW + 2000)).groups.find((x) => x.supplier?.name === "Surelygrow (demo)");
     expect(g?.rows.find((r) => r.product.id === lime.id)?.qty).toBe(3);
+  });
+
+  it("on cut-off day, reminds the owners and the kitchen's operations managers at 15:00, and at 20:00 if it's still waiting", async () => {
+    const next = { orderBy: "2026-11-05" };
+    expect(roundRemindersDue(next, "2026-11-05", "14:59", 3)).toEqual([]);
+    expect(roundRemindersDue(next, "2026-11-05", "15:00", 0)).toEqual(["first"]);
+    expect(roundRemindersDue(next, "2026-11-05", "20:10", 0)).toEqual([]);
+    expect(roundRemindersDue(next, "2026-11-05", "20:10", 2)).toEqual(["last"]);
+    expect(roundRemindersDue(next, "2026-11-04", "15:30", 2)).toEqual([]);
+    const thu = at("2026-11-05", "15:30");
+    const first = await queueRoundReminders(thu, db);
+    expect(first).toBeGreaterThan(0);
+    expect(await queueRoundReminders(thu + 60_000, db)).toBe(0);
+    const own = await db.notices("DEMO-OWN", 20);
+    expect(own.find((n) => n.title.includes("order closes tonight"))).toBeDefined();
+    expect((await db.notices("DEMO-OPS", 20)).some((n) => n.title.includes("order closes tonight"))).toBe(true);
+    expect((await db.notices("DEMO-BOH", 20)).some((n) => n.title.includes("order closes tonight"))).toBe(false);
+    expect(await queueRoundReminders(at("2026-11-05", "20:30"), db)).toBe(0); // nothing waiting: no last call
   });
 });
