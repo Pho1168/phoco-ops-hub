@@ -45,6 +45,7 @@ export function CleaningBoard({ site, rows, canAct, compact = false }: { site: s
                 <span className="muted" style={{ fontSize: 13 }}>{r.area} · {r.often}{r.missedLast ? " · missed last time" : ""}</span>
                 <span className={`clean-status ${r.urgency}`}>{r.status}{r.urgency === "late" ? " · due now" : r.urgency === "soon" ? " · due soon" : ""}</span>
               </>}
+            {r.last && <span className="clean-last">{r.last}</span>}
           </span>
           {canAct && (
             <span className="row wrap clean-btns" style={{ gap: 6 }}>
@@ -66,6 +67,7 @@ export function CleaningBoard({ site, rows, canAct, compact = false }: { site: s
                 <span className="grow stack" style={{ gap: 2, minWidth: 0 }}>
                   <span className="strong">{r.name}</span>
                   <span className="muted" style={{ fontSize: 13 }}>{r.area} · {r.often} · {r.status}</span>
+                  {r.last && <span className="clean-last">{r.last}</span>}
                 </span>
               </div>
             ))}

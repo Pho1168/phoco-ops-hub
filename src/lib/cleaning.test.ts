@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { addMonths, canAct, cleaningBoard, cleaningSummary, comingDue, dueMessage, howOften, jobView, missedJobs, missedMessage, periodEnd, periodStart, previousPeriod, statusLine, urgencyOf, type CleaningEvent, type CleaningJob } from "@/lib/domain/cleaning";
+import { addMonths, canAct, lastCleanedLine, cleaningBoard, cleaningSummary, comingDue, dueMessage, howOften, jobView, missedJobs, missedMessage, periodEnd, periodStart, previousPeriod, statusLine, urgencyOf, type CleaningEvent, type CleaningJob } from "@/lib/domain/cleaning";
 import { boardRows, cleaningBoards, queueCleaningMissed } from "@/lib/cleaning-service";
 import { londonToUtc } from "@/lib/domain/time";
 
@@ -124,6 +124,20 @@ describe("the board in the demo store", () => {
     rows = boardRows((await cleaningBoards(db, ["EAS"], now + 3)).get("EAS")!, "DEMO-BOH");
     expect(rows.find((r) => r.id === grease.id)).toMatchObject({ complete: true });
     expect(rows.findIndex((r) => r.id === grease.id)).toBeGreaterThan(rows.findIndex((r) => !r.complete));
+  });
+});
+
+describe("last cleaned, in small print", () => {
+  it("says when and by whom, from any week, and nothing for every-few-months jobs", () => {
+    const j = job();
+    expect(lastCleanedLine(jobView(j, [], at("2026-10-30")), at("2026-10-30"))).toBe("Not cleaned since the board started");
+    const events = [ev("done", "2026-10-19", at("2026-10-20", "20:15"), "P1", "Jamie Smith")];
+    expect(lastCleanedLine(jobView(j, events, at("2026-10-30")), at("2026-10-30"))).toBe("Last cleaned Tue 20 Oct 20:15 by Jamie");
+    events.push(ev("done", "2026-10-26", at("2026-10-29", "21:30"), "P2", "Sam Lee"));
+    expect(lastCleanedLine(jobView(j, events, at("2026-10-30")), at("2026-10-30"))).toBe("Last cleaned yesterday 21:30 by Sam");
+    events.push(ev("done", "2026-10-26", at("2026-10-30", "14:05"), "P1", "Jamie Smith"));
+    expect(lastCleanedLine(jobView(j, events, at("2026-10-30", "15:00")), at("2026-10-30", "15:00"))).toBe("Last cleaned today 14:05 by Jamie");
+    expect(lastCleanedLine(jobView(job({ per: "every", times: 1, everyMonths: 6, firstDue: "2027-04-22" }), [], at("2026-10-30")), at("2026-10-30"))).toBeUndefined();
   });
 });
 
