@@ -51,7 +51,7 @@ export default async function Today() {
   const notesOpen = currentNotes(await db.handover(ctx.site.id), sent, Date.now()).filter((n) => n.needsAction);
   const toDo = [...prepOpen, ...notesOpen];
   const urgent = prepOpen.filter((e) => e.urgent).length + notesOpen.filter((n) => n.category === "Food safety").length;
-  const unread = unreadFor(await db.teamNotices(0), ctx.person, date);
+  const unread = unreadFor(await db.teamNotices(0), ctx.person, date, await db.sites());
   const [kit, kitOpen] = await Promise.all([db.equipment(ctx.site.id), db.equipmentEvents({ siteId: ctx.site.id, openFaultsOnly: true })]);
   const now = Date.now();
   const siteTasks = await db.tasks({ siteIds: [ctx.site.id], closedSince: now - 10 * 60_000 });

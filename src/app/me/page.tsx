@@ -53,9 +53,10 @@ export default async function MyShifts() {
     .filter((n) => n.kind !== "notice" && !(n.kind === "shift" && n.createdAt < now - 18 * 3_600_000) && !(n.kind === "evening" && n.createdAt < now - 36 * 3_600_000))
     .slice(0, 15);
   const teamNotices = await db.teamNotices(0);
-  const unread = unreadFor(teamNotices, ctx.person, today);
+  const allSites = await db.sites();
+  const unread = unreadFor(teamNotices, ctx.person, today, allSites);
   const myTimeOff = (await db.timeOff({ personId: ctx.person.id, from: addDays(today, -60) })).filter((t) => t.status !== "cancelled" || t.endsOn >= today);
-  const readLive = teamNotices.filter((n) => isLive(n, today) && inAudience(n, ctx.person) && !unread.includes(n));
+  const readLive = teamNotices.filter((n) => isLive(n, today) && inAudience(n, ctx.person, allSites) && !unread.includes(n));
   const myCerts = await db.certificates({ personIds: [ctx.person.id] });
   const expectedCerts = new Set(expectedKinds(ctx.person));
   const certRows = visibleTypes(false).filter((t) => expectedCerts.has(t.id) || myCerts.some((c) => c.kind === t.id))
@@ -70,7 +71,6 @@ export default async function MyShifts() {
   const TONE = { on_my_way: "done", late: "late", cant_make_it: "bad" } as const;
   // The gas check at close, for the people on until the end (closers) at a site where it's due now.
   const recentSites = Array.from(new Set((await db.shiftsForPerson(ctx.person.id, addDays(today, -1), today)).filter((s) => s.published && !s.cancelled).map((s) => s.siteId)));
-  const allSites = await db.sites();
   const gasCards = (await Promise.all(recentSites.map(async (id) => {
     const site = allSites.find((x) => x.id === id);
     const g = site ? await gasFor(site, now) : undefined;

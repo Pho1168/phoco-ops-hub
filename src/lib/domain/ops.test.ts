@@ -214,10 +214,11 @@ describe("operations manager: certificates and notices", () => {
     expect(mine.body).toContain("Speak to the owner");
   });
   it("posts to their own sites; \"all sites\" only for someone who manages every site, closed ones included", () => {
-    expect(canPostTo(managedSites(ops), [...ALL], "EAS")).toBe(true);
-    expect(canPostTo(managedSites(ops), [...ALL], "SYD")).toBe(false);
-    expect(canPostTo(managedSites(ops), [...ALL], undefined)).toBe(false); // Sydenham is closed, but it's still a site
-    expect(canPostTo(managedSites(owner), [...ALL], undefined)).toBe(true);
+    const sites = [...ALL].map((id) => ({ id }));
+    expect(canPostTo(managedSites(ops), sites, { siteId: "EAS" })).toBe(true);
+    expect(canPostTo(managedSites(ops), sites, { siteId: "SYD" })).toBe(false);
+    expect(canPostTo(managedSites(ops), sites, { brand: "phoco" })).toBe(false); // Sydenham is closed, but it's still a site
+    expect(canPostTo(managedSites(owner), sites, { brand: "phoco" })).toBe(true);
   });
 });
 
