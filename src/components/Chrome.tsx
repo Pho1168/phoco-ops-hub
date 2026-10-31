@@ -7,6 +7,10 @@ import { londonDate, longDay } from "@/lib/domain/time";
 import { Clock } from "./Clock";
 import { Icon } from "./Icon";
 import { BrandStyle, Logo } from "./Logo";
+import { SiteSwitch } from "./SiteSwitch";
+import { store } from "@/lib/data";
+import { canSwitchTo } from "@/lib/domain/access";
+import { BRAND_IDS, BRANDS } from "@/lib/domain/brand";
 import { brandOf, NEUTRAL } from "@/lib/domain/brand";
 
 interface BarProps {
@@ -48,14 +52,25 @@ function Brand({ ctx, title, eyebrow, back, neutral }: BarProps) {
   );
 }
 
+/** Owners and operations managers: the sites they can work at, by business, to switch from any screen. */
+async function siteChoices(ctx: Ctx) {
+  if (!ctx.isLead) return undefined;
+  const sites = (await store().sites()).filter((s) => s.status === "open" && canSwitchTo(ctx.person, s));
+  if (sites.length < 2) return undefined;
+  return BRAND_IDS.map((b) => ({ name: BRANDS[b].name, sites: sites.filter((s) => brandOf(s).id === b).map((s) => ({ id: s.id, name: s.name })) }))
+    .filter((g) => g.sites.length > 0);
+}
+
 /** The bar at the top of every screen on a site tablet (and an owner's or ops manager's own device). */
-export function TopBar(props: BarProps) {
+export async function TopBar(props: BarProps) {
   const { ctx, children } = props;
+  const choices = await siteChoices(ctx);
   return (
     <header className="top">
       <Brand {...props} />
       <div className="grow" />
       {children}
+      {choices && <SiteSwitch current={ctx.site.id} groups={choices} />}
       <Clock />
       <form className="who" action={signOut}>
         <span className="who-name">{firstName(ctx.person.name)}</span>

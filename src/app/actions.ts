@@ -677,8 +677,11 @@ export async function clearAlerts(siteId?: string): Promise<ActionResult & { cle
   return { ok: true, cleared: open.length };
 }
 
-/** Owners and operations managers move their session to another site they have access to. */
-export async function switchSite(siteId: string): Promise<void> {
+/**
+ * Owners and operations managers move their session to another site they have access to, then go on to `next` (the
+ * screen they switched from) or Today.
+ */
+export async function switchSite(siteId: string, next?: string): Promise<void> {
   const ctx = await requireLead();
   const db = store();
   const id = SiteIdZ.parse(siteId);
@@ -688,7 +691,12 @@ export async function switchSite(siteId: string): Promise<void> {
   const prev = await db.session(ctx.sessionId);
   const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS, prev?.deviceId);
   (await cookies()).set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
-  redirect("/today");
+  redirect(sameSitePath(next) ?? "/today");
+}
+/** A path on this app to go back to after switching (never another host, never the sign-in or PIN screens). */
+function sameSitePath(next: string | undefined): string | undefined {
+  if (typeof next !== "string" || next.length > 300 || !/^\/(?!\/)[A-Za-z0-9/_\-.?=&%]*$/.test(next)) return undefined;
+  return /^\/(login|pin|api)\b/.test(next) ? undefined : next;
 }
 
 // ---------- staff management (owners; operations managers for staff and managers at their sites) ----------
@@ -697,7 +705,7 @@ const AccessZ = z.array(z.object({
   siteId: SiteIdZ,
   role: z.enum(ROLES as [Role, ...Role[]]),
   sections: z.array(z.enum(["FOH", "BOH", "PROD"])).max(3),
-})).max(3);
+})).max(20); // one entry per site: owners have every site (four since Cafe La Viet opened)
 const PersonZ = z.object({ staffCode: z.string().max(20), name: z.string().max(80), access: AccessZ });
 const describeAccess = (a: z.infer<typeof AccessZ>) => a.map((x) => `${x.siteId} ${x.role}${x.sections.length ? ` (${x.sections.join("+")})` : ""}`).join(", ");
 
