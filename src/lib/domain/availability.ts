@@ -34,12 +34,23 @@ export const dueText = (week: string) => `${longDay(dueDay(week))} at ${AVAIL_DU
 /** The days of a week, Monday first. */
 export const weekDays = (week: string) => Array.from({ length: 7 }, (_, i) => addDays(week, i));
 
-/** Who is asked: active staff, managers and operations managers at an open site; never owners. */
+/**
+ * Who is asked: active staff, managers and operations managers at an open site, and owners who work shifts (on the
+ * published rota at an open site within `OWNER_ROTA_DAYS` either side of today: `rotaSites`, worked out by
+ * `ownerRotaSites` in availability-service.ts). Owners who don't work shifts aren't asked.
+ */
 const ASKED_ROLES: string[] = ["staff", "manager", "ops"];
-export function asksAvailability(p: Pick<Person, "status" | "access">, sites: Pick<Site, "id" | "status">[]): boolean {
-  if (p.status !== "active" || isOwner(p)) return false;
+export const OWNER_ROTA_DAYS = 28;
+export function asksAvailability(p: Pick<Person, "status" | "access">, sites: Pick<Site, "id" | "status">[], rotaSites: string[] = []): boolean {
+  if (p.status !== "active") return false;
   const open = new Set(sites.filter((s) => s.status === "open").map((s) => s.id));
+  if (isOwner(p)) return rotaSites.some((id) => open.has(id));
   return p.access.some((a) => ASKED_ROLES.includes(a.role) && open.has(a.siteId));
+}
+/** Asked at this site: works there (staff, manager, ops), or an owner who works shifts there. */
+export function askedAt(p: Pick<Person, "status" | "access">, sites: Pick<Site, "id" | "status">[], siteId: SiteId, rotaSites: string[] = []): boolean {
+  if (!asksAvailability(p, sites, rotaSites)) return false;
+  return isOwner(p) ? rotaSites.includes(siteId) : p.access.some((a) => a.siteId === siteId && ASKED_ROLES.includes(a.role));
 }
 
 /** A person may answer for this week or the one after, until the week starts. */
@@ -89,10 +100,11 @@ export interface AvailRow { personId: string; name: string; sections: string[]; 
  * The availability grid for a site and week: everyone asked who works there (by name), with their latest answer;
  * those with none are listed as waiting.
  */
-export function availabilityGrid(people: Pick<Person, "id" | "name" | "status" | "access">[], sites: Pick<Site, "id" | "status">[], siteId: SiteId, week: string, answers: Availability[]):
+export function availabilityGrid(people: Pick<Person, "id" | "name" | "status" | "access">[], sites: Pick<Site, "id" | "status">[], siteId: SiteId, week: string, answers: Availability[],
+  ownerRota: Map<string, string[]> = new Map()):
   { rows: AvailRow[]; waiting: AvailRow[]; days: string[] } {
   const latest = latestAvailability(answers.filter((a) => a.week === week));
-  const rows = people.filter((p) => asksAvailability(p, sites) && p.access.some((a) => a.siteId === siteId && ASKED_ROLES.includes(a.role)))
+  const rows = people.filter((p) => askedAt(p, sites, siteId, ownerRota.get(p.id)))
     .map((p) => {
       const answer = latest.get(p.id);
       return { personId: p.id, name: p.name, sections: p.access.find((a) => a.siteId === siteId)?.sections ?? [], answer, late: !!answer && isLate(week, answer.createdAt) };

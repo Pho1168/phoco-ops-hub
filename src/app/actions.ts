@@ -18,6 +18,7 @@ import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
 import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn } from "@/lib/domain/access";
+import { rotaSitesOf } from "@/lib/availability-service";
 import { AVAIL_LABEL, asksAvailability, canAnswer as canAnswerAvailability, checkChange as checkAvailChange, cleanAvailability, isLate as availLate, latestAvailability } from "@/lib/domain/availability";
 import { canCancel, canDecide, clashes, kindLabel, rangeLabel, timeOffDeciders, validateRequest } from "@/lib/domain/timeoff";
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
@@ -1246,7 +1247,7 @@ export async function saveAvailability(week: string, days: { a: string; note?: s
   if (!p.success) return { ok: false, error: "Answer every day of the week" };
   const db = store();
   const now = Date.now();
-  if (!asksAvailability(ctx.person, await db.sites())) return { ok: false, error: "Your availability isn't asked for" };
+  if (!asksAvailability(ctx.person, await db.sites(), await rotaSitesOf(db, ctx.person, now))) return { ok: false, error: "Your availability isn't asked for" };
   if (!canAnswerAvailability(p.data.week, now)) return { ok: false, error: "That week can't be changed any more" };
   const clean = cleanAvailability(p.data.days);
   if (!clean.ok) return clean;
