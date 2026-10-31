@@ -1,4 +1,4 @@
-import { isOps, isOwner } from "./access";
+import { isOwner } from "./access";
 import { weekStartOf } from "./rota";
 import { addDays, londonDate, londonHM, longDay, shortDay } from "./time";
 import type { Person, Site, SiteId } from "./types";
@@ -29,11 +29,12 @@ export const isLate = (week: string, at: number) => londonDate(at) > dueDay(week
 /** The days of a week, Monday first. */
 export const weekDays = (week: string) => Array.from({ length: 7 }, (_, i) => addDays(week, i));
 
-/** Who is asked: active staff and managers at an open site, never owners or operations managers. */
+/** Who is asked: active staff, managers and operations managers at an open site; never owners. */
+const ASKED_ROLES: string[] = ["staff", "manager", "ops"];
 export function asksAvailability(p: Pick<Person, "status" | "access">, sites: Pick<Site, "id" | "status">[]): boolean {
-  if (p.status !== "active" || isOwner(p) || isOps(p)) return false;
+  if (p.status !== "active" || isOwner(p)) return false;
   const open = new Set(sites.filter((s) => s.status === "open").map((s) => s.id));
-  return p.access.some((a) => (a.role === "staff" || a.role === "manager") && open.has(a.siteId));
+  return p.access.some((a) => ASKED_ROLES.includes(a.role) && open.has(a.siteId));
 }
 
 /** A person may answer for this week or the one after, until the week starts. */
@@ -86,7 +87,7 @@ export interface AvailRow { personId: string; name: string; sections: string[]; 
 export function availabilityGrid(people: Pick<Person, "id" | "name" | "status" | "access">[], sites: Pick<Site, "id" | "status">[], siteId: SiteId, week: string, answers: Availability[]):
   { rows: AvailRow[]; waiting: AvailRow[]; days: string[] } {
   const latest = latestAvailability(answers.filter((a) => a.week === week));
-  const rows = people.filter((p) => asksAvailability(p, sites) && p.access.some((a) => a.siteId === siteId && (a.role === "staff" || a.role === "manager")))
+  const rows = people.filter((p) => asksAvailability(p, sites) && p.access.some((a) => a.siteId === siteId && ASKED_ROLES.includes(a.role)))
     .map((p) => {
       const answer = latest.get(p.id);
       return { personId: p.id, name: p.name, sections: p.access.find((a) => a.siteId === siteId)?.sections ?? [], answer, late: !!answer && isLate(week, answer.createdAt) };

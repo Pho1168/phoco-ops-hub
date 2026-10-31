@@ -1235,7 +1235,7 @@ export async function requestTimeOff(input: unknown): Promise<ActionResult> {
 
 /**
  * Says when the person can work in a week ahead (next week, or the one after): one answer a day. Answers are only
- * added; the latest counts. Owners and operations managers aren't asked.
+ * added; the latest counts. Owners aren't asked.
  */
 export async function saveAvailability(week: string, days: { a: string; note?: string }[]): Promise<ActionResult> {
   const ctx = await current();

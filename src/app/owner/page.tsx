@@ -12,6 +12,8 @@ import { ManageTiles, NeedsYou } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { RightNow } from "./RightNow";
+import { AvailabilityCard } from "@/components/AvailabilityCard";
+import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
 import { cleaningBoards } from "@/lib/cleaning-service";
 import { cleaningSummary } from "@/lib/domain/cleaning";
 import { teamRowsView, teamToday } from "@/lib/team-today";
@@ -112,13 +114,18 @@ export default async function Owner() {
   const prepSites = (await db.prepEnabledSites()).filter((id) => openSites.some((s) => s.id === id));
   const prepOpen = (await Promise.all(prepSites.map((id) => db.prepOutstanding(id)))).flat();
   const withReady = summaries.filter((s) => s.ready);
-  const rightNow = (
+  // Operations managers are asked for their availability too (owners aren't).
+  const availWeek = askedWeek(now);
+  const availAsked = asksAvailability(ctx.person, allSites);
+  const availSent = availAsked && latestAvailability(await db.myAvailability(ctx.person.id, [availWeek])).has(ctx.person.id);
+  const rightNowCard = (
     <RightNow urgent={counts.urgent ?? 0}
       ready={withReady.length ? { green: withReady.filter((s) => s.ready!.light === "green").length, of: withReady.length } : undefined}
       prep={prepSites.length ? { toDo: prepOpen.length, urgent: prepOpen.filter((e) => e.urgent).length } : undefined}
       team={{ onRota: teamRows.length, late: teamRows.filter((r) => r.reply?.kind === "late").length, cantMakeIt: teamRows.filter((r) => r.reply?.kind === "cant_make_it").length }}
     />
   );
+  const rightNow = <>{availAsked && <AvailabilityCard week={availWeek} sent={availSent} now={now} />}{rightNowCard}</>;
   return (
     <>
       <TopBar ctx={ctx} title="Right now" eyebrow={lead === "owner" ? "All sites · owner" : `${sites.map((s) => s.name).join(" · ")} · operations`}>

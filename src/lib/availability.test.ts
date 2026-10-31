@@ -22,11 +22,11 @@ describe("weekly availability", () => {
     expect(canAnswer("2026-11-02", at("2026-11-04"))).toBe(false); // already started
   });
 
-  it("asks staff and managers at open sites, never owners, ops or anyone frozen", () => {
+  it("asks staff, managers and ops at open sites, never owners or anyone frozen", () => {
     expect(asksAvailability(person("staff"), open)).toBe(true);
     expect(asksAvailability(person("manager"), open)).toBe(true);
     expect(asksAvailability(person("owner"), open)).toBe(false);
-    expect(asksAvailability(person("ops"), open)).toBe(false);
+    expect(asksAvailability(person("ops"), open)).toBe(true);
     expect(asksAvailability(person("staff", "SYD"), open)).toBe(false);
     expect(asksAvailability(person("staff", "EAS", "frozen"), open)).toBe(false);
   });

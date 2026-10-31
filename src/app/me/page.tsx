@@ -32,8 +32,8 @@ import { myTraining } from "@/lib/training-service";
 import { allergenChangesToConfirm, sopsToRead } from "@/lib/library-service";
 import { forYouAt } from "@/lib/handover-service";
 import { phoneHandoverSites } from "@/lib/domain/handover";
-import { askedWeek, asksAvailability, dueDay, isLate, latestAvailability } from "@/lib/domain/availability";
-import { longDay } from "@/lib/domain/time";
+import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
+import { AvailabilityCard } from "@/components/AvailabilityCard";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -128,15 +128,7 @@ export default async function MyShifts() {
         <MustRead docs={toRead} allergens={allergenChanges} />
         <TrainingDue overdue={training.tally.overdue} again={training.tally.again} />
 
-        {availAsked && (
-          <Link href="/me/availability" className={`card row avail-link${!myAvail && isLate(availWeek, now) ? " avail-late" : ""}`} style={{ gap: 10, textDecoration: "none", color: "inherit" }}>
-            <span className="grow stack" style={{ gap: 2 }}>
-              <span className="strong">Availability · week of {shortDay(availWeek)}</span>
-              <span className="muted" style={{ fontSize: 14 }}>{myAvail ? "Sent. Tap to check or change it." : isLate(availWeek, now) ? "Overdue: say when you can work." : `Say when you can work, by the end of ${longDay(dueDay(availWeek))}.`}</span>
-            </span>
-            <span className={`chip ${myAvail ? "done" : isLate(availWeek, now) ? "late" : "warn"}`}>{myAvail ? "Sent" : "To do"}</span>
-          </Link>
-        )}
+        {availAsked && <AvailabilityCard week={availWeek} sent={!!myAvail} now={now} />}
 
         {cleanSites.filter((s) => cleaning.has(s.id)).map((s) => (
           <CleaningBoard key={s.id} site={s.name} rows={boardRows(cleaning.get(s.id)!, ctx.person.id)} canAct={onTablet} compact={!onTablet ? false : true} />
