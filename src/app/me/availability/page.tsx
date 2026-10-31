@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { PhoneTopBar, TopBar } from "@/components/Chrome";
 import { store } from "@/lib/data";
-import { askedWeek, asksAvailability, dueDay, isLate, latestAvailability, weekDays } from "@/lib/domain/availability";
+import { askedWeek, asksAvailability, dueText, isLate, latestAvailability, weekDays } from "@/lib/domain/availability";
 import { addDays, longDay, shortDay } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { AvailabilityForm } from "./AvailabilityForm";
@@ -39,13 +39,16 @@ export default async function MyAvailability(props: { searchParams: Promise<{ we
             <div className={`card stack${late ? " avail-late" : ""}`} style={{ gap: 4 }}>
               <div className="strong">When can you work the week of {longDay(week)}?</div>
               <div className="muted" style={{ fontSize: 14 }}>
-                {week === next ? <>Due by the end of {longDay(dueDay(week))}, so the rota can be written. </> : null}
+                {week === next ? <>Due by {dueText(week)}, so the rota can be written. </> : null}
                 Morning is up to 15:00, evening from then on. Add a note if only part of a shift works for you.
               </div>
-              {mine && <div className="chip done" style={{ alignSelf: "flex-start" }}>Sent {when(mine.createdAt)}{isLate(week, mine.createdAt) ? " (late)" : ""}: change it any time before the week starts</div>}
+              {mine && <div className="chip done" style={{ alignSelf: "flex-start" }}>Sent {when(mine.createdAt)}{isLate(week, mine.createdAt) ? " (late)" : ""}</div>}
+              {mine && (isLate(week, now)
+                ? <div className="alert" role="note" style={{ fontSize: 14 }}><span>It&apos;s past the deadline, so the rota is being written from this. You can still add more time (an Off day to a shift, or a shift to All day), but not take any away. To take a day off, <Link href="/me">request time off</Link> or ask your manager.</span></div>
+                : <div className="muted" style={{ fontSize: 14 }}>You can change anything until {dueText(week)}. After that you can only add more time.</div>)}
               {late && <div className="chip late" style={{ alignSelf: "flex-start" }}>Overdue: please send it now</div>}
             </div>
-            <AvailabilityForm week={week} days={weekDays(week).map((d) => ({ date: d, label: shortDay(d) }))} current={mine?.days} />
+            <AvailabilityForm week={week} days={weekDays(week).map((d) => ({ date: d, label: shortDay(d) }))} current={mine?.days} locked={!!mine && isLate(week, now)} />
           </>
         )}
       </main>

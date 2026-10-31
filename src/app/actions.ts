@@ -18,7 +18,7 @@ import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
 import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn } from "@/lib/domain/access";
-import { AVAIL_LABEL, asksAvailability, canAnswer as canAnswerAvailability, cleanAvailability, isLate as availLate } from "@/lib/domain/availability";
+import { AVAIL_LABEL, asksAvailability, canAnswer as canAnswerAvailability, checkChange as checkAvailChange, cleanAvailability, isLate as availLate, latestAvailability } from "@/lib/domain/availability";
 import { canCancel, canDecide, clashes, kindLabel, rangeLabel, timeOffDeciders, validateRequest } from "@/lib/domain/timeoff";
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
 import { afterQuietHours, dayMonthYear, isIsoDate, londonDate } from "@/lib/domain/time";
@@ -1235,7 +1235,7 @@ export async function requestTimeOff(input: unknown): Promise<ActionResult> {
 
 /**
  * Says when the person can work in a week ahead (next week, or the one after): one answer a day. Answers are only
- * added; the latest counts. Owners and operations managers aren't asked.
+ * added; the latest counts. Owners aren't asked.
  */
 export async function saveAvailability(week: string, days: { a: string; note?: string }[]): Promise<ActionResult> {
   const ctx = await current();
@@ -1250,6 +1250,9 @@ export async function saveAvailability(week: string, days: { a: string; note?: s
   if (!canAnswerAvailability(p.data.week, now)) return { ok: false, error: "That week can't be changed any more" };
   const clean = cleanAvailability(p.data.days);
   if (!clean.ok) return clean;
+  const before = latestAvailability(await db.myAvailability(ctx.person.id, [p.data.week])).get(ctx.person.id);
+  const allowed = checkAvailChange(p.data.week, before?.days, clean.value, now);
+  if (!allowed.ok) return allowed;
   await db.addAvailability(ctx.person.id, p.data.week, clean.value);
   await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "availability.save",
     detail: `Week of ${dayMonthYear(p.data.week)}${availLate(p.data.week, now) ? " (late)" : ""}: ${clean.value.map((d) => AVAIL_LABEL[d.a]).join(", ")}` });
