@@ -13,6 +13,23 @@ interface EventRow { id: string; job_id: string; period: string; kind: CleaningE
 const toEvent = (r: EventRow): CleaningEvent => ({ id: r.id, jobId: r.job_id, period: r.period, kind: r.kind, personId: r.person_id ?? undefined, personName: r.person_name ?? undefined, note: r.note ?? undefined, at: r.at.getTime() });
 
 export const cleaningSql: CleaningStore = {
+  async saveCleaningJob(id, siteId, f) {
+    const q = sql();
+    if (siteId) {
+      const r = await q`insert into cleaning_jobs (id, site_id, area, name, per, times, every_months, first_due, position)
+        values (${id}, ${siteId}, ${f.area}, ${f.name}, ${f.per}, ${f.times}, ${f.everyMonths ?? null}, ${f.firstDue ?? null},
+          (select coalesce(max(position), 0) + 1 from cleaning_jobs where site_id = ${siteId}))
+        on conflict (id) do nothing returning id`;
+      return r.length > 0;
+    }
+    const r = await q`update cleaning_jobs set area = ${f.area}, name = ${f.name}, per = ${f.per}, times = ${f.times},
+      every_months = ${f.everyMonths ?? null}, first_due = ${f.firstDue ?? null} where id = ${id} returning id`;
+    return r.length > 0;
+  },
+  async setCleaningJobActive(id, active) {
+    const r = await sql()`update cleaning_jobs set active = ${active} where id = ${id} and active <> ${active} returning id`;
+    return r.length > 0;
+  },
   async cleaningJobs(siteIds) {
     const q = sql();
     const rows = siteIds

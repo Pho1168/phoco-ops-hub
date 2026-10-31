@@ -1089,3 +1089,14 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .round-need-table .rn-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .round-need-pack { display: block; font-size: 12px; }
 .round-need-total { font-family: var(--display); font-weight: 700; font-size: 20px; color: var(--brand); }
+
+/* The owner's cleaning jobs table (/manage/cleaning). */
+.clean-wrap { overflow-x: auto; }
+.clean-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.clean-table th, .clean-table td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.clean-table thead th { font-family: var(--display); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--ink-2); }
+.clean-table .clean-actions { text-align: right; white-space: nowrap; }
+.clean-table .clean-actions .btn + .btn { margin-left: 6px; }
+.clean-table tr.clean-off { opacity: .6; }
+.clean-table tr.clean-edit td { background: var(--teal-tint); }
+@media (max-width: 699px) { .clean-table { min-width: 620px; } }

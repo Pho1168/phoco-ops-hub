@@ -236,3 +236,40 @@ export function comingDue(jobs: CleaningJob[], events: CleaningEvent[], now: num
 export function dueMessage(siteName: string, job: CleaningJob, due: string): { title: string; body: string } {
   return { title: `${siteName}: ${job.name} due by ${niceDate(due)}`, body: `${howOften(job)}. It's on the cleaning board now: take it with "I'll do it" and tick it done on the tablet.` };
 }
+
+// ---------- the owner's editor ----------
+
+export const CLEAN_NAME_MAX = 120;
+export interface JobFields { name: string; area: Area; per: CleanPer; times: number; everyMonths?: number; firstDue?: string }
+
+/**
+ * A job as the owner types it, checked: a name, the area, and how often (1–7 times a week or a month, or once every
+ * 1–24 months from a first due date). Only the owner edits the board; jobs are switched off, never deleted.
+ */
+export function cleanJob(input: { name?: string; area?: string; per?: string; times?: number; everyMonths?: number; firstDue?: string }, areas: Area[]):
+  { ok: true; value: JobFields } | { ok: false; error: string } {
+  const name = (input.name ?? "").trim().replace(/\s+/g, " ");
+  if (!name) return { ok: false, error: "Give the job a name" };
+  if (name.length > CLEAN_NAME_MAX) return { ok: false, error: `Keep the name under ${CLEAN_NAME_MAX} characters` };
+  const area = input.area as Area;
+  if (!areas.includes(area)) return { ok: false, error: "Choose who does it" };
+  if (input.per === "every") {
+    const m = Math.round(Number(input.everyMonths));
+    if (!(m >= 1 && m <= 24)) return { ok: false, error: "Every 1 to 24 months" };
+    if (!input.firstDue || !/^\d{4}-\d{2}-\d{2}$/.test(input.firstDue)) return { ok: false, error: "Choose when it's first due" };
+    return { ok: true, value: { name, area, per: "every", times: 1, everyMonths: m, firstDue: input.firstDue } };
+  }
+  if (input.per !== "week" && input.per !== "month") return { ok: false, error: "Choose how often" };
+  const t = Math.round(Number(input.times));
+  if (!(t >= 1 && t <= 7)) return { ok: false, error: `1 to 7 times a ${input.per}` };
+  return { ok: true, value: { name, area, per: input.per, times: t } };
+}
+
+/** A new job's id: SITE-AREA-NAME (letters only, at most 20), with a number added if that's taken. Ids never change. */
+export function jobId(siteId: SiteId, area: Area, name: string, taken: string[]): string {
+  const slug = name.toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 20) || "JOB";
+  const base = `${siteId}-${area}-${slug}`;
+  let id = base, n = 2;
+  while (taken.includes(id)) id = `${base}-${n++}`;
+  return id;
+}

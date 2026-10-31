@@ -1,4 +1,4 @@
-import type { CleaningAction, CleaningEvent, CleaningJob } from "@/lib/domain/cleaning";
+import type { CleaningAction, CleaningEvent, CleaningJob, JobFields } from "@/lib/domain/cleaning";
 import type { SiteId } from "@/lib/domain/types";
 import type { Done } from "./stock-store";
 
@@ -16,4 +16,8 @@ export interface CleaningStore {
   cleaningAct(jobId: string, action: CleaningAction, personId: string, now: number): Promise<Done<CleaningJob>>;
   /** Marks a job missed for a period (once: false if it already was). */
   cleaningMissed(jobId: string, period: string, note: string): Promise<boolean>;
+  /** The owner adds a job at a site (last on its list) or changes one; false if the id is taken or it isn't there. */
+  saveCleaningJob(id: string, siteId: SiteId | undefined, fields: JobFields): Promise<boolean>;
+  /** Switches a job off (off the board, never deleted) or back on; false if it already was. */
+  setCleaningJobActive(id: string, active: boolean): Promise<boolean>;
 }
