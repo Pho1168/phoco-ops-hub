@@ -133,7 +133,7 @@ export default async function Owner() {
   const rightNow = <>{availAsked && !availSent && <AvailabilityBanner week={availWeek} now={now} />}{rightNowCard}{availAsked && availSent && <AvailabilityCard week={availWeek} sent now={now} />}</>;
   return (
     <>
-      <TopBar ctx={ctx} title="Right now" eyebrow={lead === "owner" ? "All sites · owner" : `${sites.map((s) => s.name).join(" · ")} · operations`}>
+      <TopBar ctx={ctx} neutral title="Right now" eyebrow={lead === "owner" ? "All sites · owner" : `${sites.map((s) => s.name).join(" · ")} · operations`}>
         {ctx.site.status === "open" && <Link className="pill-btn top-extra" href="/shift?view=lanes">Lanes at {ctx.site.name}</Link>}
       </TopBar>
       <OwnerClient lead={lead} rightNow={rightNow} needs={<NeedsYou counts={counts} />} tools={<ManageTiles counts={counts} owner={ctx.isOwner} />}

@@ -21,7 +21,7 @@ export default async function EditPerson(
   if (!canManageAccount(ctx.person, p).ok) redirect("/owner");
   return (
     <>
-      <TopBar ctx={ctx} title={p.name} eyebrow={`${ctx.isOwner ? "Owner" : "Operations"} · staff · ${p.staffCode}`} back="/owner#accounts">
+      <TopBar ctx={ctx} neutral title={p.name} eyebrow={`${ctx.isOwner ? "Owner" : "Operations"} · staff · ${p.staffCode}`} back="/owner#accounts">
         <Link className="pill-btn top-extra" href={`/manage/certificates/${p.id}`}>Certificates</Link>
       </TopBar>
       <main>

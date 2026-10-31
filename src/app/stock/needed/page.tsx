@@ -58,7 +58,7 @@ export default async function NeededPage(props: { searchParams: Promise<{ b?: st
   const board = boardGroups(groups.filter((g) => !ordersByRound(g.supplier)), { siteName, items, suppliers: catalog.suppliers });
   return (
     <>
-      <StockBar ctx={ctx} onPhone={onPhone} title="Stock needed" back="/stock" eyebrow={`Stock · ${shortDay(londonDate(now))}`} />
+      <StockBar ctx={ctx} neutral onPhone={onPhone} title="Stock needed" back="/stock" eyebrow={`Stock · ${shortDay(londonDate(now))}`} />
       <main className="stack">
         <BusinessTabs brands={brands} current={brand} path="/stock/needed" />
         <PrintStock label="Everything below, with boxes to tick." brand={brands.length > 1 ? brand : undefined} />

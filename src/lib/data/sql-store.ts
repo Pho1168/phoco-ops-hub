@@ -741,11 +741,11 @@ export const sqlStore: Store = {
     return r.length > 0;
   },
 
-  async prepItems() {
+  async prepItems(brand) {
     const q = sql();
-    const rows = await q<{ id: string; name: string; kind: PrepKind; grp: string; position: number; active: boolean; recipe_doc_id: string | null }[]>`
-      select id, name, kind, grp, position, active, recipe_doc_id from prep_items order by position`;
-    return rows.map((r): PrepItem => ({ id: r.id, name: r.name, kind: r.kind, group: r.grp, position: r.position, active: r.active, recipeId: opt(r.recipe_doc_id) }));
+    const rows = await q<{ id: string; name: string; kind: PrepKind; grp: string; position: number; active: boolean; recipe_doc_id: string | null; brand: string }[]>`
+      select id, name, kind, grp, position, active, recipe_doc_id, brand from prep_items ${brand ? q`where brand = ${brand}` : q``} order by position`;
+    return rows.map((r): PrepItem => ({ id: r.id, name: r.name, kind: r.kind, group: r.grp, position: r.position, active: r.active, recipeId: opt(r.recipe_doc_id), brand: r.brand === "clv" ? "clv" : "phoco" }));
   },
   async setPrepItemRecipe(id, recipeId, byId) {
     const r = await sql()`update prep_items set recipe_doc_id = ${recipeId}, updated_at = now(), updated_by = ${byId} where id = ${id} returning id`;
@@ -758,7 +758,7 @@ export const sqlStore: Store = {
       const [{ n, pos }] = await tx<{ n: number; pos: number }[]>`
         select coalesce(max(substring(id from 4)::int) filter (where id ~ '^kp-[0-9]+$'), 0) + 1 as n, coalesce(max(position), 0) + 1 as pos from prep_items`;
       const id = `kp-${String(n).padStart(3, "0")}`;
-      await tx`insert into prep_items (id, name, kind, grp, position, created_by) values (${id}, ${item.name}, ${item.kind}, ${item.group}, ${pos}, ${byId})`;
+      await tx`insert into prep_items (id, name, kind, grp, position, created_by, brand) values (${id}, ${item.name}, ${item.kind}, ${item.group}, ${pos}, ${byId}, ${item.brand ?? "phoco"})`;
       return id;
     });
   },

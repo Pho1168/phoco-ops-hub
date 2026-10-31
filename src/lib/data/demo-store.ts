@@ -655,7 +655,7 @@ export const demoStore: Store = {
     h.closedAt = undefined; h.closedBy = undefined; return true;
   },
 
-  async prepItems() { return S().prepItems.map((i) => ({ ...i })); },
+  async prepItems(brand) { return S().prepItems.filter((i) => !brand || (i.brand ?? "phoco") === brand).map((i) => ({ ...i })); },
   async addPrepItem(item, byId) {
     void byId;
     const n = Math.max(0, ...S().prepItems.map((i) => Number(i.id.slice(3)) || 0)) + 1;

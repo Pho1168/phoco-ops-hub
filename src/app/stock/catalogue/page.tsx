@@ -25,7 +25,7 @@ export default async function Catalogue(props: { searchParams: Promise<{ b?: str
   const sites = allSites.filter((s) => brandOf(s).id === brand);
   return (
     <>
-      <StockBar ctx={ctx} onPhone={onPhone} title="Catalogue" back="/stock" eyebrow={`Stock & Purchasing · ${BRANDS[brand].name}`} />
+      <StockBar ctx={ctx} neutral onPhone={onPhone} title="Catalogue" back="/stock" eyebrow={`Stock & Purchasing · ${BRANDS[brand].name}`} />
       <CatalogueEditor brand={brand} tabs={<BusinessTabs brands={brands} current={brand} path="/stock/catalogue" />}
         suppliers={suppliers}
         products={products.map((p) => { const pr = latestPrice(prices, p.id); return { ...p, price: pr ? `${pounds(pr.pence)} · ${priceAge(pr.on, today)}${pr.note ? ` · ${pr.note}` : ""}` : undefined }; })}

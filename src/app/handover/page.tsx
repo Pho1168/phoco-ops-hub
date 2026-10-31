@@ -1,3 +1,4 @@
+import { brandOf } from "@/lib/domain/brand";
 import Link from "next/link";
 import { store } from "@/lib/data";
 import type { HandoverItem } from "@/lib/data/store";
@@ -31,7 +32,7 @@ export default async function Handover(props: { searchParams: Promise<{ sent?: s
   const db = store();
   const now = Date.now();
   const [items, history, draft, notes, kit, kitOpen, people] = await Promise.all([
-    prepOn ? db.prepItems() : Promise.resolve([]),
+    prepOn ? db.prepItems(brandOf(site).id) : Promise.resolve([]),
     prepOn ? db.prepHandovers(site.id, 15) : Promise.resolve([]),
     prepOn && !readOnly ? db.prepDraft(site.id) : Promise.resolve(undefined),
     db.handover(site.id),

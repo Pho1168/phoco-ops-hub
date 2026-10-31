@@ -20,6 +20,12 @@ export const BRANDS: Record<BrandId, Brand> = {
     colours: { brand: "#9D2235", teal: "#F4364C", tealTint: "#FDE7EA", tealInk: "#7A1A29" } },
 };
 
+/**
+ * The owner's own screens (overview, accounts, ordering, catalogue) belong to neither business: "Ops Hub" as a
+ * wordmark, no logo, the app's default (teal) colours.
+ */
+export const NEUTRAL: Brand = { id: "phoco", name: "Ops Hub" };
+
 export const isBrandId = (x: unknown): x is BrandId => typeof x === "string" && (BRAND_IDS as string[]).includes(x);
 export const brandOf = (site?: Pick<Site, "brand"> | null): Brand => BRANDS[site?.brand && isBrandId(site.brand) ? site.brand : "phoco"];
 

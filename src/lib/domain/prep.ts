@@ -1,9 +1,10 @@
 import { isLead, managedSites } from "./access";
-import type { Person, SiteAccess } from "./types";
+import { BRAND_IDS, brandOf, type BrandId } from "./brand";
+import type { Person, Site, SiteAccess } from "./types";
 
 /**
- * Kitchen handover list: things to do and things to prep. One master list is shared by every restaurant; each site
- * keeps its own handovers. Managers add and edit items (Manage → Handover list); the owner and operations managers
+ * Kitchen handover list: things to do and things to prep. One master list per business (PHO & CO, Cafe La Viet),
+ * shared by its sites (`PrepItem.brand`); each site keeps its own handovers. Managers add and edit items (Manage → Handover list); the owner and operations managers
  * also take them off the list and put them back. Items are never deleted, so past handovers still point at them.
  *
  * Outgoing shift: tap only the items that are Needed (saved as a draft as they go), then submit with
@@ -44,6 +45,8 @@ export const shiftLabel = (s: PrepShift) => PREP_SHIFTS.find((x) => x.id === s)?
 
 /** One thing on the master list. Groups show in the order of their first item; items by position within a group. */
 export interface PrepItem { id: string; name: string; kind: PrepKind; group: string; position: number; active: boolean;
+  /** The business whose handover list it's on (each keeps its own). Unset: PHO & CO. */
+  brand?: BrandId;
   /** The prep recipe in the library it's made from, if a manager has linked one (`/library/<id>`). */
   recipeId?: string }
 
@@ -166,6 +169,15 @@ export const masterItems = (): PrepItem[] => [
 
 /** Managers (and the owner and operations managers) add and edit items; there's one list for every site. */
 export const canEditPrepList = (p: Pick<Person, "access">) => managedSites(p).length > 0;
+/**
+ * The businesses whose handover list this person can change: those of the sites they manage (owners: every one).
+ * A manager at Cafe La Viet only ever changes Cafe La Viet's list.
+ */
+export function prepListBrands(p: Pick<Person, "access">, sites: Pick<Site, "id" | "brand">[]): BrandId[] {
+  const managed = managedSites(p);
+  const mine = new Set(sites.filter((s) => managed.includes(s.id)).map((s) => brandOf(s).id));
+  return BRAND_IDS.filter((b) => mine.has(b));
+}
 /** Only the owner and operations managers take an item off the list, or put one back. */
 export const canRetirePrepItem = (p: Pick<Person, "access">) => isLead(p);
 
