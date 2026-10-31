@@ -1045,3 +1045,16 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .avail-note { display: block; font-size: 11px; color: var(--ink-2); line-height: 1.2; margin-top: 2px; white-space: normal; }
 @media (max-width: 719px) { .avail-grid .rota-grid-wrap { display: block; } }
 .avail-opt:disabled { opacity: .35; cursor: not-allowed; text-decoration: line-through; }
+/* The Shift screen's links (Everything at…, Handover, Recipes…) sit at the top, smaller on a phone. */
+@media (max-width: 719px) { .sm-more .btn.small { padding: 6px 12px; min-height: 36px; font-size: 14px; } }
+/* The availability banner at the top of the Shift screen, My shifts and the Owner screen until it's sent. */
+.avail-banner { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 16px; text-decoration: none; color: #3D2A06;
+  background: #FCBA63; box-shadow: 0 2px 0 rgba(0,0,0,.06); }
+.avail-banner.urgent { background: var(--accent); color: var(--accent-ink); }
+.avail-banner-mark { width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  font-family: var(--display); font-weight: 800; font-size: 22px; background: rgba(255,255,255,.55); color: inherit; }
+.avail-banner.urgent .avail-banner-mark { background: rgba(255,255,255,.25); }
+.avail-banner-title { font-family: var(--display); font-weight: 700; font-size: 22px; text-transform: uppercase; letter-spacing: .3px; line-height: 1.1; }
+.avail-banner-sub { font-size: 14px; }
+.avail-banner-go { flex-shrink: 0; font-weight: 700; padding: 10px 14px; border-radius: 12px; background: var(--surface); color: var(--brand); }
+@media (max-width: 480px) { .avail-banner { flex-wrap: wrap; } .avail-banner-go { width: 100%; text-align: center; } }

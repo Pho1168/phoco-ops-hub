@@ -6,6 +6,7 @@ import { askedWeek, asksAvailability, dueText, isLate, latestAvailability, weekD
 import { addDays, longDay, shortDay } from "@/lib/domain/time";
 import { current } from "@/lib/session";
 import { AvailabilityForm } from "./AvailabilityForm";
+import { rotaSitesOf } from "@/lib/availability-service";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -20,7 +21,7 @@ export default async function MyAvailability(props: { searchParams: Promise<{ we
   const next = askedWeek(now);
   const after = addDays(next, 7);
   const week = (await props.searchParams).week === after ? after : next;
-  const asked = asksAvailability(ctx.person, await db.sites());
+  const asked = asksAvailability(ctx.person, await db.sites(), await rotaSitesOf(db, ctx.person, now));
   const mine = latestAvailability(await db.myAvailability(ctx.person.id, [week])).get(ctx.person.id);
   const Bar = ctx.scope === "full" ? TopBar : PhoneTopBar;
   const late = week === next && !mine && isLate(week, now);

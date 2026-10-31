@@ -22,13 +22,16 @@ describe("weekly availability", () => {
     expect(canAnswer("2026-11-02", at("2026-11-04"))).toBe(false); // already started
   });
 
-  it("asks staff, managers and ops at open sites, never owners or anyone frozen", () => {
+  it("asks staff, managers and ops at open sites, owners only if they work shifts, never anyone frozen", () => {
     expect(asksAvailability(person("staff"), open)).toBe(true);
     expect(asksAvailability(person("manager"), open)).toBe(true);
     expect(asksAvailability(person("owner"), open)).toBe(false);
     expect(asksAvailability(person("ops"), open)).toBe(true);
     expect(asksAvailability(person("staff", "SYD"), open)).toBe(false);
     expect(asksAvailability(person("staff", "EAS", "frozen"), open)).toBe(false);
+    // An owner who works shifts (on the rota at an open site) is asked; one who doesn't isn't.
+    expect(asksAvailability(person("owner"), open, ["EAS"])).toBe(true);
+    expect(asksAvailability(person("owner"), open, ["SYD"])).toBe(false);
   });
 
   it("needs an answer for all seven days; notes are trimmed", () => {
@@ -48,6 +51,10 @@ describe("weekly availability", () => {
     expect(g.rows.map((r) => r.name)).toEqual(["Al", "Bea"]);
     expect(g.waiting.map((r) => r.name)).toEqual(["Al"]);
     expect(g.rows[1].late).toBe(true);
+    // The owner shows on the grid of the site they work shifts at, and only there.
+    const withOwner = availabilityGrid(people, [...open, { id: "WEM", status: "open" as const }], "EAS", "2026-11-09", [], new Map([["o", ["EAS"]]]));
+    expect(withOwner.rows.map((r) => r.name)).toEqual(["Al", "Bea", "Owner"]);
+    expect(availabilityGrid(people, open, "EAS", "2026-11-09", [], new Map([["o", ["WEM"]]])).rows.map((r) => r.name)).toEqual(["Al", "Bea"]);
   });
 
   it("reminds whoever hasn't sent it on Friday from 12:00 and Saturday from 10:00 until 15:00, once each", async () => {
