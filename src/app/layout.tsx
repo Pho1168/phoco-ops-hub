@@ -15,7 +15,10 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#2C6E63", colorScheme: "light" };
+export async function generateViewport(): Promise<Viewport> {
+  const brand = await requestBrand();
+  return { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: brand?.colours?.brand ?? "#2C6E63", colorScheme: "light" };
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

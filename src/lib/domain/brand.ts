@@ -14,8 +14,10 @@ export interface Brand { id: BrandId; name: string; logo?: BrandLogo; colours?: 
 
 export const BRANDS: Record<BrandId, Brand> = {
   phoco: { id: "phoco", name: "PHO & CO", logo: { symbol: "/brand/logo-symbol.png", stacked: "/brand/logo-stacked.png", wide: "/brand/logo-wide.png" } },
-  // Logo and colours to come: until then the name is shown as a wordmark.
-  clv: { id: "clv", name: "Cafe La Viet" },
+  // From the Cafe La Viet brand guideline: the logo in white for the coloured bar; Cherry Red (#9D2235) for the bar,
+  // headings and main buttons (white text reads well on it), Desire Red (#F4364C) as the accent with a 10% tint.
+  clv: { id: "clv", name: "Cafe La Viet", logo: { symbol: "/brand/clv-symbol.png", stacked: "/brand/clv-stacked.png", wide: "/brand/clv-wide.png" },
+    colours: { brand: "#9D2235", teal: "#F4364C", tealTint: "#FDE7EA", tealInk: "#7A1A29" } },
 };
 
 export const isBrandId = (x: unknown): x is BrandId => typeof x === "string" && (BRAND_IDS as string[]).includes(x);

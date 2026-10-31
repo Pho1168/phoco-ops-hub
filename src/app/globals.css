@@ -26,6 +26,7 @@ a { color: inherit; }
 /* A business with no logo image yet: its name as a wordmark. */
 .wordmark { font-family: var(--display); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; line-height: 1; white-space: nowrap; height: auto; color: inherit; }
 .top-logo.wordmark { height: auto; font-size: 18px; padding: 4px 8px; border: 2px solid currentColor; border-radius: 6px; }
+.login-logo.logo-clv { height: auto; width: 100%; max-width: 260px; }
 .login-logo.wordmark { font-size: 26px; padding: 8px 12px; border: 3px solid currentColor; border-radius: 8px; align-self: flex-start; }
 .top-site { font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: .5px; line-height: 1; white-space: nowrap; }
 .logo { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: 1px; line-height: 1; white-space: nowrap; }

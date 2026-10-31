@@ -7,7 +7,7 @@ import { BRANDS, brandCss as brandCssOf, type Brand } from "@/lib/domain/brand";
 export function Logo({ kind = "symbol", className = "", brand = BRANDS.phoco }: { kind?: "symbol" | "stacked" | "wide"; className?: string; brand?: Brand }) {
   if (!brand.logo) return <span className={`${className} wordmark ${kind}`} role="img" aria-label={brand.name}>{brand.name}</span>;
   // eslint-disable-next-line @next/next/no-img-element
-  return <img className={className} src={brand.logo[kind]} alt={brand.name} />;
+  return <img className={`${className} logo-${brand.id}`} src={brand.logo[kind]} alt={brand.name} />;
 }
 
 /** A brand's own colours, replacing the PHO & CO tokens (nothing for PHO & CO or a brand with none set yet). */
