@@ -44,7 +44,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
   const dateLine = (site: string, when = shortDay(today)) => `${site} · ${when}`;
 
   const more = (site: ShiftView["site"] | undefined) => (
-    <nav className="row wrap" aria-label="More" style={{ gap: 8 }}>
+    <nav className="row wrap sm-more" aria-label="More" style={{ gap: 8 }}>
       {!onPhone && <Link className="btn ghost small" href="/today">Everything at {site?.name ?? ctx.site.name}</Link>}
       <Link className="btn ghost small" href="/handover">Handover</Link>
       {!onPhone && <Link className="btn ghost small" href="/library/recipes">Recipes</Link>}
@@ -62,6 +62,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
       <>
         <Bar ctx={ctx} title="Today’s lanes" eyebrow={dateLine(ctx.site.name)} />
         <main className="wide">
+          {more(ctx.site)}
           <div className="row wrap" style={{ gap: 8 }}>
             <span className="muted lead">Every lane with people on today, cleaning on the right.</span>
             <div className="seg sm-seg" role="group" aria-label="View as">
@@ -96,7 +97,6 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
               {board ?? <div className="card muted">No weekly cleaning jobs at {ctx.site.name}.</div>}
             </aside>
           </div>
-          {more(ctx.site)}
         </main>
         <BottomNav ctx={ctx} current="shift" />
       </>
@@ -113,6 +113,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
       <>
         <Bar ctx={ctx} title={`Hi ${firstName(ctx.person.name)}`} eyebrow={dateLine(ctx.site.name)} />
         <main>
+          {more(undefined)}
           {board}
           <div className="card stack" style={{ gap: 10 }}>
             <div className="strong" style={{ fontSize: 18 }}>You&apos;re not on today&apos;s published rota at {ctx.site.name}.</div>
@@ -125,7 +126,6 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
               {choices.length === 0 && <div className="muted">Your account has no section at {ctx.site.name}: ask a manager to add one.</div>}
             </div>
           </div>
-          {more(undefined)}
         </main>
         {!onPhone && <BottomNav ctx={ctx} current="shift" />}
       </>
@@ -139,6 +139,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
     <>
       <Bar ctx={ctx} title={<LaneTitle lane={w.lane} />} eyebrow={`${dateLine(site.name, dayLabel(w.date, today))} · ${windowLabel(w)}${picked ? " · not on the rota" : ""}`} />
       <main>
+        {more(site)}
         {board}
         {(managerHere || picked) && (
           <div className="row wrap" style={{ gap: 8 }}>
@@ -169,7 +170,6 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
 
         {v.first && <FirstUp item={v.first} />}
         <ShiftList view={v} needsPin={needsPin} />
-        {more(site)}
         <div className="foot-links"><Link href="/pin">Change my PIN</Link></div>
       </main>
       {!onPhone && <BottomNav ctx={ctx} current="shift" />}

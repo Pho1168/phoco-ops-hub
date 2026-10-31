@@ -1045,3 +1045,5 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .avail-note { display: block; font-size: 11px; color: var(--ink-2); line-height: 1.2; margin-top: 2px; white-space: normal; }
 @media (max-width: 719px) { .avail-grid .rota-grid-wrap { display: block; } }
 .avail-opt:disabled { opacity: .35; cursor: not-allowed; text-decoration: line-through; }
+/* The Shift screen's links (Everything at…, Handover, Recipes…) sit at the top, smaller on a phone. */
+@media (max-width: 719px) { .sm-more .btn.small { padding: 6px 12px; min-height: 36px; font-size: 14px; } }
