@@ -49,11 +49,16 @@ function seed(): StockState {
     { productId: products[9].id, pence: 115, on: "2025-09-03" },
   ];
   // Wembley's targets for its production products, so the plan has something to work from.
+  // Cafe La Viet's own catalogue (separate from PHO & CO's): Surelygrow delivering to it Monday to Saturday, and a shop.
+  const clvSg = sup("Surelygrow (demo)", "delivery", { brand: "clv", deliveryDays: [1, 2, 3, 4, 5, 6] }), clvLf = sup("Loon Fung (demo)", "shop", { brand: "clv" });
+  suppliers.push(clvSg, clvLf);
+  products.push({ ...p("Lime", "Case", clvSg, "Fruit & veg"), brand: "clv" }, { ...p("Coriander", "Bunch", clvSg, "Fruit & veg"), brand: "clv" },
+    { ...p("Coriander", "Bunch", clvLf, "Fruit & veg"), brand: "clv" }, { ...p("Rice Noodles", "Case", clvLf, "Dry"), brand: "clv" });
   const targets: StockTarget[] = [[0, 4], [1, 10], [2, 8], [3, 3]].map(([i, qty]) => ({ siteId: "WEM", productId: products[i].id, qty, setBy: "DEMO-OWN", setAt: Date.now() - 86_400_000 }));
   return { suppliers, products, prices, reports: [], requests: [], tasks: [], lines: [], events: [], receipts: [], purchasers: new Set(["DEMO-MGR", "DEMO-FLT"]), nextRequest: 1, nextTask: 1,
     counts: [], targets, newItems: [],
     // The main supplier delivers to the Wembley kitchen.
-    delivers: [{ supplierId: main.id, deliversTo: "WEM" }] };
+    delivers: [{ supplierId: main.id, deliversTo: "WEM" }, { supplierId: clvSg.id, deliversTo: "CLV" }] };
 }
 
 const g = globalThis as unknown as { __phocoStockDemo?: StockState };
@@ -100,7 +105,7 @@ export function makeStockDemo(deps: { personName: (id: string) => string | undef
     },
     async saveProduct(id, p, active) {
       const s = S();
-      if (s.products.some((x) => x.id !== id && sameProduct(x, p))) return false;
+      if (s.products.some((x) => x.id !== id && (x.brand ?? "phoco") === (p.brand ?? "phoco") && sameProduct(x, p))) return false;
       const existing = id ? s.products.find((x) => x.id === id) : undefined;
       const flag = p.forRestaurants === false ? { forRestaurants: false } : { forRestaurants: undefined };
       const also = p.alsoFrom ? { alsoFrom: p.alsoFrom.length ? [...p.alsoFrom] : undefined } : {};

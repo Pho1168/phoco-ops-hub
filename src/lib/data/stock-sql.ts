@@ -14,11 +14,11 @@ const opt = <T,>(v: T | null) => (v === null ? undefined : v);
 const num = (v: string | number | null) => (v === null ? undefined : Number(v));
 const day = (d: Date | string | null) => (d === null ? undefined : typeof d === "string" ? d.slice(0, 10) : d.toISOString().slice(0, 10));
 
-interface SupplierRow { id: string; name: string; method: Supplier["method"]; site_id: string | null; note: string | null; link: string | null; active: boolean; delivery_days: number[] | null }
-const toSupplier = (r: SupplierRow): Supplier => ({ id: r.id, name: r.name, method: r.method, siteId: opt(r.site_id), note: opt(r.note), link: opt(r.link), active: r.active,
+interface SupplierRow { id: string; name: string; method: Supplier["method"]; site_id: string | null; note: string | null; link: string | null; active: boolean; delivery_days: number[] | null; brand: string }
+const toSupplier = (r: SupplierRow): Supplier => ({ id: r.id, name: r.name, method: r.method, brand: r.brand === "clv" ? "clv" : "phoco", siteId: opt(r.site_id), note: opt(r.note), link: opt(r.link), active: r.active,
   ...(r.delivery_days?.length ? { deliveryDays: r.delivery_days.map(Number) } : {}) });
-interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null; for_restaurants: boolean; also_from: string[] | null; copy_of: string | null }
-const toProduct = (r: ProductRow): Product => ({ id: r.id, name: r.name, size: opt(r.size), category: opt(r.category), supplierId: opt(r.supplier_id), active: r.active, link: opt(r.link), importName: opt(r.import_name),
+interface ProductRow { id: string; name: string; size: string | null; category: string | null; supplier_id: string | null; active: boolean; link: string | null; import_name: string | null; for_restaurants: boolean; also_from: string[] | null; copy_of: string | null; brand: string }
+const toProduct = (r: ProductRow): Product => ({ id: r.id, name: r.name, brand: r.brand === "clv" ? "clv" : "phoco", size: opt(r.size), category: opt(r.category), supplierId: opt(r.supplier_id), active: r.active, link: opt(r.link), importName: opt(r.import_name),
   ...(r.for_restaurants === false ? { forRestaurants: false } : {}), ...(r.also_from?.length ? { alsoFrom: r.also_from } : {}), ...(r.copy_of ? { copyOf: r.copy_of } : {}) });
 
 interface ReportRow { id: string; site_id: string; person_id: string; person_name: string | null; business_date: string; lines: DraftLine[]; no_issues: boolean; submitted_at: Date | null; updated_at: Date; extras: NewItemLine[] | null }
@@ -96,8 +96,8 @@ async function lockRequests(tx: postgres.ReservedSql, ids: string[]): Promise<St
 export const stockSql: StockStore = {
   async stockCatalog() {
     const q = sql();
-    const suppliers = (await q<SupplierRow[]>`select id, name, method, site_id, note, link, active, delivery_days from stock_suppliers order by lower(name)`).map(toSupplier);
-    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants, also_from, copy_of from stock_products order by lower(name), lower(coalesce(size, '')), position`).map(toProduct);
+    const suppliers = (await q<SupplierRow[]>`select id, name, method, site_id, note, link, active, delivery_days, brand from stock_suppliers order by lower(name)`).map(toSupplier);
+    const products = (await q<ProductRow[]>`select id, name, size, category, supplier_id, active, link, import_name, for_restaurants, also_from, copy_of, brand from stock_products order by lower(name), lower(coalesce(size, '')), position`).map(toProduct);
     const prices = (await q<{ product_id: string; pence: number; on_date: string; note: string | null }[]>`
       select product_id, pence, to_char(on_date, 'YYYY-MM-DD') as on_date, note from stock_prices order by on_date desc, created_at desc`)
       .map((r): Price => ({ productId: r.product_id, pence: r.pence, on: r.on_date, note: opt(r.note) }));
@@ -109,7 +109,7 @@ export const stockSql: StockStore = {
       await q`update stock_suppliers set name = ${s.name}, method = ${s.method}, site_id = ${s.siteId ?? null}, note = ${s.note ?? null}, link = ${s.link ?? null}, active = ${active} where id = ${id}`;
       return id;
     }
-    const [r] = await q<{ id: string }[]>`insert into stock_suppliers (name, method, site_id, note, link, active) values (${s.name}, ${s.method}, ${s.siteId ?? null}, ${s.note ?? null}, ${s.link ?? null}, ${active}) returning id`;
+    const [r] = await q<{ id: string }[]>`insert into stock_suppliers (name, method, site_id, note, link, active, brand) values (${s.name}, ${s.method}, ${s.siteId ?? null}, ${s.note ?? null}, ${s.link ?? null}, ${active}, ${s.brand ?? "phoco"}) returning id`;
     return r.id;
   },
   async saveProduct(id, p, active) {
@@ -120,8 +120,8 @@ export const stockSql: StockStore = {
           for_restaurants = ${p.forRestaurants !== false} ${p.alsoFrom ? q`, also_from = ${p.alsoFrom}::uuid[]` : q``} where id = ${id}`;
         return id;
       }
-      const [r] = await q<{ id: string }[]>`insert into stock_products (name, size, category, supplier_id, link, active, for_restaurants, also_from, position)
-        values (${p.name}, ${p.size ?? null}, ${p.category ?? null}, ${p.supplierId ?? null}, ${p.link ?? null}, ${active}, ${p.forRestaurants !== false}, ${p.alsoFrom ?? []}::uuid[], (select coalesce(max(position), 0) + 1 from stock_products)) returning id`;
+      const [r] = await q<{ id: string }[]>`insert into stock_products (brand, name, size, category, supplier_id, link, active, for_restaurants, also_from, position)
+        values (${p.brand ?? "phoco"}, ${p.name}, ${p.size ?? null}, ${p.category ?? null}, ${p.supplierId ?? null}, ${p.link ?? null}, ${active}, ${p.forRestaurants !== false}, ${p.alsoFrom ?? []}::uuid[], (select coalesce(max(position), 0) + 1 from stock_products)) returning id`;
       return r.id;
     } catch (e) {
       if ((e as { code?: string }).code === "23505") return false;

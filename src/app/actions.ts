@@ -6,7 +6,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { raisesAlert } from "@/lib/domain/temperature";
-import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
+import { BRANDS, brandOf, isBrandId } from "@/lib/domain/brand";
+import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, catalogFor, inBrand as inStockBrand, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode, editsSiteNeeded } from "@/lib/domain/stock";
 import { addFromCatalogue, addNewItem, clearNeeded, driverTick, driverUntick, editSiteNeeded, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
 import { canCount, changedTargets, cleanTargets, COUNT_MAX, COUNT_NOTE_MAX, countProducts, isKitchen, plansProduction } from "@/lib/domain/stock-count";
@@ -2318,7 +2319,7 @@ export async function saveStockReport(input: { lines: unknown; noIssues: boolean
     extras: z.array(z.object({ name: z.string().max(120), size: z.string().max(80).optional(), qty: z.number().optional().nullable(), note: z.string().max(300).optional() })).max(40).optional() }).safeParse(input);
   if (!parsed.success) return { ok: false, error: "Something in the report doesn't look right. Check it and try again" };
   const db = store();
-  const clean = cleanStockLines(parsed.data.lines.map((l) => ({ ...l, qty: l.qty ?? undefined })), (await db.stockCatalog()).products, { draft: true });
+  const clean = cleanStockLines(parsed.data.lines.map((l) => ({ ...l, qty: l.qty ?? undefined })), catalogFor(await db.stockCatalog(), brandOf(ctx.site).id).products, { draft: true });
   if (!clean.ok) return clean;
   for (const l of clean.value) if (!(await photoOk(l.photoId))) return { ok: false, error: "A photo didn't upload properly. Take it again" };
   const extras = parsed.data.extras ? cleanNewItems(parsed.data.extras.map((x) => ({ ...x, qty: x.qty ?? undefined })), { draft: true }) : undefined;
@@ -2356,7 +2357,7 @@ export async function repeatLastStockReport(): Promise<ActionResult & { added?: 
   const lines = [...(draft?.lines ?? [])];
   let added = 0;
   for (const l of last.lines) if (!lines.some((x) => x.productId === l.productId)) { lines.push({ productId: l.productId, level: l.level, qty: l.qty }); added++; }
-  const clean = cleanStockLines(lines, (await db.stockCatalog()).products, { draft: true });
+  const clean = cleanStockLines(lines, catalogFor(await db.stockCatalog(), brandOf(ctx.site).id).products, { draft: true });
   if (!clean.ok) return clean;
   await db.saveStockDraft(ctx.site.id, ctx.person.id, londonDate(Date.now()), clean.value, false);
   return { ok: true, added };
@@ -2482,7 +2483,12 @@ export async function changeStockRequestAction(requestId: string, change: { qty?
   const db = store();
   const c = change.qty !== undefined ? { fixedQty: Number(change.qty) } : change.cancel !== undefined ? { cancel: change.cancel.trim().slice(0, 200) } : { supplierId: change.supplierId ?? null };
   if ("cancel" in c && !c.cancel) return { ok: false, error: "Say why it's cancelled" };
-  if ("supplierId" in c && c.supplierId && !(await db.stockCatalog()).suppliers.some((s) => s.id === c.supplierId)) return { ok: false, error: "That supplier isn't in the list" };
+  if ("supplierId" in c && c.supplierId) {
+    // Only a supplier in the catalogue of the business whose restaurant asked for it.
+    const asked = (await db.stockData({ since: 0 })).requests.find((x) => x.id === requestId);
+    const brand = brandOf(asked ? await db.site(asked.siteId) : undefined).id;
+    if (!(await db.stockCatalog()).suppliers.some((s) => s.id === c.supplierId && inStockBrand(s, brand))) return { ok: false, error: "That supplier isn't in the list" };
+  }
   const r = await db.changeStockRequest(requestId, c, who.ctx.person.id);
   if (!r.ok) return r;
   const req = (await db.stockData({ since: 0 })).requests.find((x) => x.id === requestId);
@@ -2603,15 +2609,17 @@ export async function dismissNewStockItem(id: string, reason: string): Promise<A
 }
 
 /** Clears Stock needed without ordering: everything on it is cancelled (kept in the history), drivers' lists taken back. */
-export async function clearNeededAction(): Promise<ActionResult & { cancelled?: number; kept?: number }> {
+export async function clearNeededAction(brand?: string): Promise<ActionResult & { cancelled?: number; kept?: number }> {
   const who = await orderingLead();
   if (!who.ok) return who;
   const db = store();
-  const r = await clearNeeded(db, who.ctx.person, Date.now());
+  // Only the business whose list is open: clearing PHO & CO's never touches Cafe La Viet's.
+  const b = isBrandId(brand) ? brand : brandOf(who.ctx.site).id;
+  const r = await clearNeeded(db, who.ctx.person, Date.now(), b);
   if (!r.ok) return r;
   const v = r.value;
   await db.audit({ actorId: who.ctx.person.id, action: "stock.clear",
-    detail: `Stock needed cleared: ${v.cancelled} request${v.cancelled === 1 ? "" : "s"} cancelled${v.lists ? `, ${v.lists} driver list${v.lists === 1 ? "" : "s"} taken back` : ""}${v.newItems ? `, ${v.newItems} new item${v.newItems === 1 ? "" : "s"} not needed` : ""}${v.kept ? `, ${v.kept} left (partly bought)` : ""}` });
+    detail: `${BRANDS[b].name} Stock needed cleared: ${v.cancelled} request${v.cancelled === 1 ? "" : "s"} cancelled${v.lists ? `, ${v.lists} driver list${v.lists === 1 ? "" : "s"} taken back` : ""}${v.newItems ? `, ${v.newItems} new item${v.newItems === 1 ? "" : "s"} not needed` : ""}${v.kept ? `, ${v.kept} left (partly bought)` : ""}` });
   revalidateStock();
   return { ok: true, cancelled: v.cancelled, kept: v.kept };
 }
@@ -2800,31 +2808,42 @@ async function taskOfLine(lineId: string) {
 }
 
 /** The owner keeps the supplier list. */
-export async function saveStockSupplier(id: string | undefined, input: { name: string; method: string; note?: string; link?: string; siteId?: string; active: boolean }): Promise<ActionResult> {
+export async function saveStockSupplier(id: string | undefined, input: { name: string; method: string; note?: string; link?: string; siteId?: string; active: boolean; brand?: string }): Promise<ActionResult> {
   const who = await purchasingOwner();
   if (!who.ok) return who;
   const db = store();
-  const { suppliers } = await db.stockCatalog();
+  const all = (await db.stockCatalog()).suppliers;
+  // A supplier stays in the business it was added to; a new one goes into the catalogue being looked at.
+  const existing = id ? all.find((s) => s.id === id) : undefined;
+  if (id && !existing) return { ok: false, error: "That supplier isn't in the list" };
+  const brand = existing?.brand ?? (isBrandId(input.brand) ? input.brand : "phoco");
+  const suppliers = all.filter((s) => inStockBrand(s, brand));
   const clean = cleanSupplier({ ...input, siteId: input.siteId || undefined }, suppliers, id);
   if (!clean.ok) return clean;
+  if (clean.value.method === "production" && brand !== "phoco") return { ok: false, error: "Only PHO & CO has a production kitchen" };
   if (clean.value.siteId && (await db.site(clean.value.siteId))?.kind !== "production") return { ok: false, error: "Choose a production kitchen" };
-  await db.saveSupplier(id, clean.value, input.active !== false);
-  await db.audit({ actorId: who.ctx.person.id, action: "stock.supplier", detail: `${id ? "Changed" : "Added"} supplier ${clean.value.name}${input.active === false ? " (off)" : ""}` });
+  await db.saveSupplier(id, { ...clean.value, brand }, input.active !== false);
+  await db.audit({ actorId: who.ctx.person.id, action: "stock.supplier", detail: `${id ? "Changed" : "Added"} ${BRANDS[brand].name} supplier ${clean.value.name}${input.active === false ? " (off)" : ""}` });
   revalidateStock();
   return { ok: true };
 }
 
 /** The owner keeps the product catalogue: name, size, category, preferred supplier, link, on or off. */
-export async function saveStockProduct(id: string | undefined, input: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean; alsoFrom?: string[] }): Promise<ActionResult> {
+export async function saveStockProduct(id: string | undefined, input: { name: string; size?: string; category?: string; supplierId?: string; link?: string; active: boolean; alsoFrom?: string[]; brand?: string }): Promise<ActionResult> {
   const who = await purchasingOwner();
   if (!who.ok) return who;
   const db = store();
-  const { suppliers, products } = await db.stockCatalog();
+  const cat = await db.stockCatalog();
+  // A product stays in its business's catalogue, with that business's suppliers only.
+  const existing = id ? cat.products.find((p) => p.id === id) : undefined;
+  if (id && !existing) return { ok: false, error: "That product isn't in the catalogue" };
+  const brand = existing?.brand ?? (isBrandId(input.brand) ? input.brand : "phoco");
+  const { suppliers, products } = catalogFor(cat, brand);
   const clean = cleanProduct(input, suppliers, products, id);
   if (!clean.ok) return clean;
   const also = input.alsoFrom ? cleanAlsoFrom(z.array(StockIdZ).max(20).catch([]).parse(input.alsoFrom), clean.value.supplierId, suppliers) : undefined;
   if (also && !also.ok) return also;
-  const saved = await db.saveProduct(id, { ...clean.value, ...(also ? { alsoFrom: also.value } : {}) }, input.active !== false);
+  const saved = await db.saveProduct(id, { ...clean.value, brand, ...(also ? { alsoFrom: also.value } : {}) }, input.active !== false);
   if (!saved) return { ok: false, error: "That product is already in the catalogue" };
   const before = id ? products.find((p) => p.id === id) : undefined;
   const alsoNames = also?.value.map((x) => suppliers.find((s) => s.id === x)?.name).filter(Boolean).join(", ");

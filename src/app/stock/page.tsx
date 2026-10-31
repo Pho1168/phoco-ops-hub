@@ -4,6 +4,7 @@ import { deliveryDaysText, editsSiteNeeded, lineEnd, neededCount, nextDelivery, 
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { kitchenPlan, neededView, siteNeededView } from "@/lib/stock-service";
 import { Icon } from "@/components/Icon";
+import { BRANDS } from "@/lib/domain/brand";
 import { StockBar, StockNav } from "./Bar";
 import { stockCtx } from "./load";
 import { PrintStock } from "./PrintStock";
@@ -33,7 +34,7 @@ export default async function StockHome() {
   const listed = view.groups.filter((g) => !ordersByRound(g.supplier));
   const needed = neededCount(listed) + newCount;
   const suppliers = listed.filter((g) => g.rows.length).length;
-  const rounds = can.ordering ? view.catalog.suppliers.filter((s) => ordersByRound(s)).map((s) => {
+  const rounds = can.ordering ? view.catalog.suppliers.filter((s) => ordersByRound(s) && view.brands.includes(s.brand ?? "phoco")).map((s) => {
     const g = view.groups.find((x) => x.supplier?.id === s.id);
     return { s, n: g ? neededCount([g]) : 0, next: nextDelivery(s.deliveryDays ?? [], now) };
   }) : [];
@@ -71,7 +72,7 @@ export default async function StockHome() {
             : sentTodayLine(sentToday, londonHM) ?? `What ${ctx.site.name} needs ordered, and how many`,
             drafted ? { n: drafted, tone: "warn" } : undefined)}
           {can.ordering && door("/stock/needed", "cart", "Stock needed", needed ? `${plural(needed - newCount, "item")} from ${plural(suppliers, "supplier")}${newCount ? ` · ${newCount} new to add` : ""}` : "Nothing waiting", { n: needed })}
-          {rounds.map(({ s, n, next }) => <span key={s.id} style={{ display: "contents" }}>{door(`/stock/order/${s.id}`, "truck", `${s.name} order`,
+          {rounds.map(({ s, n, next }) => <span key={s.id} style={{ display: "contents" }}>{door(`/stock/order/${s.id}`, "truck", `${s.name} order${view.brands.length > 1 ? ` · ${BRANDS[s.brand ?? "phoco"].name}` : ""}`,
             next ? `For ${shortDay(next.date)} · order by end of ${shortDay(next.orderBy)}` : `Delivers ${deliveryDaysText(s.deliveryDays ?? [])}`, { n, tone: "warn" })}</span>)}
           {siteList && door("/stock/needed", "cart", "Stock needed", siteItems ? `${plural(siteItems, "item")} ${ctx.site.name} has asked for · change or remove` : "Nothing waiting", { n: siteItems })}
           {(myItems > 0 || can.purchaser) && door("/stock/tasks", "truck", "My shopping list", myItems ? `${plural(myItems, "item")} to get` : "Nothing for you right now", { n: myItems })}
