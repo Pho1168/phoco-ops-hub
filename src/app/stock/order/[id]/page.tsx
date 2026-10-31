@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { store } from "@/lib/data";
-import { canPurchase, deliveryDaysText, productionNeeded, restaurantDemand, neededCount, nextDelivery, ordersByRound } from "@/lib/domain/stock";
+import { canPurchase, catalogFor, deliveryDaysText, productionNeeded, reportedAtSite, restaurantDemand, neededCount, nextDelivery, ordersByRound } from "@/lib/domain/stock";
 import { londonDate, longDay } from "@/lib/domain/time";
 import { neededView, roundSite } from "@/lib/stock-service";
 import { RoundCatalogue } from "./RoundCatalogue";
 import { ProductionNeeded } from "./ProductionNeeded";
+import { ReportedNeeded } from "./ReportedNeeded";
 import { StockBar, StockNav } from "../../Bar";
 import { orderingStockCtx } from "../../load";
 import { NeededBoard } from "../../needed/NeededBoard";
@@ -26,9 +27,12 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
   const { ctx, onPhone } = await orderingStockCtx();
   const db = store();
   const now = Date.now();
-  const [{ groups, sites, items, catalog, siteIds }, people, purchasers, kitchenId] = await Promise.all([neededView(db, ctx.person, now), db.people(), db.purchaserIds(), roundSite(db, id)]);
-  const supplier = catalog.suppliers.find((s) => s.id === id);
+  const supplier = (await db.stockCatalog()).suppliers.find((s) => s.id === id);
   if (!supplier || !ordersByRound(supplier)) notFound();
+  // Only its own business's sites and catalogue (PHO & CO's Surelygrow and Cafe La Viet's are separate orders).
+  const brand = supplier.brand ?? "phoco";
+  const [{ groups, sites, items, catalog: everything, siteIds }, people, purchasers, kitchenId] = await Promise.all([neededView(db, ctx.person, now, brand), db.people(), db.purchaserIds(), roundSite(db, id)]);
+  const catalog = catalogFor(everything, brand);
   // Its whole catalogue, for whoever orders for the kitchen it delivers to.
   const kitchen = kitchenId && siteIds.includes(kitchenId) ? sites.find((s) => s.id === kitchenId) : undefined;
   const range = catalog.products.filter((p) => p.active && p.supplierId === supplier.id).map((p) => ({ id: p.id, name: p.name, size: p.size, category: p.category }));
@@ -45,14 +49,17 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
   const demand = restaurantDemand(groups, catalog.products, kitchen?.id);
   const wanted: Record<string, { qty: number; sizes: string[]; sites: string }> = {};
   for (const [pid, d] of demand) wanted[pid] = { qty: d.qty, sizes: d.sizes, sites: d.sites.map((x) => `${siteName.get(x.siteId) ?? x.siteId} ${x.qty}`).join(", ") };
-  // Beside it: everything the restaurants have asked production for, per branch and in total.
+  // Beside it: for a production kitchen, everything the restaurants have asked production for, per branch and in
+  // total; for a restaurant it delivers to (Cafe La Viet), everything else that restaurant has reported.
+  const toRestaurant = !!kitchen && kitchen.kind !== "production";
+  const reported = toRestaurant ? reportedAtSite(groups.filter((g) => !ordersByRound(g.supplier)), catalog.products, supplier.id, kitchen.id) : [];
   const need = productionNeeded(groups, catalog.products, supplier.id, kitchen?.id ?? kitchenId);
   const needSites = sites.filter((s) => s.id !== (kitchen?.id ?? kitchenId) && s.status === "open").map((s) => ({ id: s.id, name: s.name }));
   const onOrder: Record<string, number> = {};
   for (const r of group?.rows ?? []) if (kitchen && r.sites.some((x) => x.siteId === kitchen.id)) onOrder[r.product.id] = r.sites.filter((x) => x.siteId === kitchen.id).reduce((t, x) => t + x.qty, 0);
   return (
     <>
-      <StockBar ctx={ctx} onPhone={onPhone} title={`${supplier.name} order`} back="/stock/needed" />
+      <StockBar ctx={ctx} onPhone={onPhone} title={`${supplier.name} order`} back={`/stock/needed?b=${brand}`} />
       <main className="wide">
         <div className="round-cols">
         <div className="stack round-left">
@@ -62,7 +69,7 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
             {closesToday ? <span className="chip late">Order closes today</span> : next && <span className="chip warn">Order by end of {longDay(next.orderBy)}</span>}
           </div>
           <div className="muted">
-            {supplier.name} delivers to the production kitchen on {deliveryDaysText(supplier.deliveryDays ?? [])}. Everything still to order is for the next delivery; anything asked for after the cut-off goes on the one after.
+            {supplier.name} delivers to {toRestaurant ? kitchen.name : "the production kitchen"} on {deliveryDaysText(supplier.deliveryDays ?? [])}. Everything still to order is for the next delivery; anything asked for after the cut-off goes on the one after.
             This list is kept off Stock needed.
           </div>
           <div className="strong">{n ? `${n} item${n === 1 ? "" : "s"} to order` : "Nothing to order yet"}</div>
@@ -70,10 +77,12 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
         {board.length > 0 && <NeededBoard groups={board} drivers={drivers} />}
         {kitchen && range.length > 0 && <RoundCatalogue supplierId={supplier.id} supplierName={supplier.name} siteName={kitchen.name} products={range} onOrder={onOrder} wanted={wanted} />}
         <nav className="row wrap" style={{ gap: 8 }}>
-          <Link className="btn ghost small" href="/stock/needed">Back to Stock needed</Link>
+          <Link className="btn ghost small" href={`/stock/needed?b=${brand}`}>Back to Stock needed</Link>
         </nav>
         </div>
-        <ProductionNeeded rows={need} supplierName={supplier.name} sites={needSites} />
+        {toRestaurant
+          ? <ReportedNeeded rows={reported} supplierName={supplier.name} siteName={kitchen.name} />
+          : <ProductionNeeded rows={need} supplierName={supplier.name} sites={needSites} />}
         </div>
       </main>
       <StockNav ctx={ctx} onPhone={onPhone} />

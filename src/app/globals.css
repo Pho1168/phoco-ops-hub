@@ -124,6 +124,9 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
 .seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 6px; background: var(--surface-2); padding: 5px; border-radius: 14px; }
 .seg button { border: 0; border-radius: 10px; min-height: 46px; background: transparent; font-weight: 600; cursor: pointer; color: var(--ink-2); }
 .seg button[aria-pressed="true"] { background: var(--surface); color: var(--brand); }
+/* Links styled as a switch (the business on the stock pages). */
+.seg a { display: flex; align-items: center; justify-content: center; border-radius: 10px; min-height: 46px; font-weight: 600; color: var(--ink-2); }
+.seg a[aria-current="page"] { background: var(--surface); color: var(--brand); }
 /* The staff form's role picker: four roles wrap to two rows on a phone. */
 .seg.roles { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); }
 .seg.roles button { padding: 0 4px; white-space: nowrap; }

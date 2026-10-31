@@ -1,4 +1,5 @@
 import { isLead, isOwner, leadSites } from "./access";
+import { brandOf, type BrandId } from "./brand";
 import { addDays, londonDate, londonToUtc } from "./time";
 import type { Person, Site, SiteId } from "./types";
 
@@ -27,6 +28,8 @@ export const methodOf = (id: string) => METHODS.find((m) => m.id === id);
 
 export interface Supplier {
   id: string; name: string; method: SupplyMethod;
+  /** The business whose catalogue it's in (PHO & CO and Cafe La Viet keep separate catalogues). Unset: PHO & CO. */
+  brand?: BrandId;
   /** The production kitchen this "supplier" is (method production). */
   siteId?: SiteId;
   /** Minimum order, delivery charge, cut-off: free text the owner keeps up to date. */
@@ -43,6 +46,8 @@ export interface Supplier {
 
 export interface Product {
   id: string; name: string;
+  /** The business whose catalogue it's in (its supplier's). Unset: PHO & CO. */
+  brand?: BrandId;
   /** What one counts as: "1kg", "Case x 14", "10L". Staff order in these. */
   size?: string;
   category?: string;
@@ -168,8 +173,19 @@ export const orderingSites = (p: Pick<Person, "status" | "access">, all: SiteId[
  * ingredients a production kitchen orders from its delivery supplier), which only a production kitchen asks for.
  * Restaurants get those from the kitchen as its own products instead.
  */
-export const orderableAt = (product: Pick<Product, "active" | "forRestaurants">, site: Pick<Site, "kind">) =>
-  product.active && (product.forRestaurants !== false || site.kind === "production");
+export const orderableAt = (product: Pick<Product, "active" | "forRestaurants" | "brand">, site: Pick<Site, "kind" | "brand">) =>
+  product.active && inBrand(product, brandOf(site).id) && (product.forRestaurants !== false || site.kind === "production");
+
+/**
+ * Each business keeps its own catalogue: a supplier or product belongs to one (`brand`, PHO & CO when unset), and a
+ * site only ever sees and orders from its own business's.
+ */
+export const inBrand = (x: { brand?: BrandId }, brand: BrandId) => (x.brand ?? "phoco") === brand;
+export function catalogFor<C extends { suppliers: Supplier[]; products: Product[]; prices?: Price[] }>(cat: C, brand: BrandId): C {
+  const products = cat.products.filter((p) => inBrand(p, brand));
+  const ids = new Set(products.map((p) => p.id));
+  return { ...cat, suppliers: cat.suppliers.filter((s) => inBrand(s, brand)), products, ...(cat.prices ? { prices: cat.prices.filter((p) => ids.has(p.productId)) } : {}) };
+}
 
 /** A supplier ordered as a round on set delivery days (its items have their own order page, not Stock needed). */
 export const ordersByRound = (s: Pick<Supplier, "deliveryDays" | "active"> | undefined) => !!s && s.active && (s.deliveryDays?.length ?? 0) > 0;
@@ -601,6 +617,28 @@ export function productionNeeded(groups: Pick<NeededGroup, "production" | "rows"
     }
   }
   return [...out.values()].sort((a, b) => Number(b.fromSupplier) - Number(a.fromSupplier) || a.product.name.localeCompare(b.product.name));
+}
+
+export interface ReportedRow { product: Product; supplier: string; qty: number; unknown: number; urgent: boolean; sold: boolean }
+
+/**
+ * Beside a round supplier's order for a restaurant (Cafe La Viet's Surelygrow): everything else the restaurant has
+ * asked for and is still waiting (every other supplier's list on Stock needed, drivers' lists left out), with its
+ * supplier. `sold`: the round supplier sells a product of the same name too, so it could go on this order; those
+ * come first, then the rest by name.
+ */
+export function reportedAtSite(groups: Pick<NeededGroup, "supplier" | "rows">[], products: Pick<Product, "name" | "supplierId" | "active">[], roundSupplierId: string, siteId: SiteId): ReportedRow[] {
+  const sells = new Set(products.filter((p) => p.active && p.supplierId === roundSupplierId).map((p) => norm(p.name)));
+  const out: ReportedRow[] = [];
+  for (const g of groups) {
+    if (g.supplier?.id === roundSupplierId) continue;
+    for (const r of g.rows) {
+      const at = r.sites.find((x) => x.siteId === siteId && (x.qty > 0 || x.unknown > 0));
+      if (!at) continue;
+      out.push({ product: r.product, supplier: g.supplier?.name ?? "No supplier yet", qty: at.qty, unknown: at.unknown, urgent: r.urgent, sold: sells.has(norm(r.product.name)) });
+    }
+  }
+  return out.sort((a, b) => Number(b.sold) - Number(a.sold) || a.product.name.localeCompare(b.product.name));
 }
 
 /** The log line on a request raised from the catalogue. */

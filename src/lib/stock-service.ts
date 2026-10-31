@@ -2,10 +2,11 @@ import { store } from "@/lib/data";
 import type { Store } from "@/lib/data/store";
 import type { Done, StockData } from "@/lib/data/stock-store";
 import { isOwner, leadSites } from "@/lib/domain/access";
-import { buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier, orderableAt, ordersByRound, nextDelivery, neededCount, roundRemindersDue, roundReminderMessage, runsOrdering, cleanCatalogueLines, type CatalogueLine } from "@/lib/domain/stock";
+import { catalogFor, buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier, orderableAt, ordersByRound, nextDelivery, neededCount, roundRemindersDue, roundReminderMessage, runsOrdering, cleanCatalogueLines, type CatalogueLine } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
+import { brandOf, brandsOf, isBrandId, type BrandId } from "@/lib/domain/brand";
 
 /**
  * Stock & Purchasing, put together: the steps that read several records and then write (sending a report, routing
@@ -30,8 +31,9 @@ export async function sendStockReport(db: Store, person: Pick<Person, "id">, sit
   if (!draft) return { ok: false, error: "There's nothing to send. Add what you need, or tap No stock issues today" };
   const [{ catalog }, here] = await Promise.all([stockView(db, now, [site.id]), db.site(site.id)]);
   // Kitchen-only items (a delivery supplier's raw ingredients) can't be sent from a restaurant (`orderableAt`).
-  const kind = here?.kind ?? "restaurant";
-  const clean = cleanLines(draft.lines, catalog.products.map((p) => (orderableAt(p, { kind }) ? p : { ...p, active: false })));
+  // Only this business's catalogue (`orderableAt` checks the brand too).
+  const at = { kind: here?.kind ?? "restaurant", brand: here?.brand };
+  const clean = cleanLines(draft.lines, catalog.products.map((p) => (orderableAt(p, at) ? p : { ...p, active: false })));
   if (!clean.ok) return clean;
   const extras = cleanNewItems(draft.extras);
   if (!extras.ok) return extras;
@@ -66,7 +68,9 @@ export async function addNewItem(db: Store, person: Pick<Person, "id" | "status"
   if (!runsPurchasing(person)) return { ok: false, error: "Only the owner adds to the catalogue" };
   const item = (await db.stockNewItems({ open: true })).find((n) => n.id === id);
   if (!item) return { ok: false, error: "That new item has already been dealt with. Refresh to see the list as it is now" };
-  const { products, suppliers } = await db.stockCatalog();
+  // Into the catalogue of the business whose restaurant asked for it.
+  const brand = brandOf(await db.site(item.siteId)).id;
+  const { products, suppliers } = catalogFor(await db.stockCatalog(), brand);
   let product: Product | undefined;
   let created = false;
   if ("productId" in input) {
@@ -79,7 +83,7 @@ export async function addNewItem(db: Store, person: Pick<Person, "id" | "status"
     product = products.find((p) => sameProduct(p, clean.value));
     if (product && !product.active) return { ok: false, error: `${product.name} is in the catalogue but switched off. Switch it on in the catalogue first` };
     if (!product) {
-      const pid = await db.saveProduct(undefined, clean.value, true);
+      const pid = await db.saveProduct(undefined, { ...clean.value, brand }, true);
       if (!pid) return { ok: false, error: "That product is already in the catalogue" };
       product = (await db.stockCatalog()).products.find((p) => p.id === pid);
       created = true;
@@ -212,12 +216,31 @@ export async function addFromCatalogue(db: Store, person: Pick<Person, "id" | "s
 
 // ---------- Stock needed ----------
 
-/** The Stock needed page for this person: every supplier's list at the sites they order for. */
-export async function neededView(db: Store, person: Pick<Person, "status" | "access">, now: number) {
+/**
+ * The Stock needed page for this person: every supplier's list at the sites they order for. With a business
+ * (`brand`), only its sites (PHO & CO and Cafe La Viet order separately); `brands` are the businesses they order for.
+ */
+export async function neededView(db: Store, person: Pick<Person, "status" | "access">, now: number, brand?: BrandId) {
   const [{ catalog, data, items }, sites] = await Promise.all([stockView(db, now), db.sites()]);
-  const siteIds = orderingSites(person, sites.filter((s) => s.status === "open").map((s) => s.id));
+  const all = orderingSites(person, sites.filter((s) => s.status === "open").map((s) => s.id));
+  const brands = brandsOf(sites.filter((s) => all.includes(s.id))).map((b) => b.id);
+  const siteIds = brand ? all.filter((id) => brandOf(sites.find((s) => s.id === id)).id === brand) : all;
   const groups = neededGroups(items, data, catalog.products, catalog.suppliers, siteIds, now);
-  return { catalog, data, items, sites, siteIds, groups };
+  return { catalog, data, items, sites, siteIds, groups, brands };
+}
+
+/** The businesses whose stock this person orders (owners: both). */
+export async function orderBrands(db: Store, person: Pick<Person, "status" | "access">): Promise<BrandId[]> {
+  const sites = await db.sites();
+  const ids = orderingSites(person, sites.filter((s) => s.status === "open").map((s) => s.id));
+  return brandsOf(sites.filter((s) => ids.includes(s.id))).map((b) => b.id);
+}
+
+/** Which business's Stock needed to show: the one asked for (`?b=`) if they order for it, else their site's, else the first. */
+export function pickBrand(brands: BrandId[], asked: string | undefined, site?: Pick<Site, "brand">): BrandId {
+  if (isBrandId(asked) && brands.includes(asked)) return asked;
+  const own = brandOf(site).id;
+  return brands.includes(own) ? own : brands[0] ?? "phoco";
 }
 
 /** Stock needed for one restaurant (what the tablet shows its staff): its own requests, by supplier. */
@@ -341,8 +364,8 @@ const CLEAR_NOTE = "Cleared from Stock needed";
  * is cancelled (kept, with the reason, in the history), and new items still waiting are marked not needed. A request
  * that's partly bought already can't be cancelled; it's left on the list and counted.
  */
-export async function clearNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, now: number): Promise<Done<{ cancelled: number; kept: number; lists: number; newItems: number }>> {
-  const all = await neededView(db, person, now);
+export async function clearNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, now: number, brand?: BrandId): Promise<Done<{ cancelled: number; kept: number; lists: number; newItems: number }>> {
+  const all = await neededView(db, person, now, brand);
   if (!all.siteIds.length) return { ok: false, error: "Only the owner and operations managers order stock" };
   // A round supplier's order (Surelygrow) has its own page and isn't on Stock needed, so clearing leaves it alone.
   const v = { ...all, groups: all.groups.filter((g) => !ordersByRound(g.supplier)) };

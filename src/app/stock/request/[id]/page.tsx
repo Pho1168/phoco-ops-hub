@@ -59,7 +59,7 @@ export default async function RequestPage(props: { params: Promise<{ id: string 
           {r.cancelReason && <div className="alert">Cancelled: {r.cancelReason}</div>}
         </section>
         {can.purchasing && p.state !== "cancelled" && (
-          <RequestControls requestId={r.id} wanted={p.wanted} suppliers={suppliers.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name }))} supplierId={r.supplierId}
+          <RequestControls requestId={r.id} wanted={p.wanted} suppliers={suppliers.filter((s) => s.active && (s.brand ?? "phoco") === (site?.brand ?? "phoco")).map((s) => ({ id: s.id, name: s.name }))} supplierId={r.supplierId}
             canSupplier={canChangeSupplier(p)} canCancel={canCancelRequest(p)} />
         )}
         <section className="card stack" aria-label="What happened">

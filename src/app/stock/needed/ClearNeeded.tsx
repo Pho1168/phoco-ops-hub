@@ -8,13 +8,13 @@ import { clearNeededAction } from "@/app/actions";
  * Clears Stock needed without ordering anything (for a test, or a list that's been dealt with another way). Asks once
  * more first. Everything cleared is kept in the history as cancelled.
  */
-export function ClearNeeded({ count }: { count: number }) {
+export function ClearNeeded({ count, brand }: { count: number; brand?: string }) {
   const router = useRouter();
   const [asking, setAsking] = useState(false);
   const [msg, setMsg] = useState("");
   const [busy, start] = useTransition();
   const clear = () => start(async () => {
-    const r = await clearNeededAction();
+    const r = await clearNeededAction(brand);
     setAsking(false);
     if (!r.ok) { setMsg(r.error); return; }
     setMsg(r.kept ? `Cleared. ${r.kept} partly bought item${r.kept === 1 ? " is" : "s are"} still on the list.` : "Cleared.");
