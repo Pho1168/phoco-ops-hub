@@ -13,6 +13,7 @@ import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { RightNow } from "./RightNow";
 import { AvailabilityCard } from "@/components/AvailabilityCard";
+import { rotaSitesOf } from "@/lib/availability-service";
 import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
 import { cleaningBoards } from "@/lib/cleaning-service";
 import { cleaningSummary } from "@/lib/domain/cleaning";
@@ -116,7 +117,7 @@ export default async function Owner() {
   const withReady = summaries.filter((s) => s.ready);
   // Operations managers are asked for their availability too (owners aren't).
   const availWeek = askedWeek(now);
-  const availAsked = asksAvailability(ctx.person, allSites);
+  const availAsked = asksAvailability(ctx.person, allSites, await rotaSitesOf(db, ctx.person, now));
   const availSent = availAsked && latestAvailability(await db.myAvailability(ctx.person.id, [availWeek])).has(ctx.person.id);
   const rightNowCard = (
     <RightNow urgent={counts.urgent ?? 0}

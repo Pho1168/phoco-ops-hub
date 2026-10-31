@@ -11,6 +11,7 @@ import { canManage } from "@/lib/domain/access";
 import { coverState, liveOffers } from "@/lib/domain/cover";
 import { Avatar } from "@/components/Avatar";
 import { toneOf } from "@/lib/domain/login";
+import { ownerRotaSites } from "@/lib/availability-service";
 import { AVAIL_DUE_AT, AVAIL_LABEL, AVAIL_SHORT, availabilityGrid, dueDay } from "@/lib/domain/availability";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,7 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
   const cover = isManager ? (await db.coverRequests({ siteIds: [site.id as SiteId], live: true })).filter((r) => ["open", "approved"].includes(coverState(r, now))) : [];
   // Availability staff sent for this week (managers, owners, ops): before the rota is written, and while it's worked on.
   const allSites = await db.sites();
-  const avail = isManager && week > thisWeek ? availabilityGrid(people, allSites, site.id as SiteId, week, await db.availability(week)) : undefined;
+  const avail = isManager && week > thisWeek ? availabilityGrid(people, allSites, site.id as SiteId, week, await db.availability(week), await ownerRotaSites(db, people, now)) : undefined;
   const href = (w: string) => `/rota?week=${w}${site.id !== ctx.site.id ? `&site=${site.id}` : ""}`;
   const me = ctx.person.id;
   const tone = (personId: string) => { const p = people.find((x) => x.id === personId); return p ? toneOf(p, site.id as SiteId) : undefined; };

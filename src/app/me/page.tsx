@@ -34,6 +34,7 @@ import { forYouAt } from "@/lib/handover-service";
 import { phoneHandoverSites } from "@/lib/domain/handover";
 import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
 import { AvailabilityCard } from "@/components/AvailabilityCard";
+import { rotaSitesOf } from "@/lib/availability-service";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -101,7 +102,7 @@ export default async function MyShifts() {
 
   // Next week's availability: asked of staff and managers, due by Saturday 15:00.
   const availWeek = askedWeek(now);
-  const availAsked = asksAvailability(ctx.person, allSites);
+  const availAsked = asksAvailability(ctx.person, allSites, await rotaSitesOf(db, ctx.person, now));
   const myAvail = availAsked ? latestAvailability(await db.myAvailability(ctx.person.id, [availWeek])).get(ctx.person.id) : undefined;
 
   const days = new Map<string, typeof shifts>();
