@@ -73,13 +73,13 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
           {availBanner}
           {more(ctx.site)}
           <div className="row wrap" style={{ gap: 8 }}>
-            <span className="muted lead">Every lane with people on today, cleaning on the right.</span>
+            <span className="muted lead">Every lane with people on today{board ? ", cleaning on the right" : ""}.</span>
             <div className="seg sm-seg" role="group" aria-label="View as">
               <Link href="/shift?view=lanes" aria-current="page" className="sm-seg-on">Every lane</Link>
               <Link href="/shift?view=me">My shift</Link>
             </div>
           </div>
-          <div className="cols two sm-lanes-page">
+          <div className={board ? "cols two sm-lanes-page" : "stack"}>
             <div className="stack" style={{ gap: 12 }}>
               {lanes.length === 0 && (
                 <div className="card stack">
@@ -102,9 +102,8 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
                 </section>
               ))}
             </div>
-            <aside className="stack sm-clean-side" style={{ gap: 12 }}>
-              {board ?? <div className="card muted">No weekly cleaning jobs at {ctx.site.name}.</div>}
-            </aside>
+            {/* No weekly cleaning at the site (none set, or all taken off): no board and no empty column. */}
+            {board && <aside className="stack sm-clean-side" style={{ gap: 12 }}>{board}</aside>}
           </div>
         </main>
         <BottomNav ctx={ctx} current="shift" />

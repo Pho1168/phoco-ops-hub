@@ -44,6 +44,25 @@ export function makeCleaningDemo(deps: { personName: (id: string) => string | un
       S().events.push({ id: randomUUID(), jobId, period: view.period, kind: action, personId, at: now });
       return { ok: true, value: { ...job } };
     },
+    async saveCleaningJob(id, siteId, f) {
+      const jobs = S().jobs;
+      const fields = { area: f.area, name: f.name, per: f.per, times: f.times, everyMonths: f.everyMonths, firstDue: f.firstDue };
+      if (siteId) {
+        if (jobs.some((j) => j.id === id)) return false;
+        jobs.push({ id, siteId, ...fields, position: Math.max(0, ...jobs.filter((j) => j.siteId === siteId).map((j) => j.position)) + 1, active: true, createdAt: Date.now() });
+        return true;
+      }
+      const j = jobs.find((x) => x.id === id);
+      if (!j) return false;
+      Object.assign(j, fields);
+      return true;
+    },
+    async setCleaningJobActive(id, active) {
+      const j = S().jobs.find((x) => x.id === id);
+      if (!j || j.active === active) return false;
+      j.active = active;
+      return true;
+    },
     async cleaningMissed(jobId, period, note) {
       if (S().events.some((e) => e.jobId === jobId && e.period === period && e.kind === "missed")) return false;
       S().events.push({ id: randomUUID(), jobId, period, kind: "missed", note, at: Date.now() });

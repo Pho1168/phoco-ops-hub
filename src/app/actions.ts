@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { raisesAlert } from "@/lib/domain/temperature";
+import { cleanJob, jobId } from "@/lib/domain/cleaning";
 import { BRANDS, brandOf, isBrandId, type BrandId } from "@/lib/domain/brand";
 import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, catalogFor, inBrand as inStockBrand, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode, editsSiteNeeded } from "@/lib/domain/stock";
@@ -2982,6 +2983,57 @@ export async function cleaningAction(jobId: string, action: "claimed" | "release
   const verb = p.data.action === "claimed" ? "will do" : p.data.action === "released" ? "let go of" : "did";
   await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: `cleaning.${p.data.action === "claimed" ? "claim" : p.data.action === "released" ? "release" : "done"}`,
     detail: `Cleaning: ${ctx.person.name.split(" ")[0]} ${verb} "${job.name}"` });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+// ---------- the owner's cleaning board editor ----------
+
+const CleanJobZ = z.object({
+  name: z.string().max(200), area: z.enum(["FOH", "BOH", "PROD"]), per: z.enum(["week", "month", "every"]),
+  times: z.number().int().optional(), everyMonths: z.number().int().optional().nullable(), firstDue: z.string().max(10).optional().nullable(),
+});
+const howOftenText = (f: { per: string; times: number; everyMonths?: number }) =>
+  f.per === "every" ? `every ${f.everyMonths} months` : `${f.times === 1 ? "once" : f.times === 2 ? "twice" : `${f.times} times`} a ${f.per}`;
+
+/** The owner adds a cleaning job at a site (`id` null) or changes one. Audited. */
+export async function saveCleaningJob(id: string | null, siteId: string, input: unknown): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  if (!isOwner(ctx.person)) return { ok: false, error: "Only the owner changes the cleaning jobs" };
+  const p = CleanJobZ.safeParse(input);
+  const sid = SiteIdZ.safeParse(siteId);
+  if (!p.success || !sid.success) return { ok: false, error: "That job couldn't be saved" };
+  const db = store();
+  const site = await db.site(sid.data);
+  if (!site) return { ok: false, error: "That site isn't there" };
+  const c = cleanJob({ ...p.data, everyMonths: p.data.everyMonths ?? undefined, firstDue: p.data.firstDue ?? undefined }, sectionsFor(site.kind));
+  if (!c.ok) return c;
+  const jobs = await db.cleaningJobs();
+  if (id !== null) {
+    const was = jobs.find((j) => j.id === id && j.siteId === site.id);
+    if (!was) return { ok: false, error: "That job isn't on the list any more" };
+    await db.saveCleaningJob(was.id, undefined, c.value);
+    await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "cleaning.job", detail: `Cleaning job changed: "${was.name}" is now "${c.value.name}", ${howOftenText(c.value)}` });
+  } else {
+    const newId = jobId(site.id, c.value.area, c.value.name, jobs.map((j) => j.id));
+    if (!(await db.saveCleaningJob(newId, site.id, c.value))) return { ok: false, error: "That job couldn't be added. Try again" };
+    await db.audit({ actorId: ctx.person.id, siteId: site.id, action: "cleaning.job", detail: `Cleaning job added: "${c.value.name}", ${howOftenText(c.value)}` });
+  }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** The owner takes a cleaning job off the board (kept, with its history) or puts it back. Audited. */
+export async function setCleaningJobActiveAction(id: string, active: boolean): Promise<ActionResult> {
+  const ctx = await requireCtx();
+  if (!isOwner(ctx.person)) return { ok: false, error: "Only the owner changes the cleaning jobs" };
+  const p = z.object({ id: z.string().min(1).max(60), active: z.boolean() }).safeParse({ id, active });
+  if (!p.success) return { ok: false, error: "That change couldn't be saved" };
+  const db = store();
+  const job = (await db.cleaningJobs()).find((j) => j.id === p.data.id);
+  if (!job) return { ok: false, error: "That job isn't on the list any more" };
+  if (!(await db.setCleaningJobActive(job.id, p.data.active))) return { ok: true };
+  await db.audit({ actorId: ctx.person.id, siteId: job.siteId, action: "cleaning.job", detail: `Cleaning job ${p.data.active ? "put back on" : "taken off"} the board: "${job.name}"` });
   revalidatePath("/", "layout");
   return { ok: true };
 }
