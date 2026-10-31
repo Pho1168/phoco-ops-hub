@@ -33,7 +33,7 @@ import { allergenChangesToConfirm, sopsToRead } from "@/lib/library-service";
 import { forYouAt } from "@/lib/handover-service";
 import { phoneHandoverSites } from "@/lib/domain/handover";
 import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
-import { AvailabilityCard } from "@/components/AvailabilityCard";
+import { AvailabilityBanner, AvailabilityCard } from "@/components/AvailabilityCard";
 import { rotaSitesOf } from "@/lib/availability-service";
 
 export const dynamic = "force-dynamic";
@@ -114,6 +114,7 @@ export default async function MyShifts() {
         ? <TopBar ctx={ctx} title="My shifts" eyebrow="Next 4 weeks · published rotas only" back="/" />
         : <PhoneTopBar ctx={ctx} title="My shifts" eyebrow="Next 4 weeks · published rotas only" home />}
       <main style={{ paddingBottom: 40 }}>
+        {availAsked && !myAvail && <AvailabilityBanner week={availWeek} now={now} />}
         <div className="stack" style={{ gap: 10 }}>
           <nav className="row wrap" aria-label="More" style={{ gap: 8 }}>
             {readsHandover && <Link className="btn ghost small" href="/handover">Handover</Link>}
@@ -129,7 +130,7 @@ export default async function MyShifts() {
         <MustRead docs={toRead} allergens={allergenChanges} />
         <TrainingDue overdue={training.tally.overdue} again={training.tally.again} />
 
-        {availAsked && <AvailabilityCard week={availWeek} sent={!!myAvail} now={now} />}
+        {availAsked && myAvail && <AvailabilityCard week={availWeek} sent now={now} />}
 
         {cleanSites.filter((s) => cleaning.has(s.id)).map((s) => (
           <CleaningBoard key={s.id} site={s.name} rows={boardRows(cleaning.get(s.id)!, ctx.person.id)} canAct={onTablet} compact={!onTablet ? false : true} />

@@ -12,7 +12,7 @@ import { ManageTiles, NeedsYou } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { RightNow } from "./RightNow";
-import { AvailabilityCard } from "@/components/AvailabilityCard";
+import { AvailabilityBanner, AvailabilityCard } from "@/components/AvailabilityCard";
 import { rotaSitesOf } from "@/lib/availability-service";
 import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
 import { cleaningBoards } from "@/lib/cleaning-service";
@@ -126,7 +126,7 @@ export default async function Owner() {
       team={{ onRota: teamRows.length, late: teamRows.filter((r) => r.reply?.kind === "late").length, cantMakeIt: teamRows.filter((r) => r.reply?.kind === "cant_make_it").length }}
     />
   );
-  const rightNow = <>{availAsked && <AvailabilityCard week={availWeek} sent={availSent} now={now} />}{rightNowCard}</>;
+  const rightNow = <>{availAsked && !availSent && <AvailabilityBanner week={availWeek} now={now} />}{rightNowCard}{availAsked && availSent && <AvailabilityCard week={availWeek} sent now={now} />}</>;
   return (
     <>
       <TopBar ctx={ctx} title="Right now" eyebrow={lead === "owner" ? "All sites · owner" : `${sites.map((s) => s.name).join(" · ")} · operations`}>

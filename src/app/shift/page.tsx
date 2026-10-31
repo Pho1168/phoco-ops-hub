@@ -12,6 +12,9 @@ import { ShiftReply } from "@/app/me/ShiftReply";
 import { DayStrip, FirstUp, LaneTitle, OnShift, ShiftList, Summary } from "./parts";
 import { CleaningBoard } from "@/components/CleaningBoard";
 import { boardRows, cleaningBoards } from "@/lib/cleaning-service";
+import { AvailabilityBanner } from "@/components/AvailabilityCard";
+import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
+import { rotaSitesOf } from "@/lib/availability-service";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +45,11 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
   const cleaning = onTablet ? (await cleaningBoards(db, [ctx.site.id], now)).get(ctx.site.id) ?? [] : [];
   const board = cleaning.length ? <CleaningBoard site={ctx.site.name} rows={boardRows(cleaning, ctx.person.id)} canAct compact /> : null;
   const dateLine = (site: string, when = shortDay(today)) => `${site} · ${when}`;
+  // Next week's availability, until the person signed in has sent it: a banner at the top of every view.
+  const availWeek = askedWeek(now);
+  const availDue = asksAvailability(ctx.person, await db.sites(), await rotaSitesOf(db, ctx.person, now))
+    && !latestAvailability(await db.myAvailability(ctx.person.id, [availWeek])).has(ctx.person.id);
+  const availBanner = availDue ? <AvailabilityBanner week={availWeek} now={now} /> : null;
 
   const more = (site: ShiftView["site"] | undefined) => (
     <nav className="row wrap sm-more" aria-label="More" style={{ gap: 8 }}>
@@ -62,6 +70,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
       <>
         <Bar ctx={ctx} title="Today’s lanes" eyebrow={dateLine(ctx.site.name)} />
         <main className="wide">
+          {availBanner}
           {more(ctx.site)}
           <div className="row wrap" style={{ gap: 8 }}>
             <span className="muted lead">Every lane with people on today, cleaning on the right.</span>
@@ -113,6 +122,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
       <>
         <Bar ctx={ctx} title={`Hi ${firstName(ctx.person.name)}`} eyebrow={dateLine(ctx.site.name)} />
         <main>
+          {availBanner}
           {more(undefined)}
           {board}
           <div className="card stack" style={{ gap: 10 }}>
@@ -139,6 +149,7 @@ export default async function Shift({ searchParams }: { searchParams: Promise<Re
     <>
       <Bar ctx={ctx} title={<LaneTitle lane={w.lane} />} eyebrow={`${dateLine(site.name, dayLabel(w.date, today))} · ${windowLabel(w)}${picked ? " · not on the rota" : ""}`} />
       <main>
+        {availBanner}
         {more(site)}
         {board}
         {(managerHere || picked) && (
