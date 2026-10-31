@@ -18,6 +18,7 @@ import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
 import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn } from "@/lib/domain/access";
+import { AVAIL_LABEL, asksAvailability, canAnswer as canAnswerAvailability, cleanAvailability, isLate as availLate } from "@/lib/domain/availability";
 import { canCancel, canDecide, clashes, kindLabel, rangeLabel, timeOffDeciders, validateRequest } from "@/lib/domain/timeoff";
 import { canPostTo, inAudience, NOTICE_BODY_MAX, NOTICE_TITLE_MAX } from "@/lib/domain/notices";
 import { afterQuietHours, dayMonthYear, isIsoDate, londonDate } from "@/lib/domain/time";
@@ -1229,6 +1230,30 @@ export async function requestTimeOff(input: unknown): Promise<ActionResult> {
     `${rangeLabel(t.data)} · ${kindLabel(t.data.kind)}${onRota.length ? ` · ${onRota.length} rota shift${onRota.length > 1 ? "s" : ""} on those days` : ""}${t.data.note ? `\n"${t.data.note}"` : ""}`, `timeoff|${id}`);
   await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "timeoff.request", detail: `Asked for ${rangeLabel(t.data)} (${kindLabel(t.data.kind)})` });
   revalidatePath("/me"); revalidatePath("/manage/time-off");
+  return { ok: true };
+}
+
+/**
+ * Says when the person can work in a week ahead (next week, or the one after): one answer a day. Answers are only
+ * added; the latest counts. Owners and operations managers aren't asked.
+ */
+export async function saveAvailability(week: string, days: { a: string; note?: string }[]): Promise<ActionResult> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  const p = z.object({ week: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), days: z.array(z.object({ a: z.string().max(8), note: z.string().max(300).optional() })).length(7) })
+    .safeParse({ week, days });
+  if (!p.success) return { ok: false, error: "Answer every day of the week" };
+  const db = store();
+  const now = Date.now();
+  if (!asksAvailability(ctx.person, await db.sites())) return { ok: false, error: "Your availability isn't asked for" };
+  if (!canAnswerAvailability(p.data.week, now)) return { ok: false, error: "That week can't be changed any more" };
+  const clean = cleanAvailability(p.data.days);
+  if (!clean.ok) return clean;
+  await db.addAvailability(ctx.person.id, p.data.week, clean.value);
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "availability.save",
+    detail: `Week of ${dayMonthYear(p.data.week)}${availLate(p.data.week, now) ? " (late)" : ""}: ${clean.value.map((d) => AVAIL_LABEL[d.a]).join(", ")}` });
+  revalidatePath("/me"); revalidatePath("/me/availability"); revalidatePath("/rota");
   return { ok: true };
 }
 

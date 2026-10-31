@@ -1028,3 +1028,19 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .round-cat .stock-item { border-color: var(--line); }
 .round-cat .stock-item.on { border-color: var(--warn-soft); }
 .round-want { font-size: 13px; font-weight: 600; color: var(--teal-ink); }
+
+/* Weekly availability: four taps a day (My shifts → Availability), and the grid on the Rota page. */
+.avail-opts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.avail-opt { min-height: 48px; border-radius: 12px; border: 2px solid var(--line); background: var(--surface); font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; padding: 0 6px; }
+.avail-opt.on { background: var(--teal-tint); border-color: var(--teal); color: var(--teal-ink); }
+.avail-opt.off.on { background: var(--surface-2); border-color: var(--line); color: var(--ink); }
+.avail-day.is-off { opacity: .85; }
+.avail-bar { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 16px;
+  background: color-mix(in srgb, var(--teal-tint) 70%, var(--surface)); z-index: 1; }
+.avail-late { border-left: 6px solid var(--accent); }
+.avail-cell { display: inline-block; min-width: 44px; padding: 3px 8px; border-radius: 8px; font-size: 12px; font-weight: 700; text-align: center; }
+.avail-cell.all { background: var(--teal); color: #fff; }
+.avail-cell.am, .avail-cell.pm { background: var(--teal-tint); color: var(--teal-ink); }
+.avail-cell.off { background: var(--surface-2); color: var(--ink-2); }
+.avail-note { display: block; font-size: 11px; color: var(--ink-2); line-height: 1.2; margin-top: 2px; white-space: normal; }
+@media (max-width: 719px) { .avail-grid .rota-grid-wrap { display: block; } }
