@@ -589,56 +589,33 @@ export function restaurantDemand(groups: Pick<NeededGroup, "production" | "rows"
   return out;
 }
 
-/** One line of what the restaurants have asked the production kitchen for: the item, each branch's amount and the total. */
-export interface ProductionNeedRow { product: Product; total: number; unknown: number; sites: { siteId: SiteId; qty: number; unknown: number }[]; fromSupplier: boolean }
+export interface MirrorRow { product: Product; total: number; unknown: number; sites: { siteId: SiteId; qty: number; unknown: number }[]; urgent: boolean; sold: boolean }
+export interface MirrorGroup { key: string; name: string; production: boolean; rows: MirrorRow[] }
 
 /**
- * Everything the restaurants have asked the production kitchen for and it hasn't sent yet (its production groups on
- * Stock needed), one line per item with the amount per branch and the total, the kitchen's own site left out.
- * `fromSupplier`: the item is a copy of one of this supplier's products (`Product.copyOf`), so it's what to order from
- * them. Those come first, then the rest; each part by name.
+ * Beside a round supplier's order (Surelygrow's): Stock needed as it is, a card per supplier with each item still to
+ * order (or, for a production kitchen, still to send), the amount per branch and in total. Round suppliers' own lists
+ * are left out, as on Stock needed. `sold`: this supplier sells the item too (same name, or the kitchen's copy of one
+ * of its products), so it can go on this order.
  */
-export function productionNeeded(groups: Pick<NeededGroup, "production" | "rows">[], products: Pick<Product, "id" | "supplierId" | "copyOf">[], supplierId: string, kitchenId?: SiteId): ProductionNeedRow[] {
-  const round = (n: number) => Math.round(n * 100) / 100;
-  const out = new Map<string, ProductionNeedRow>();
-  for (const g of groups.filter((x) => x.production)) {
-    for (const r of g.rows) {
-      const sites = r.sites.filter((x) => x.siteId !== kitchenId && (x.qty > 0 || x.unknown > 0));
-      if (!sites.length) continue;
-      const from = products.find((p) => p.id === r.product.id)?.copyOf;
-      const row = out.get(r.product.id) ?? { product: r.product, total: 0, unknown: 0, sites: [],
-        fromSupplier: !!from && products.find((p) => p.id === from)?.supplierId === supplierId };
-      for (const x of sites) {
-        row.total = round(row.total + x.qty); row.unknown += x.unknown;
-        const at = row.sites.find((y) => y.siteId === x.siteId);
-        if (at) { at.qty = round(at.qty + x.qty); at.unknown += x.unknown; } else row.sites.push({ ...x });
-      }
-      out.set(r.product.id, row);
-    }
-  }
-  return [...out.values()].sort((a, b) => Number(b.fromSupplier) - Number(a.fromSupplier) || a.product.name.localeCompare(b.product.name));
-}
-
-export interface ReportedRow { product: Product; supplier: string; qty: number; unknown: number; urgent: boolean; sold: boolean }
-
-/**
- * Beside a round supplier's order for a restaurant (Cafe La Viet's Surelygrow): everything else the restaurant has
- * asked for and is still waiting (every other supplier's list on Stock needed, drivers' lists left out), with its
- * supplier. `sold`: the round supplier sells a product of the same name too, so it could go on this order; those
- * come first, then the rest by name.
- */
-export function reportedAtSite(groups: Pick<NeededGroup, "supplier" | "rows">[], products: Pick<Product, "name" | "supplierId" | "active">[], roundSupplierId: string, siteId: SiteId): ReportedRow[] {
-  const sells = new Set(products.filter((p) => p.active && p.supplierId === roundSupplierId).map((p) => norm(p.name)));
-  const out: ReportedRow[] = [];
+export function neededMirror(groups: Pick<NeededGroup, "key" | "supplier" | "rows" | "production">[], products: Pick<Product, "id" | "name" | "supplierId" | "copyOf" | "active">[], roundSupplierId: string): MirrorGroup[] {
+  const mine = products.filter((p) => p.active && p.supplierId === roundSupplierId);
+  const names = new Set(mine.map((p) => norm(p.name))), ids = new Set(mine.map((p) => p.id));
+  const out: MirrorGroup[] = [];
   for (const g of groups) {
-    if (g.supplier?.id === roundSupplierId) continue;
+    if (ordersByRound(g.supplier)) continue;
+    const rows: MirrorRow[] = [];
     for (const r of g.rows) {
-      const at = r.sites.find((x) => x.siteId === siteId && (x.qty > 0 || x.unknown > 0));
-      if (!at) continue;
-      out.push({ product: r.product, supplier: g.supplier?.name ?? "No supplier yet", qty: at.qty, unknown: at.unknown, urgent: r.urgent, sold: sells.has(norm(r.product.name)) });
+      const sites = r.sites.filter((x) => x.qty > 0 || x.unknown > 0).map((x) => ({ ...x }));
+      if (!sites.length) continue;
+      const copyOf = products.find((p) => p.id === r.product.id)?.copyOf;
+      rows.push({ product: r.product, sites, urgent: r.urgent,
+        total: Math.round(sites.reduce((t, x) => t + x.qty, 0) * 100) / 100, unknown: sites.reduce((t, x) => t + x.unknown, 0),
+        sold: names.has(norm(r.product.name)) || (!!copyOf && ids.has(copyOf)) });
     }
+    if (rows.length) out.push({ key: g.key, name: g.production ? `${g.supplier?.name ?? "Production"} (production)` : g.supplier?.name ?? "No supplier yet", production: g.production, rows });
   }
-  return out.sort((a, b) => Number(b.sold) - Number(a.sold) || a.product.name.localeCompare(b.product.name));
+  return out;
 }
 
 /** The log line on a request raised from the catalogue. */

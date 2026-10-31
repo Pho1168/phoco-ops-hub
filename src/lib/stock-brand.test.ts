@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { catalogFor, orderableAt, reportedAtSite, type NeededGroup, type Product } from "@/lib/domain/stock";
+import { catalogFor, orderableAt, type NeededGroup } from "@/lib/domain/stock";
 import { clearNeeded, neededView, orderBrands, pickBrand, sendStockReport } from "@/lib/stock-service";
 
 // Runs against the in-memory demo store only, never a real database.
@@ -57,17 +57,5 @@ describe("each business keeps its own stock catalogue", () => {
     expect(ids((await neededView(db, owner, NOW + 3000, "clv")).groups)).toEqual([]);
     expect(ids((await neededView(db, owner, NOW + 3000, "phoco")).groups)).toContain(pho.id);
     void sup;
-  });
-
-  it("beside Cafe La Viet's round order: everything else it reported, what that supplier also sells first", () => {
-    const P = (id: string, name: string, supplierId?: string): Product => ({ id, name, supplierId, active: true });
-    const row = (product: Product, siteId: string, qty: number) => ({ product, qty, sites: [{ siteId, qty, unknown: 0 }], requestIds: [], lineIds: [], unknownIds: [], notes: [], photoIds: [], urgent: false });
-    const groups = [
-      { supplier: { id: "SG", name: "Surelygrow", method: "delivery" as const, active: true }, rows: [row(P("1", "Lime", "SG"), "CLV", 2)] },
-      { supplier: { id: "LF", name: "Loon Fung", method: "shop" as const, active: true }, rows: [row(P("2", "Coriander", "LF"), "CLV", 3), row(P("3", "Rice", "LF"), "CLV", 1), row(P("4", "Rice", "LF"), "EAS", 9)] },
-    ];
-    const products = [P("1", "Lime", "SG"), P("5", "coriander", "SG")];
-    const r = reportedAtSite(groups, products, "SG", "CLV");
-    expect(r.map((x) => [x.product.name, x.supplier, x.qty, x.sold])).toEqual([["Coriander", "Loon Fung", 3, true], ["Rice", "Loon Fung", 1, false]]);
   });
 });

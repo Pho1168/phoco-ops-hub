@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { store } from "@/lib/data";
-import { canPurchase, catalogFor, deliveryDaysText, productionNeeded, reportedAtSite, restaurantDemand, neededCount, nextDelivery, ordersByRound } from "@/lib/domain/stock";
+import { canPurchase, catalogFor, deliveryDaysText, neededMirror, restaurantDemand, neededCount, nextDelivery, ordersByRound } from "@/lib/domain/stock";
 import { londonDate, longDay } from "@/lib/domain/time";
 import { neededView, roundSite } from "@/lib/stock-service";
 import { RoundCatalogue } from "./RoundCatalogue";
-import { ProductionNeeded } from "./ProductionNeeded";
-import { ReportedNeeded } from "./ReportedNeeded";
+import { NeededMirror } from "./NeededMirror";
 import { StockBar, StockNav } from "../../Bar";
 import { orderingStockCtx } from "../../load";
 import { NeededBoard } from "../../needed/NeededBoard";
@@ -49,12 +48,10 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
   const demand = restaurantDemand(groups, catalog.products, kitchen?.id);
   const wanted: Record<string, { qty: number; sizes: string[]; sites: string }> = {};
   for (const [pid, d] of demand) wanted[pid] = { qty: d.qty, sizes: d.sizes, sites: d.sites.map((x) => `${siteName.get(x.siteId) ?? x.siteId} ${x.qty}`).join(", ") };
-  // Beside it: for a production kitchen, everything the restaurants have asked production for, per branch and in
-  // total; for a restaurant it delivers to (Cafe La Viet), everything else that restaurant has reported.
+  // Beside it: Stock needed as it is (this business's), every supplier's items per branch and in total.
   const toRestaurant = !!kitchen && kitchen.kind !== "production";
-  const reported = toRestaurant ? reportedAtSite(groups.filter((g) => !ordersByRound(g.supplier)), catalog.products, supplier.id, kitchen.id) : [];
-  const need = productionNeeded(groups, catalog.products, supplier.id, kitchen?.id ?? kitchenId);
-  const needSites = sites.filter((s) => s.id !== (kitchen?.id ?? kitchenId) && s.status === "open").map((s) => ({ id: s.id, name: s.name }));
+  const mirror = neededMirror(groups, catalog.products, supplier.id);
+  const mirrorSites = sites.filter((s) => siteIds.includes(s.id)).map((s) => ({ id: s.id, name: s.name }));
   const onOrder: Record<string, number> = {};
   for (const r of group?.rows ?? []) if (kitchen && r.sites.some((x) => x.siteId === kitchen.id)) onOrder[r.product.id] = r.sites.filter((x) => x.siteId === kitchen.id).reduce((t, x) => t + x.qty, 0);
   return (
@@ -80,9 +77,7 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
           <Link className="btn ghost small" href={`/stock/needed?b=${brand}`}>Back to Stock needed</Link>
         </nav>
         </div>
-        {toRestaurant
-          ? <ReportedNeeded rows={reported} supplierName={supplier.name} siteName={kitchen.name} />
-          : <ProductionNeeded rows={need} supplierName={supplier.name} sites={needSites} />}
+        <NeededMirror groups={mirror} supplierName={supplier.name} sites={mirrorSites} />
         </div>
       </main>
       <StockNav ctx={ctx} onPhone={onPhone} />
