@@ -1,13 +1,19 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { requestBrand } from "@/lib/brand-service";
 
-export const metadata: Metadata = {
-  title: "PHO & CO Ops Hub",
-  description: "Checklists, food safety and shift handover for PHO & CO",
-  manifest: "/manifest.webmanifest",
-  icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
-  appleWebApp: { capable: true, title: "PHO & CO", statusBarStyle: "default" },
-};
+/** Named after the business of the site in use (PHO & CO or Cafe La Viet); "Ops Hub" before anyone signs in. */
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await requestBrand();
+  const name = brand ? `${brand.name} Ops Hub` : "Ops Hub";
+  return {
+    title: name,
+    description: `Checklists, food safety and shift handover${brand ? ` for ${brand.name}` : ""}`,
+    manifest: `/manifest.webmanifest${brand && brand.id !== "phoco" ? `?b=${brand.id}` : ""}`,
+    icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
+    appleWebApp: { capable: true, title: brand?.name ?? "Ops Hub", statusBarStyle: "default" },
+  };
+}
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#2C6E63", colorScheme: "light" };
 

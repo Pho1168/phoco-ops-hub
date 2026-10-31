@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
+import type { BrandId } from "@/lib/domain/brand";
 import { useRouter } from "next/navigation";
 import { ClearAlerts } from "@/components/ClearAlerts";
 import { closeSite, createSite, logOutEverywhere, reopenSite, resolveAlert, setFrozen, setKitchenClose, switchSite } from "@/app/actions";
@@ -22,15 +23,18 @@ export interface SiteSummary {
   cleaning?: { text: string; tone: "good" | "bad" | "" };
 }
 /** `canEdit`: whoever is looking may change this account (an operations manager: staff and managers at their sites only). */
-export interface PersonRow { id: string; name: string; code: string; status: string; self: boolean; sites: string; canEdit: boolean }
+export interface PersonRow { id: string; name: string; code: string; status: string; self: boolean; sites: string; canEdit: boolean; brands: BrandId[] }
 
 type Modal = { type: "close"; site: SiteSummary } | { type: "resolve"; id: string } | null;
 
 /** The overview. `lead`: an owner (every site, closing and reopening) or an operations manager (the sites they run). */
-export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, people, log, currentSite, devices, rota }: { lead: "owner" | "ops"; rightNow: React.ReactNode; needs: React.ReactNode; tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
+export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, people, businesses = [], log, currentSite, devices, rota }: { lead: "owner" | "ops"; businesses?: { id: BrandId; name: string }[]; rightNow: React.ReactNode; needs: React.ReactNode; tools: React.ReactNode; reminders: React.ReactNode; sites: SiteSummary[]; people: PersonRow[]; log: { at: string; site: string; who: string; action: string; detail: string }[]; currentSite: string; devices: React.ReactNode; rota: React.ReactNode }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [modal, setModal] = useState<Modal>(null);
+  const [biz, setBiz] = useState<BrandId>(businesses[0]?.id ?? "phoco");
+  const tabs = businesses.length > 1;
+  const shown = tabs ? people.filter((p) => p.brands.includes(biz)) : people;
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -102,8 +106,19 @@ export function OwnerClient({ lead, rightNow, needs, tools, reminders, sites, pe
 
       <section className="card stack" aria-label="Accounts" id="accounts">
         <div className="row"><h2 className="h-sec grow">Staff accounts</h2><Link className="btn accent small" href="/staff/new">Add person</Link></div>
+        {tabs && (
+          <div className="chips" role="tablist" aria-label="Business">
+            {businesses.map((b) => (
+              <button key={b.id} type="button" role="tab" aria-selected={biz === b.id} className={`chip ${biz === b.id ? "done" : ""}`} onClick={() => setBiz(b.id)}>
+                {b.name} ({people.filter((p) => p.brands.includes(b.id) && p.status !== "left").length})
+              </button>
+            ))}
+          </div>
+        )}
+        {tabs && <div className="muted" style={{ fontSize: 14 }}>Everyone with access at a {businesses.find((b) => b.id === biz)?.name} site. Someone who works for both is on both lists.</div>}
         <ul className="accounts">
-          {people.map((p) => (
+          {shown.length === 0 && <li className="muted">Nobody here yet.</li>}
+          {shown.map((p) => (
             <li key={p.id}>
               <div className="grow">
                 <div className="strong">{p.name}{p.self ? " (you)" : ""}</div>

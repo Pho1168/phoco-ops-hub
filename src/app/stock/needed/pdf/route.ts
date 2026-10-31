@@ -4,6 +4,7 @@ import { orderSheetLines, runsOrdering } from "@/lib/domain/stock";
 import { londonDate, londonHM, longDay } from "@/lib/domain/time";
 import { orderSheetPdf } from "@/lib/pdf";
 import { current } from "@/lib/session";
+import { brandOf, brandSlug } from "@/lib/domain/brand";
 import { deliversTo, neededGroup } from "@/lib/stock-service";
 
 export const dynamic = "force-dynamic";
@@ -23,16 +24,19 @@ export async function GET(req: Request) {
   const { group } = await neededGroup(db, ctx.person, key, now);
   if (!group?.supplier) return new NextResponse("Nothing to order from that supplier", { status: 404 });
   const lines = orderSheetLines(group);
-  const to = await deliversTo(db, group.supplier.id);
+  const toId = await deliversTo(db, group.supplier.id);
+  const to = toId ? await db.site(toId) : undefined;
+  // The business on the sheet: the kitchen it's delivered to, else the person ordering's site.
+  const brand = brandOf(to ?? ctx.site);
   const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, ""));
   const today = londonDate(now);
   const pdf = orderSheetPdf({
-    title: `PHO & CO stock order: ${group.supplier.name}`,
-    lines: [`Date: ${longDay(today)}`, ...(to ? [`Deliver to: PHO & CO ${to}`] : []), `Ordered by: ${ctx.person.name}`],
+    title: `${brand.name} stock order: ${group.supplier.name}`,
+    lines: [`Date: ${longDay(today)}`, ...(toId ? [`Deliver to: ${brand.name} ${to?.name ?? toId}`] : []), `Ordered by: ${ctx.person.name}`],
     rows: lines.map((l) => ({ qty: fmt(l.qty), item: l.name, pack: l.pack })),
-    foot: `${lines.length} item${lines.length === 1 ? "" : "s"}. Made in PHO & CO Ops Hub at ${londonHM(now)}.`,
+    foot: `${lines.length} item${lines.length === 1 ? "" : "s"}. Made in the Ops Hub at ${londonHM(now)}.`,
   });
-  const file = `PHO-CO-order-${group.supplier.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${today}.pdf`;
+  const file = `${brandSlug([to ?? ctx.site])}-order-${group.supplier.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${today}.pdf`;
   return new NextResponse(Buffer.from(pdf), {
     headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="${file}"`, "cache-control": "no-store", "x-content-type-options": "nosniff" },
   });

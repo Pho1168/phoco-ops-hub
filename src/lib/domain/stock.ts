@@ -1040,7 +1040,7 @@ export function orderSummary(t: PurchaseTask, views: TaskLineView[], products: P
     byProduct.set(v.request.productId, e);
   }
   const lines = [...byProduct.values()].map((e) => `- ${e.qty} x ${e.product ? productLabel(e.product) : "?"}`);
-  return [`PHO & CO order ${taskCode(t)}${supplier ? ` for ${supplier.name}` : ""}${t.requiredBy ? `, needed by ${t.requiredBy}` : ""}`, ...lines].join("\n");
+  return [`Stock order ${taskCode(t)}${supplier ? ` for ${supplier.name}` : ""}${t.requiredBy ? `, needed by ${t.requiredBy}` : ""}`, ...lines].join("\n");
 }
 
 /** Every request with where it stands. */

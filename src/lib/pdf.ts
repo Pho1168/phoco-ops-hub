@@ -56,7 +56,7 @@ export function buildPdf(pages: PdfOp[][], title: string, size: { w: number; h: 
   add("PAGES");
   add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
   add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
-  add(`<< /Title ${pdfString(title)} /Producer (PHO & CO Ops Hub) >>`);
+  add(`<< /Title ${pdfString(title)} /Producer (Ops Hub) >>`);
   const kids: number[] = [];
   for (const [at, ops] of (pages.length ? pages : [[]]).entries()) {
     const box = size[at] ?? A4;

@@ -1,3 +1,4 @@
+import { brandOf, brandSlug } from "@/lib/domain/brand";
 import { NextResponse } from "next/server";
 import { store } from "@/lib/data";
 import { canUsePrep, receiptSheet } from "@/lib/domain/prep";
@@ -21,9 +22,9 @@ export async function GET() {
     title: "Handover list",
     lines: [`${ctx.site.name} · ${longDay(londonDate(now))}`, `Printed by ${ctx.person.name.split(" ")[0]} at ${londonHM(now)}`],
     groups,
-    foot: "PHO & CO",
+    foot: brandOf(ctx.site).name,
   });
   return new NextResponse(Buffer.from(pdf), {
-    headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="PHO-CO-handover-list-${londonDate(now)}.pdf"`, "cache-control": "no-store", "x-content-type-options": "nosniff" },
+    headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${brandSlug([ctx.site])}-handover-list-${londonDate(now)}.pdf"`, "cache-control": "no-store", "x-content-type-options": "nosniff" },
   });
 }

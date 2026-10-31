@@ -326,7 +326,7 @@ describe("stock rules", () => {
     const t = { id: "t", code: 7, method: "delivery" as const, priority: "normal" as const, createdBy: "o", createdAt: 0, requiredBy: "2026-10-17" };
     const r = (id: string, siteId: string): StockRequest => ({ id, code: 1, siteId, productId: "p", level: "low", requestedBy: "x", createdAt: 0 });
     const views = [{ line: { id: "1", taskId: "t", requestId: "a", qty: 2 }, request: r("a", "EAS") }, { line: { id: "2", taskId: "t", requestId: "b", qty: 3 }, request: r("b", "GRE") }];
-    expect(orderSummary(t, views, [P({ size: "Case" })], undefined, new Map())).toBe("PHO & CO order PT-0007, needed by 2026-10-17\n- 5 x Fish sauce · Case");
+    expect(orderSummary(t, views, [P({ size: "Case" })], undefined, new Map())).toBe("Stock order PT-0007, needed by 2026-10-17\n- 5 x Fish sauce · Case");
   });
   it("progress counts only lines on live tasks", () => {
     const r: StockRequest = { id: "r", code: 1, siteId: "EAS", productId: "p", level: "low", qty: 4, requestedBy: "x", createdAt: 0 };

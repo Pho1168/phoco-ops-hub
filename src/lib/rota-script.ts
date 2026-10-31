@@ -1,6 +1,6 @@
 /** The Google Apps Script an owner pastes into a site's rota sheet (Extensions → Apps Script). */
 export function rotaScript(url: string, token: string, siteName: string): string {
-  return `// PHO & CO Ops Hub: sends the ${siteName} rota to the app.
+  return `// Ops Hub: sends the ${siteName} rota to the app.
 // Paste into Extensions > Apps Script, Save, then run "setUp" once and allow access.
 // Only the Export, Settings (week status) and Staff tabs are read. Nothing in this sheet is changed.
 const OPS_HUB_URL = "${url}";
