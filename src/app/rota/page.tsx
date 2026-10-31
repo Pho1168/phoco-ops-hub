@@ -11,7 +11,7 @@ import { canManage } from "@/lib/domain/access";
 import { coverState, liveOffers } from "@/lib/domain/cover";
 import { Avatar } from "@/components/Avatar";
 import { toneOf } from "@/lib/domain/login";
-import { AVAIL_LABEL, AVAIL_SHORT, availabilityGrid, dueDay } from "@/lib/domain/availability";
+import { AVAIL_DUE_AT, AVAIL_LABEL, AVAIL_SHORT, availabilityGrid, dueDay } from "@/lib/domain/availability";
 
 export const dynamic = "force-dynamic";
 
@@ -85,7 +85,7 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
           <section className="card stack avail-grid" aria-label="Availability" style={{ gap: 10 }}>
             <div className="row wrap" style={{ gap: 8, alignItems: "baseline" }}>
               <h2 className="h-sec grow" style={{ margin: 0 }}>Availability</h2>
-              <span className="muted">{avail.rows.length - avail.waiting.length} of {avail.rows.length} sent · due {shortDay(dueDay(week))}</span>
+              <span className="muted">{avail.rows.length - avail.waiting.length} of {avail.rows.length} sent · due {shortDay(dueDay(week))} {AVAIL_DUE_AT}</span>
             </div>
             <div className="rota-grid-wrap">
               <table className="rota-grid">
@@ -118,7 +118,7 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
               </table>
             </div>
             {avail.waiting.length > 0
-              ? <div className="muted"><span className="strong">Not sent yet:</span> {avail.waiting.map((r) => r.name).join(", ")}. They&apos;re reminded on Wednesday and Thursday.</div>
+              ? <div className="muted"><span className="strong">Not sent yet:</span> {avail.waiting.map((r) => r.name).join(", ")}. They&apos;re reminded on Friday and Saturday morning.</div>
               : <div className="muted">Everyone has sent theirs.</div>}
             <div className="muted" style={{ fontSize: 13 }}>AM = morning (to 15:00), PM = evening, All = all day. Staff send it from My shifts.</div>
           </section>

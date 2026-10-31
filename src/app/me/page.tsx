@@ -99,7 +99,7 @@ export default async function MyShifts() {
   // Managers on their own phone can read the handover (read-only) at the open sites they manage.
   const readsHandover = ctx.scope === "shifts" && phoneHandoverSites(ctx.person, allSites).length > 0;
 
-  // Next week's availability: asked of staff and managers, due by the end of Thursday.
+  // Next week's availability: asked of staff and managers, due by Saturday 15:00.
   const availWeek = askedWeek(now);
   const availAsked = asksAvailability(ctx.person, allSites);
   const myAvail = availAsked ? latestAvailability(await db.myAvailability(ctx.person.id, [availWeek])).get(ctx.person.id) : undefined;

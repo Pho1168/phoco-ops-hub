@@ -3,7 +3,7 @@ import type { Store } from "@/lib/data/store";
 import { askedWeek, asksAvailability, availReminderMessage, availReminderStage, latestAvailability } from "@/lib/domain/availability";
 
 /**
- * Wednesday and Thursday from midday (London): a message to everyone asked who hasn't said when they can work next
+ * Friday from 12:00 and Saturday from 10:00 until it closes at 15:00 (London): a message to everyone asked who hasn't said when they can work next
  * week. Once per person, week and day (the key), and not to anyone who has answered.
  */
 export async function queueAvailabilityReminders(now = Date.now(), db: Store = store()): Promise<number> {
