@@ -632,10 +632,20 @@ describe("team notices", () => {
   const left = person("l", "Lee", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }], "left");
   const n = (over: Partial<TeamNotice> = {}): TeamNotice => ({ id: "n1", siteId: "EAS", sections: [], title: "New menu", body: "From Monday", important: false,
     createdBy: "m", createdByName: "Mia", createdAt: 1, reads: [], ...over });
+  const SITES = [{ id: "EAS" }, { id: "WEM", brand: "phoco" as const }, { id: "CLV", brand: "clv" as const }];
+  const clv = person("c", "Cal", [{ siteId: "CLV", role: "manager", sections: ["FOH", "BOH"] }]);
+  const both = person("a", "Ari", [{ siteId: "EAS", role: "staff", sections: ["BOH"] }, { siteId: "CLV", role: "staff", sections: ["BOH"] }]);
   it("is for the right people", () => {
-    expect([foh, boh, mgr, wem, left].map((p) => inAudience(n(), p))).toEqual([true, true, true, false, false]);
-    expect([foh, boh, mgr, wem].map((p) => inAudience(n({ sections: ["BOH"] }), p))).toEqual([false, true, true, false]); // managers always see their site
-    expect([foh, wem].map((p) => inAudience(n({ siteId: undefined }), p))).toEqual([true, true]);
+    expect([foh, boh, mgr, wem, left].map((p) => inAudience(n(), p, SITES))).toEqual([true, true, true, false, false]);
+    expect([foh, boh, mgr, wem].map((p) => inAudience(n({ sections: ["BOH"] }), p, SITES))).toEqual([false, true, true, false]); // managers always see their site
+    expect([foh, wem].map((p) => inAudience(n({ siteId: undefined, brand: "phoco" }), p, SITES))).toEqual([true, true]);
+  });
+  it("keeps each business's all-sites notices to its own sites", () => {
+    const pho = n({ siteId: undefined, brand: "phoco" }), cafe = n({ siteId: undefined, brand: "clv" });
+    expect([foh, wem, clv, both].map((p) => inAudience(pho, p, SITES))).toEqual([true, true, false, true]);
+    expect([foh, wem, clv, both].map((p) => inAudience(cafe, p, SITES))).toEqual([false, false, true, true]);
+    expect(inAudience(n({ siteId: undefined }), clv, SITES)).toBe(false); // an old all-sites notice was PHO & CO's
+    expect(inAudience(n({ siteId: "EAS" }), clv, SITES)).toBe(false);
   });
   it("shows until taken down or its last day passes", () => {
     expect(isLive(n(), "2026-10-12")).toBe(true);
@@ -645,21 +655,24 @@ describe("team notices", () => {
   });
   it("lists unread notices, important first, until 'Got it'", () => {
     const list = [n({ id: "a", createdAt: 1 }), n({ id: "b", createdAt: 2 }), n({ id: "c", createdAt: 0, important: true }), n({ id: "d", reads: [{ personId: "f", readAt: 3 }] })];
-    expect(unreadFor(list, foh, "2026-10-12").map((x) => x.id)).toEqual(["c", "b", "a"]);
+    expect(unreadFor(list, foh, "2026-10-12", SITES).map((x) => x.id)).toEqual(["c", "b", "a"]);
   });
   it("shows who has and hasn't read it", () => {
-    const st = readStats(n({ reads: [{ personId: "b", readAt: 9 }] }), [foh, boh, mgr, wem, left]);
+    const st = readStats(n({ reads: [{ personId: "b", readAt: 9 }] }), [foh, boh, mgr, wem, left], SITES);
     expect(st.audience).toBe(3);
     expect(st.read.map((r) => r.name)).toEqual(["Bo"]);
     expect(st.unread.map((r) => r.name)).toEqual(["Fay", "Mia"]);
   });
   it("lets managers post to their own sites only", () => {
-    expect(canPostTo(["EAS"], ["EAS", "WEM"], "EAS")).toBe(true);
-    expect(canPostTo(["EAS"], ["EAS", "WEM"], "WEM")).toBe(false);
-    expect(canPostTo(["EAS"], ["EAS", "WEM"], undefined)).toBe(false);
-    expect(canPostTo(["EAS", "WEM"], ["EAS", "WEM"], undefined)).toBe(true);
+    expect(canPostTo(["EAS"], SITES, { siteId: "EAS" })).toBe(true);
+    expect(canPostTo(["EAS"], SITES, { siteId: "WEM" })).toBe(false);
+    expect(canPostTo(["EAS"], SITES, { brand: "phoco" })).toBe(false);
+    expect(canPostTo(["EAS", "WEM"], SITES, { brand: "phoco" })).toBe(true);
+    expect(canPostTo(["EAS", "WEM"], SITES, { brand: "clv" })).toBe(false);
+    expect(canPostTo(["CLV"], SITES, { brand: "clv" })).toBe(true);
     expect(audienceLabel(n({ sections: ["BOH"] }), "Eastcote")).toBe("BOH at Eastcote");
-    expect(audienceLabel(n({ siteId: undefined }), undefined)).toBe("Everyone at all sites");
+    expect(audienceLabel(n({ siteId: undefined, brand: "phoco" }), undefined)).toBe("Everyone at all PHO & CO sites");
+    expect(audienceLabel(n({ siteId: undefined, brand: "clv" }), undefined)).toBe("Everyone at all Cafe La Viet sites");
   });
 });
 

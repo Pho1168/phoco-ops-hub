@@ -1,5 +1,5 @@
 import { store } from "@/lib/data";
-import { isLive } from "@/lib/domain/notices";
+import { isLive, noticeSites } from "@/lib/domain/notices";
 import { canSeeRightToWork, issueCount, peopleInCare } from "@/lib/domain/certificates";
 import { openFaults, serviceState } from "@/lib/domain/equipment";
 import { centreFor } from "@/lib/task-centre";
@@ -42,7 +42,7 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
   return {
     urgent,
     timeOffPending: toDecide.length,
-    noticesActive: notices.filter((n) => isLive(n, today) && (!n.siteId || managed.includes(n.siteId))).length,
+    noticesActive: notices.filter((n) => isLive(n, today) && noticeSites(n, sites).some((s) => managed.includes(s))).length,
     certIssues: issueCount(peopleInCare(actor, people), certs, today, canSeeRightToWork(actor), openManaged),
     equipmentIssues,
     coverToDo,

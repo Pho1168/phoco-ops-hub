@@ -7,9 +7,11 @@ import { postNotice } from "@/app/actions";
 type Sec = "FOH" | "BOH" | "PROD";
 
 /** Post a notice. "Important" also sends it to the phones of people it's for. */
-export function NoticeForm({ sites, canAllSites, today }: { sites: { id: string; name: string; sections: Sec[] }[]; canAllSites: boolean; today: string }) {
+export function NoticeForm({ sites, allSites, today }: { sites: { id: string; name: string; sections: Sec[]; brand?: "phoco" | "clv" }[]; allSites: { id: "phoco" | "clv"; name: string }[]; today: string }) {
   const router = useRouter();
-  const [siteId, setSiteId] = useState<string>(sites.length === 1 || !canAllSites ? sites[0]?.id ?? "" : "");
+  // A site's id, or "all:<business>" for every site of one business (PHO & CO and Cafe La Viet never share a notice).
+  const [siteId, setSiteId] = useState<string>(sites[0]?.id ?? "");
+  const allOf = siteId.startsWith("all:") ? siteId.slice(4) as "phoco" | "clv" : undefined;
   const [sections, setSections] = useState<Sec[]>([]);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -18,12 +20,12 @@ export function NoticeForm({ sites, canAllSites, today }: { sites: { id: string;
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [pending, start] = useTransition();
-  const available: Sec[] = siteId ? sites.find((s) => s.id === siteId)?.sections ?? [] : Array.from(new Set(sites.flatMap((s) => s.sections)));
+  const available: Sec[] = !allOf ? sites.find((s) => s.id === siteId)?.sections ?? [] : Array.from(new Set(sites.filter((s) => (s.brand ?? "phoco") === allOf).flatMap((s) => s.sections)));
   const toggle = (s: Sec) => setSections((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
 
   const submit = () => start(async () => {
     setErr(""); setMsg("");
-    const r = await postNotice({ siteId: siteId || null, sections: sections.filter((s) => available.includes(s)), title, body, important, showUntil: showUntil || null });
+    const r = await postNotice({ siteId: allOf ? null : siteId || null, brand: allOf ?? null, sections: sections.filter((s) => available.includes(s)), title, body, important, showUntil: showUntil || null });
     if (!r.ok) { setErr(r.error); return; }
     setTitle(""); setBody(""); setImportant(false); setShowUntil(""); setSections([]);
     setMsg(important ? `Posted. Sent to ${r.sentTo ?? 0} phone${r.sentTo === 1 ? "" : "s"} with notifications on; everyone else sees it when they next sign in.` : "Posted. Staff see it when they next open the app.");
@@ -36,7 +38,7 @@ export function NoticeForm({ sites, canAllSites, today }: { sites: { id: string;
       <div className="row wrap" style={{ gap: 10 }}>
         <label className="row" style={{ gap: 6 }}><span className="muted">For</span>
           <select id="notice-site" value={siteId} onChange={(e) => setSiteId(e.target.value)}>
-            {canAllSites && sites.length > 1 && <option value="">All sites</option>}
+            {allSites.map((b) => <option key={b.id} value={`all:${b.id}`}>All {b.name} sites</option>)}
             {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </label>

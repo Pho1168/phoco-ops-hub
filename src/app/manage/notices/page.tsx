@@ -1,5 +1,6 @@
 import { store } from "@/lib/data";
-import { audienceLabel, canPostTo, isLive, readStats } from "@/lib/domain/notices";
+import { audienceLabel, canPostTo, isLive, noticeSites, readStats } from "@/lib/domain/notices";
+import { brandsOf } from "@/lib/domain/brand";
 import { sectionsFor } from "@/lib/domain/staff";
 import { londonDate, shortDay } from "@/lib/domain/time";
 import { BottomNav, TopBar } from "@/components/Chrome";
@@ -20,7 +21,8 @@ export default async function Notices() {
   const open = allSites.filter((s) => s.status === "open");
   const mine = open.filter((s) => ctx.managed.includes(s.id));
   const names = new Map(allSites.map((s) => [s.id, s.name]));
-  const visible = notices.filter((n) => !n.siteId || ctx.managed.includes(n.siteId));
+  // Only notices for sites this person manages (a business's all-sites notice is shown to that business's managers).
+  const visible = notices.filter((n) => noticeSites(n, allSites).some((s) => ctx.managed.includes(s)));
   // Read receipts name only people at the sites this person manages.
   const inCare = ctx.isOwner ? people : people.filter((p) => p.access.some((a) => ctx.managed.includes(a.siteId)));
   const live = visible.filter((n) => isLive(n, today));
@@ -30,13 +32,13 @@ export default async function Notices() {
     <>
       <TopBar ctx={ctx} title="Team notices" eyebrow="Manager tools" back="/manage" />
       <main>
-        <NoticeForm sites={mine.map((s) => ({ id: s.id, name: s.name, sections: sectionsFor(s.kind) }))} canAllSites={canPostTo(ctx.managed, allSites.map((s) => s.id), undefined)} today={today} />
+        <NoticeForm sites={mine.map((s) => ({ id: s.id, name: s.name, sections: sectionsFor(s.kind), brand: s.brand }))} allSites={brandsOf(allSites).filter((b) => canPostTo(ctx.managed, allSites, { brand: b.id })).map((b) => ({ id: b.id, name: b.name }))} today={today} />
 
         <section className="stack">
           <h2 className="h-sec">Showing now</h2>
           {live.length === 0 && <div className="card muted">No notices showing. Post one above: staff see it on the shop tablet and on their phones until they tap &quot;Got it&quot;.</div>}
           {live.map((n) => {
-            const st = readStats(n, inCare);
+            const st = readStats(n, inCare, allSites);
             return (
               <div key={n.id} className="card stack" style={{ gap: 8 }}>
                 <div className="row wrap" style={{ gap: 8 }}>
@@ -61,7 +63,7 @@ export default async function Notices() {
             <summary className="strong" style={{ cursor: "pointer" }}>Earlier notices ({ended.length})</summary>
             <div className="log" style={{ marginTop: 8 }}>
               {ended.map((n) => {
-                const st = readStats(n, inCare);
+                const st = readStats(n, inCare, allSites);
                 return <div key={n.id}><span className="grow">{n.title} <span className="muted">· {audienceLabel(n, n.siteId ? names.get(n.siteId) : undefined)} · {when(n.createdAt)}</span></span><span className="muted">read by {st.read.length}/{st.audience}</span></div>;
               })}
             </div>

@@ -883,9 +883,9 @@ export const sqlStore: Store = {
   async teamNotices(recentEnded = 10) {
     const q = sql();
     const today = londonDate(Date.now());
-    const rows = await q<{ id: string; site_id: SiteId | null; sections: Area[]; title: string; body: string; important: boolean; created_by: string; created_by_name: string;
+    const rows = await q<{ id: string; site_id: SiteId | null; brand: string | null; sections: Area[]; title: string; body: string; important: boolean; created_by: string; created_by_name: string;
       created_at: Date; show_until: string | null; ended_at: Date | null; reads: { person_id: string; read_at: string }[] | null }[]>`
-      select a.id, a.site_id, a.sections, a.title, a.body, a.important, a.created_by, p.display_name as created_by_name, a.created_at,
+      select a.id, a.site_id, a.brand, a.sections, a.title, a.body, a.important, a.created_by, p.display_name as created_by_name, a.created_at,
         to_char(a.show_until, 'YYYY-MM-DD') as show_until, a.ended_at,
         (select json_agg(json_build_object('person_id', r.person_id, 'read_at', r.read_at)) from announcement_reads r where r.announcement_id = a.id) as reads
       from announcements a join people p on p.id = a.created_by
@@ -893,7 +893,7 @@ export const sqlStore: Store = {
          or a.id in (select id from announcements where ended_at is not null or show_until < ${today} order by created_at desc limit ${recentEnded})
       order by a.created_at desc`;
     return rows.map((r): TeamNotice => ({
-      id: r.id, siteId: opt(r.site_id), sections: r.sections, title: r.title, body: r.body, important: r.important,
+      id: r.id, siteId: opt(r.site_id), brand: r.site_id ? undefined : r.brand === "clv" ? "clv" : "phoco", sections: r.sections, title: r.title, body: r.body, important: r.important,
       createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at.getTime(), showUntil: opt(r.show_until), endedAt: ms(r.ended_at),
       reads: (r.reads ?? []).map((x) => ({ personId: x.person_id, readAt: new Date(x.read_at).getTime() })),
     }));
@@ -901,8 +901,8 @@ export const sqlStore: Store = {
   async addTeamNotice(n) {
     const q = sql();
     const [r] = await q<{ id: string }[]>`
-      insert into announcements (site_id, sections, title, body, important, created_by, show_until)
-      values (${n.siteId ?? null}, ${n.sections}, ${n.title}, ${n.body}, ${n.important}, ${n.createdBy}, ${n.showUntil ?? null}) returning id`;
+      insert into announcements (site_id, brand, sections, title, body, important, created_by, show_until)
+      values (${n.siteId ?? null}, ${n.siteId ? null : n.brand ?? "phoco"}, ${n.sections}, ${n.title}, ${n.body}, ${n.important}, ${n.createdBy}, ${n.showUntil ?? null}) returning id`;
     return r.id;
   },
   async endTeamNotice(id, personId) {
