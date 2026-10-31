@@ -1058,3 +1058,20 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .avail-banner-sub { font-size: 14px; }
 .avail-banner-go { flex-shrink: 0; font-weight: 700; padding: 10px 14px; border-radius: 12px; background: var(--surface); color: var(--brand); }
 @media (max-width: 480px) { .avail-banner { flex-wrap: wrap; } .avail-banner-go { width: 100%; text-align: center; } }
+
+/* A round supplier's order page: the order and its catalogue on the left, held still with its own scroll; the
+   restaurants' stock needed on the right, scrolling with the page. One column on a phone. */
+.round-cols { display: grid; gap: 16px; align-items: start; }
+@media (min-width: 900px) {
+  .round-cols { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+  .round-left { position: sticky; top: 76px; max-height: calc(100dvh - 76px - 88px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+  .round-left .round-cat .stock-list { grid-template-columns: 1fr; }
+}
+@media (min-width: 1200px) { .round-left .round-cat .stock-list { grid-template-columns: 1fr 1fr; } }
+.round-need-wrap { overflow-x: auto; }
+.round-need-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.round-need-table th, .round-need-table td { padding: 8px 6px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
+.round-need-table thead th { border-top: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--ink-2); font-weight: 700; }
+.round-need-table .rn-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.round-need-pack { display: block; font-size: 12px; }
+.round-need-total { font-family: var(--display); font-weight: 700; font-size: 20px; color: var(--brand); }

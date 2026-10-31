@@ -573,6 +573,36 @@ export function restaurantDemand(groups: Pick<NeededGroup, "production" | "rows"
   return out;
 }
 
+/** One line of what the restaurants have asked the production kitchen for: the item, each branch's amount and the total. */
+export interface ProductionNeedRow { product: Product; total: number; unknown: number; sites: { siteId: SiteId; qty: number; unknown: number }[]; fromSupplier: boolean }
+
+/**
+ * Everything the restaurants have asked the production kitchen for and it hasn't sent yet (its production groups on
+ * Stock needed), one line per item with the amount per branch and the total, the kitchen's own site left out.
+ * `fromSupplier`: the item is a copy of one of this supplier's products (`Product.copyOf`), so it's what to order from
+ * them. Those come first, then the rest; each part by name.
+ */
+export function productionNeeded(groups: Pick<NeededGroup, "production" | "rows">[], products: Pick<Product, "id" | "supplierId" | "copyOf">[], supplierId: string, kitchenId?: SiteId): ProductionNeedRow[] {
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const out = new Map<string, ProductionNeedRow>();
+  for (const g of groups.filter((x) => x.production)) {
+    for (const r of g.rows) {
+      const sites = r.sites.filter((x) => x.siteId !== kitchenId && (x.qty > 0 || x.unknown > 0));
+      if (!sites.length) continue;
+      const from = products.find((p) => p.id === r.product.id)?.copyOf;
+      const row = out.get(r.product.id) ?? { product: r.product, total: 0, unknown: 0, sites: [],
+        fromSupplier: !!from && products.find((p) => p.id === from)?.supplierId === supplierId };
+      for (const x of sites) {
+        row.total = round(row.total + x.qty); row.unknown += x.unknown;
+        const at = row.sites.find((y) => y.siteId === x.siteId);
+        if (at) { at.qty = round(at.qty + x.qty); at.unknown += x.unknown; } else row.sites.push({ ...x });
+      }
+      out.set(r.product.id, row);
+    }
+  }
+  return [...out.values()].sort((a, b) => Number(b.fromSupplier) - Number(a.fromSupplier) || a.product.name.localeCompare(b.product.name));
+}
+
 /** The log line on a request raised from the catalogue. */
 export const onTopNote = (add: number, was?: number) => `${was === undefined ? "was not sure" : `was ${was}`}, ${add} more added from the catalogue`;
 
