@@ -111,16 +111,25 @@ describe("what the restaurants want of a round supplier's product", () => {
   });
 });
 
-describe("the restaurants' stock needed beside a round supplier's order", () => {
-  it("lists every production item still to send, per branch and in total, the supplier's own first", async () => {
-    const { productionNeeded } = await import("@/lib/domain/stock");
-    const row = (id: string, sites: [string, number, number?][]) => ({ product: { id, name: id, active: true }, qty: 0, sites: sites.map(([siteId, qty, unknown = 0]) => ({ siteId, qty, unknown })),
-      requestIds: [], lineIds: [], unknownIds: [], notes: [], photoIds: [], urgent: false });
-    const groups = [{ production: true, rows: [row("Soup", [["EAS", 2]]), row("Lime", [["EAS", 3], ["SYD", 1, 1], ["WEM", 9]]), row("Gone", [["WEM", 4]])] },
-      { production: false, rows: [row("Wings", [["EAS", 5]])] }];
-    const products = [{ id: "Lime", copyOf: "sgLime" }, { id: "sgLime", supplierId: "SG" }, { id: "Soup" }, { id: "Gone" }];
-    const r = productionNeeded(groups, products, "SG", "WEM");
-    expect(r.map((x) => [x.product.id, x.total, x.unknown, x.fromSupplier])).toEqual([["Lime", 4, 1, true], ["Soup", 2, 0, false]]);
-    expect(r[0].sites).toEqual([{ siteId: "EAS", qty: 3, unknown: 0 }, { siteId: "SYD", qty: 1, unknown: 1 }]);
+describe("Stock needed beside a round supplier's order", () => {
+  it("mirrors Stock needed: every supplier's items per branch and in total, round suppliers left out, what it sells marked", async () => {
+    const { neededMirror } = await import("@/lib/domain/stock");
+    const row = (id: string, sites: [string, number, number?][], urgent = false) => ({ product: { id, name: id, active: true }, qty: 0, sites: sites.map(([siteId, qty, unknown = 0]) => ({ siteId, qty, unknown })),
+      requestIds: [], lineIds: [], unknownIds: [], notes: [], photoIds: [], urgent, changed: undefined });
+    const sup = (id: string, name: string, deliveryDays?: number[]) => ({ id, name, method: "delivery" as const, active: true, ...(deliveryDays ? { deliveryDays } : {}) });
+    const groups = [
+      { key: "P", supplier: sup("P", "Production"), production: true, rows: [row("Lime", [["EAS", 3], ["WEM", 9]]), row("Soup", [["EAS", 2]])] },
+      { key: "SG", supplier: sup("SG", "Surelygrow", [1, 5]), production: false, rows: [row("sgLime", [["WEM", 4]])] },
+      { key: "LF", supplier: sup("LF", "Loon Fung"), production: false, rows: [row("Coriander", [["EAS", 1, 1]], true), row("Empty", [["EAS", 0]])] },
+    ];
+    const products = [{ id: "Lime", name: "Lime", copyOf: "sgLime", active: true }, { id: "sgLime", name: "Lime", supplierId: "SG", active: true },
+      { id: "sgCor", name: "coriander", supplierId: "SG", active: true }, { id: "Soup", name: "Soup", active: true }, { id: "Coriander", name: "Coriander", supplierId: "LF", active: true }];
+    const m = neededMirror(groups, products, "SG");
+    expect(m.map((g) => [g.name, g.rows.map((r) => [r.product.id, r.total, r.unknown, r.sold])])).toEqual([
+      ["Production (production)", [["Lime", 12, 0, true], ["Soup", 2, 0, false]]],
+      ["Loon Fung", [["Coriander", 1, 1, true]]],
+    ]);
+    expect(m[0].rows[0].sites).toEqual([{ siteId: "EAS", qty: 3, unknown: 0 }, { siteId: "WEM", qty: 9, unknown: 0 }]);
+    expect(m[1].rows[0].urgent).toBe(true);
   });
 });
