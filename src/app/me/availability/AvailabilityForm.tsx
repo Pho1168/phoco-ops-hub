@@ -3,10 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { saveAvailability } from "@/app/actions";
-import { AVAIL_LABEL, AVAIL_NOTE_MAX, AVAILS, type Avail, type AvailDay } from "@/lib/domain/availability";
+import { allowedAfter, AVAIL_LABEL, AVAIL_NOTE_MAX, AVAILS, type Avail, type AvailDay } from "@/lib/domain/availability";
 
-/** Seven days, four taps each (all day, morning, evening, off) and an optional note, then Send. */
-export function AvailabilityForm({ week, days, current }: { week: string; days: { date: string; label: string }[]; current?: AvailDay[] }) {
+/**
+ * Seven days, four taps each (all day, morning, evening, off) and an optional note, then Send. `locked`: past the
+ * deadline with an answer sent, so each day can only be opened up (`allowedAfter`); the server checks it again.
+ */
+export function AvailabilityForm({ week, days, current, locked }: { week: string; days: { date: string; label: string }[]; current?: AvailDay[]; locked?: boolean }) {
   const router = useRouter();
   const [vals, setVals] = useState<{ a?: Avail; note: string; open: boolean }[]>(() =>
     days.map((_, i) => ({ a: current?.[i]?.a, note: current?.[i]?.note ?? "", open: !!current?.[i]?.note })));
@@ -14,6 +17,7 @@ export function AvailabilityForm({ week, days, current }: { week: string; days: 
   const [busy, start] = useTransition();
   const set = (i: number, patch: Partial<(typeof vals)[number]>) => { setMsg(undefined); setVals((v) => v.map((x, j) => (j === i ? { ...x, ...patch } : x))); };
   const missing = vals.filter((v) => !v.a).length;
+  const can = (i: number, a: Avail) => !locked || !current?.[i] || allowedAfter(current[i].a).includes(a);
 
   const send = () => start(async () => {
     const r = await saveAvailability(week, vals.map((v) => ({ a: v.a ?? "", note: v.note || undefined })));
@@ -26,7 +30,7 @@ export function AvailabilityForm({ week, days, current }: { week: string; days: 
     <section className="stack" aria-label="Your availability" style={{ gap: 8 }}>
       <div className="row wrap" style={{ gap: 6 }}>
         <span className="muted" style={{ fontSize: 14 }}>Same every day:</span>
-        {AVAILS.map((a) => <button key={a} type="button" className="chip" onClick={() => { setMsg(undefined); setVals((v) => v.map((x) => ({ ...x, a }))); }}>{AVAIL_LABEL[a]}</button>)}
+        {AVAILS.filter((a) => days.every((_, i) => can(i, a))).map((a) => <button key={a} type="button" className="chip" onClick={() => { setMsg(undefined); setVals((v) => v.map((x) => ({ ...x, a }))); }}>{AVAIL_LABEL[a]}</button>)}
       </div>
       {days.map((d, i) => (
         <div key={d.date} className={`card stack avail-day${vals[i].a ? ` is-${vals[i].a}` : ""}`} style={{ gap: 8 }}>
@@ -36,7 +40,8 @@ export function AvailabilityForm({ week, days, current }: { week: string; days: 
           </div>
           <div className="avail-opts" role="radiogroup" aria-label={`${d.label}: when can you work`}>
             {AVAILS.map((a) => (
-              <button key={a} type="button" role="radio" aria-checked={vals[i].a === a} className={`avail-opt ${a}${vals[i].a === a ? " on" : ""}`} onClick={() => set(i, { a })}>{AVAIL_LABEL[a]}</button>
+              <button key={a} type="button" role="radio" aria-checked={vals[i].a === a} disabled={!can(i, a)} title={can(i, a) ? undefined : "Past the deadline: request time off instead"}
+                className={`avail-opt ${a}${vals[i].a === a ? " on" : ""}`} onClick={() => set(i, { a })}>{AVAIL_LABEL[a]}</button>
             ))}
           </div>
           {vals[i].open && (

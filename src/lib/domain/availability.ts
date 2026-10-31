@@ -54,6 +54,23 @@ export function cleanAvailability(days: { a: string; note?: string }[]): { ok: t
   return { ok: true, value: out };
 }
 
+/**
+ * After the deadline the rota is being written from what was sent, so a day can only be opened up, never closed:
+ * off → anything, anything → all day, or left as it was. Taking a day off then is a time off request or a word with
+ * the manager. A first answer sent late is taken as it is (marked late). Notes can always change.
+ */
+export const opensUp = (was: Avail, now: Avail) => now === was || now === "all" || was === "off";
+/** What a day can be changed to after the deadline. */
+export const allowedAfter = (was: Avail): Avail[] => AVAILS.filter((a) => opensUp(was, a));
+
+export function checkChange(week: string, before: AvailDay[] | undefined, after: AvailDay[], now: number): { ok: true } | { ok: false; error: string } {
+  if (!before || !isLate(week, now)) return { ok: true };
+  const days = weekDays(week);
+  const closed = after.map((d, i) => (opensUp(before[i].a, d.a) ? undefined : shortDay(days[i]))).filter((x): x is string => !!x);
+  if (!closed.length) return { ok: true };
+  return { ok: false, error: `It's past Thursday's deadline, so you can only add more time now, not take it away (${closed.join(", ")}). To take a day off, request time off or ask your manager` };
+}
+
 /** The latest answer for each person (records only ever added). */
 export function latestAvailability(list: Availability[]): Map<string, Availability> {
   const out = new Map<string, Availability>();

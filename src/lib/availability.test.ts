@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { askedWeek, asksAvailability, availabilityGrid, availReminderStage, canAnswer, cleanAvailability, dueDay, isLate, latestAvailability, type Availability } from "@/lib/domain/availability";
+import { allowedAfter, askedWeek, asksAvailability, checkChange, availabilityGrid, availReminderStage, canAnswer, cleanAvailability, dueDay, isLate, latestAvailability, type Availability } from "@/lib/domain/availability";
 import { londonToUtc } from "@/lib/domain/time";
 import { queueAvailabilityReminders } from "@/lib/availability-service";
 
@@ -62,5 +62,23 @@ describe("weekly availability", () => {
     await db.addAvailability(asked[0].id, "2026-11-09", Array.from({ length: 7 }, () => ({ a: "all" as const })));
     expect(await queueAvailabilityReminders(now, db)).toBe(asked.length - 1);
     expect(await queueAvailabilityReminders(now + 60_000, db)).toBe(0);
+  });
+
+  it("after Thursday's deadline a day can only be opened up, never closed", () => {
+    expect(allowedAfter("off")).toEqual(["all", "am", "pm", "off"]);
+    expect(allowedAfter("am")).toEqual(["all", "am"]);
+    expect(allowedAfter("all")).toEqual(["all"]);
+    const wk = (...a: string[]) => a.map((x) => ({ a: x as "all" }));
+    const before = wk("all", "am", "off", "pm", "all", "off", "am");
+    const before7 = before;
+    const opened = wk("all", "all", "pm", "pm", "all", "all", "am");
+    const closed = wk("off", "pm", "off", "pm", "all", "off", "am");
+    const thu = at("2026-11-05", "20:00"), fri = at("2026-11-06", "09:00");
+    expect(checkChange("2026-11-09", before7, closed, thu)).toEqual({ ok: true }); // before the deadline: anything
+    expect(checkChange("2026-11-09", before7, opened, fri)).toEqual({ ok: true });
+    const r = checkChange("2026-11-09", before7, closed, fri);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toContain("Mon 9 Nov, Tue 10 Nov");
+    expect(checkChange("2026-11-09", undefined, closed, fri)).toEqual({ ok: true }); // a first answer sent late
   });
 });
