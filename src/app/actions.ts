@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { raisesAlert } from "@/lib/domain/temperature";
-import { BRANDS, brandOf, isBrandId } from "@/lib/domain/brand";
+import { BRANDS, brandOf, isBrandId, type BrandId } from "@/lib/domain/brand";
 import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, catalogFor, inBrand as inStockBrand, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode, editsSiteNeeded } from "@/lib/domain/stock";
 import { addFromCatalogue, addNewItem, clearNeeded, driverTick, driverUntick, editSiteNeeded, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
@@ -44,7 +44,7 @@ import { trainingData } from "@/lib/training-service";
 import { canSignOff, evaluateAnswer } from "@/lib/domain/checklist";
 import { AREA_TEXT, canEditChecklists, canPublish, cleanItems, cleanSettings, describeChange, templateId, toDraftItems } from "@/lib/domain/checklist-edit";
 import { hashPin, isValidPin, PIN_RULE, verifyPin } from "@/lib/domain/pin";
-import { canEditPrepList, canLinkRecipe, canRetirePrepItem, canUndo, canUsePrep, cleanPrepItem, kindLabel as prepKindLabel, moveTarget, planSubmit, shiftLabel } from "@/lib/domain/prep";
+import { canEditPrepList, canLinkRecipe, prepListBrands, canRetirePrepItem, canUndo, canUsePrep, cleanPrepItem, kindLabel as prepKindLabel, moveTarget, planSubmit, shiftLabel } from "@/lib/domain/prep";
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
 import { canBeGiven, noteCanBeFor } from "@/lib/domain/assign";
 import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
@@ -333,7 +333,7 @@ export async function prepEditDraft(input: unknown): Promise<ActionResult> {
   }).safeParse(input);
   if (!c.success) return { ok: false, error: "That change couldn't be saved" };
   const db = store();
-  const item = c.data.itemId ? (await db.prepItems()).find((i) => i.id === c.data.itemId && i.active) : undefined;
+  const item = c.data.itemId ? (await db.prepItems(brandOf(ctx.site).id)).find((i) => i.id === c.data.itemId && i.active) : undefined;
   if (c.data.itemId && !item) return { ok: false, error: "That item isn't on the list any more" };
   if (c.data.assignee === undefined) {
     await db.prepEditDraft(ctx.site.id, ctx.person.id, c.data);
@@ -399,21 +399,35 @@ export async function prepSetDone(handoverId: string, entryId: string, done: boo
 const PrepFieldsZ = z.object({ name: z.string().max(200), kind: z.string().max(10), group: z.string().max(200) });
 
 /** Managers, operations managers and the owner, on the full app. */
-async function prepListCtx(): Promise<{ ctx: Ctx; error?: string }> {
+async function prepListCtx(): Promise<{ ctx: Ctx; error?: string; brands: BrandId[] }> {
   const ctx = await requireCtx();
-  return canEditPrepList(ctx.person) ? { ctx } : { ctx, error: "Only managers change the handover list" };
+  const brands = prepListBrands(ctx.person, await store().sites());
+  return canEditPrepList(ctx.person) ? { ctx, brands } : { ctx, brands, error: "Only managers change the handover list" };
+}
+/** An item's business's list, if this person can change it (a Cafe La Viet manager never changes PHO & CO's). */
+async function prepListOf(brands: BrandId[], itemId: string) {
+  const db = store();
+  const it = (await db.prepItems()).find((i) => i.id === itemId);
+  const brand = it?.brand ?? "phoco";
+  if (!it) return { ok: false as const, error: "That item isn't on the list" };
+  if (!brands.includes(brand)) return { ok: false as const, error: `Only ${BRANDS[brand].name}'s managers change its handover list` };
+  return { ok: true as const, it, brand, items: await db.prepItems(brand) };
 }
 const listChanged = () => { revalidatePath("/manage/handover-list"); revalidatePath("/handover/prep"); revalidatePath("/handover"); };
 
 /** Adds an item to the handover list (`id` null), or renames it or moves it to another list or group. */
-export async function savePrepItem(id: string | null, input: unknown): Promise<ActionResult & { id?: string }> {
-  const { ctx, error } = await prepListCtx();
+export async function savePrepItem(id: string | null, input: unknown, list?: string): Promise<ActionResult & { id?: string }> {
+  const { ctx, error, brands } = await prepListCtx();
   if (error) return { ok: false, error };
   const f = PrepFieldsZ.safeParse(input);
   const itemId = id === null ? null : PrepItemZ.safeParse(id);
   if (!f.success || (itemId && !itemId.success)) return { ok: false, error: "That change couldn't be saved" };
   const db = store();
-  const items = await db.prepItems();
+  // An edit stays on its item's business's list; a new item goes on the list being looked at.
+  let brand: BrandId = isBrandId(list) ? list : brandOf(ctx.site).id;
+  if (itemId) { const of = await prepListOf(brands, itemId.data); if (!of.ok) return of; brand = of.brand; }
+  if (!brands.includes(brand)) return { ok: false, error: `Only ${BRANDS[brand].name}'s managers change its handover list` };
+  const items = await db.prepItems(brand);
   const was = itemId ? items.find((i) => i.id === itemId.data) : undefined;
   if (itemId && !was) return { ok: false, error: "That item isn't on the list" };
   if (was && !was.active) return { ok: false, error: "Put it back on the list first" };
@@ -421,8 +435,8 @@ export async function savePrepItem(id: string | null, input: unknown): Promise<A
   if (!c.ok) return c;
   const v = c.value;
   if (!was) {
-    const newId = await db.addPrepItem(v, ctx.person.id);
-    await db.audit({ actorId: ctx.person.id, action: "prep.list.add", detail: `Handover list: added "${v.name}" (${prepKindLabel(v.kind)} · ${v.group})` });
+    const newId = await db.addPrepItem({ ...v, brand }, ctx.person.id);
+    await db.audit({ actorId: ctx.person.id, action: "prep.list.add", detail: `${BRANDS[brand].name} handover list: added "${v.name}" (${prepKindLabel(v.kind)} · ${v.group})` });
     listChanged();
     return { ok: true, id: newId };
   }
@@ -436,13 +450,14 @@ export async function savePrepItem(id: string | null, input: unknown): Promise<A
 
 /** Links a handover item to its recipe sheet (a published prep recipe), or clears the link. */
 export async function setPrepItemRecipe(id: string, recipeId: string | null): Promise<ActionResult> {
-  const { ctx, error } = await prepListCtx();
+  const { ctx, error, brands } = await prepListCtx();
   if (error) return { ok: false, error };
   const itemId = PrepItemZ.safeParse(id), docId = z.string().uuid().nullable().safeParse(recipeId);
   if (!itemId.success || !docId.success) return { ok: false, error: "That change couldn't be saved" };
   const db = store();
-  const it = (await db.prepItems()).find((i) => i.id === itemId.data);
-  if (!it) return { ok: false, error: "That item isn't on the list" };
+  const of = await prepListOf(brands, itemId.data);
+  if (!of.ok) return of;
+  const it = of.it;
   let title = "";
   if (docId.data) {
     const doc = await db.libraryDoc(docId.data);
@@ -459,12 +474,14 @@ export async function setPrepItemRecipe(id: string, recipeId: string | null): Pr
 
 /** Moves an item one place up or down its group. */
 export async function movePrepItem(id: string, dir: string): Promise<ActionResult> {
-  const { ctx, error } = await prepListCtx();
+  const { ctx, error, brands } = await prepListCtx();
   if (error) return { ok: false, error };
   const itemId = PrepItemZ.safeParse(id), d = z.enum(["up", "down"]).safeParse(dir);
   if (!itemId.success || !d.success) return { ok: false, error: "That change couldn't be saved" };
   const db = store();
-  const items = await db.prepItems();
+  const of = await prepListOf(brands, itemId.data);
+  if (!of.ok) return of;
+  const items = of.items;
   const other = moveTarget(items, itemId.data, d.data);
   if (!other) return { ok: true }; // already first or last
   if (!(await db.swapPrepItems(itemId.data, other.id, ctx.person.id))) return { ok: false, error: "The list has just changed. Have a look and try again" };
@@ -481,9 +498,10 @@ export async function setPrepItemActive(id: string, active: boolean): Promise<Ac
   const itemId = PrepItemZ.safeParse(id), on = z.boolean().safeParse(active);
   if (!itemId.success || !on.success) return { ok: false, error: "That change couldn't be saved" };
   const db = store();
-  const items = await db.prepItems();
-  const it = items.find((i) => i.id === itemId.data);
-  if (!it) return { ok: false, error: "That item isn't on the list" };
+  // Owners and operations managers, on the lists of businesses whose sites they run.
+  const of = await prepListOf(prepListBrands(ctx.person, await db.sites()), itemId.data);
+  if (!of.ok) return of;
+  const { it, items } = of;
   if (on.data) {
     const clash = cleanPrepItem({ name: it.name, kind: it.kind, group: it.group }, items, it.id);
     if (!clash.ok) return clash;

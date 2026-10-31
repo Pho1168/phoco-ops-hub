@@ -27,7 +27,7 @@ export default async function History(props: { searchParams: Promise<{ site?: st
   const shown = rows.slice(0, 300);
   return (
     <>
-      <StockBar ctx={ctx} onPhone={onPhone} title="Stock history" back="/stock" eyebrow="Stock & Purchasing · every site" />
+      <StockBar ctx={ctx} neutral onPhone={onPhone} title="Stock history" back="/stock" eyebrow="Stock & Purchasing · every site" />
       <main className="wide stack">
         <form className="stock-filter" method="get">
           <input className="txt" name="q" type="search" placeholder="Product" defaultValue={sp.q ?? ""} aria-label="Product" />

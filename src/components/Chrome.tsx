@@ -7,7 +7,7 @@ import { londonDate, longDay } from "@/lib/domain/time";
 import { Clock } from "./Clock";
 import { Icon } from "./Icon";
 import { BrandStyle, Logo } from "./Logo";
-import { brandOf } from "@/lib/domain/brand";
+import { brandOf, NEUTRAL } from "@/lib/domain/brand";
 
 interface BarProps {
   ctx: Ctx;
@@ -19,10 +19,12 @@ interface BarProps {
   back?: string;
   /** Anything the screen wants beside the clock: a switch, a badge, a button. */
   children?: React.ReactNode;
+  /** An owner's screen (overview, accounts, ordering): the neutral Ops Hub look, not the site's business. */
+  neutral?: boolean;
 }
 
-function Brand({ ctx, title, eyebrow, back }: BarProps) {
-  const brand = brandOf(ctx.site);
+function Brand({ ctx, title, eyebrow, back, neutral }: BarProps) {
+  const brand = neutral ? NEUTRAL : brandOf(ctx.site);
   if (!title) {
     return (
       <>

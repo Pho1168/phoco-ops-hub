@@ -27,7 +27,7 @@ function Fields({ d, set, groups, idp }: { d: Draft; set: (d: Draft) => void; gr
 
 export interface RecipeOption { id: string; title: string; code: string }
 
-export function ListEditor({ items, canRetire, recipes }: { items: PrepItem[]; canRetire: boolean; recipes: RecipeOption[] }) {
+export function ListEditor({ items, canRetire, recipes, brand }: { brand?: string;  items: PrepItem[]; canRetire: boolean; recipes: RecipeOption[] }) {
   const recipeTitle = (id?: string) => recipes.find((r) => r.id === id)?.title;
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -50,7 +50,7 @@ export function ListEditor({ items, canRetire, recipes }: { items: PrepItem[]; c
 
   return (
     <>
-      <form className="card stack" onSubmit={(e) => { e.preventDefault(); run(() => savePrepItem(null, add), `Added "${add.name.trim()}"`, () => setAdd({ ...add, name: "" })); }}>
+      <form className="card stack" onSubmit={(e) => { e.preventDefault(); run(() => savePrepItem(null, add, brand), `Added "${add.name.trim()}"`, () => setAdd({ ...add, name: "" })); }}>
         <h2 className="h-sec">Add to the list</h2>
         <Fields d={add} set={setAdd} groups={groups} idp="add" />
         <button className="btn accent" type="submit" disabled={pending || !add.name.trim() || !add.group.trim()}>Add</button>

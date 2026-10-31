@@ -5,6 +5,7 @@ import type { NewSite } from "@/lib/domain/sites";
 import type { Answer, Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Device } from "@/lib/domain/devices";
 import type { Notice, StoredShift, SyncPlan, TeamShift, WeekStatus } from "@/lib/domain/rota";
+import type { BrandId } from "@/lib/domain/brand";
 import type { PrepEntry, PrepItem, PrepKind, PrepShift, SubmitPlan } from "@/lib/domain/prep";
 /** What a manager sets on a handover list item. */
 export interface PrepItemFields { name: string; kind: PrepKind; group: string }
@@ -158,9 +159,10 @@ export interface Store extends StockStore, CleaningStore, AvailabilityStore {
 
   // Kitchen prep (one master list for every restaurant; handovers per site)
   /** The master list (to do and to prep), items taken off it included. */
-  prepItems(): Promise<PrepItem[]>;
+  /** The handover list; with a business, only its items (each business keeps its own list). */
+  prepItems(brand?: BrandId): Promise<PrepItem[]>;
   /** Adds an item at the end of its group (a new group goes at the end of its list). Returns its id. */
-  addPrepItem(item: PrepItemFields, byId: string): Promise<string>;
+  addPrepItem(item: PrepItemFields & { brand?: BrandId }, byId: string): Promise<string>;
   /** Renames an item, or moves it to another list or group (where it goes last). False if there's no such item. */
   updatePrepItem(id: string, item: PrepItemFields, byId: string): Promise<boolean>;
   /** Links a handover item to its recipe sheet in the library (or clears the link with null). */

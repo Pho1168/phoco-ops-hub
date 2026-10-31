@@ -1,3 +1,4 @@
+import { brandOf } from "@/lib/domain/brand";
 import { redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { targetPeriod } from "@/lib/domain/assign";
@@ -19,7 +20,7 @@ export default async function HandoverPrep() {
   const now = Date.now();
   const enabled = await db.prepEnabledSites();
   const [items, draft, outstanding, history, notes, rota, people] = await Promise.all([
-    db.prepItems(), db.prepDraft(ctx.site.id), db.prepOutstanding(ctx.site.id), db.prepHandovers(ctx.site.id, 2), db.handover(ctx.site.id),
+    db.prepItems(brandOf(ctx.site).id), db.prepDraft(ctx.site.id), db.prepOutstanding(ctx.site.id), db.prepHandovers(ctx.site.id, 2), db.handover(ctx.site.id),
     rotaAround(ctx.site.id, now, now, db), db.people(),
   ]);
   const toPicks = (list: { itemId: string; urgent: boolean; note?: string; assignedTo?: string; assignedToName?: string }[]) =>

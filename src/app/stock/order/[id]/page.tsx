@@ -59,7 +59,7 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
   for (const r of group?.rows ?? []) if (kitchen && r.sites.some((x) => x.siteId === kitchen.id)) onOrder[r.product.id] = r.sites.filter((x) => x.siteId === kitchen.id).reduce((t, x) => t + x.qty, 0);
   return (
     <>
-      <StockBar ctx={ctx} onPhone={onPhone} title={`${supplier.name} order`} back={`/stock/needed?b=${brand}`} />
+      <StockBar ctx={ctx} neutral onPhone={onPhone} title={`${supplier.name} order`} back={`/stock/needed?b=${brand}`} />
       <main className="wide">
         <div className="round-cols">
         <div className="stack round-left">

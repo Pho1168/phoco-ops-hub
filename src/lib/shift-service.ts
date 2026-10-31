@@ -1,3 +1,4 @@
+import { brandOf } from "@/lib/domain/brand";
 import { store } from "@/lib/data";
 import { isKitchen } from "@/lib/domain/stock-count";
 import type { Store } from "@/lib/data/store";
@@ -50,7 +51,7 @@ async function gather(site: Site, window: ShiftWindow, person: Person | undefine
   shifts: DayRota[]): Promise<Pick<ShiftView, "items" | "summary" | "first" | "gas" | "ready">> {
   const today = londonDate(now);
   const [all, people, prepOn, prepItems, notes, sent, kit, kitOpen, alerts, tasks] = await Promise.all([
-    db.checklists(site.id), db.people(), db.prepEnabledSites(), db.prepItems(), db.handover(site.id), db.prepHandovers(site.id, 2),
+    db.checklists(site.id), db.people(), db.prepEnabledSites(), db.prepItems(brandOf(site).id), db.handover(site.id), db.prepHandovers(site.id, 2),
     db.equipment(site.id), db.equipmentEvents({ siteId: site.id, openFaultsOnly: true }), db.alerts(site.id), db.tasks({ siteIds: [site.id] }),
   ]);
   const names = new Map(people.map((p) => [p.id, p.name]));
