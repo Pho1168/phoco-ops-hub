@@ -11,6 +11,7 @@ import { canManage } from "@/lib/domain/access";
 import { coverState, liveOffers } from "@/lib/domain/cover";
 import { Avatar } from "@/components/Avatar";
 import { toneOf } from "@/lib/domain/login";
+import { AVAIL_LABEL, AVAIL_SHORT, availabilityGrid, dueDay } from "@/lib/domain/availability";
 
 export const dynamic = "force-dynamic";
 
@@ -49,6 +50,9 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
   const isOff = (personId: string, date: string) => offOn(leave, date).some((t) => t.personId === personId);
   // Cover still being arranged at this site, for managers.
   const cover = isManager ? (await db.coverRequests({ siteIds: [site.id as SiteId], live: true })).filter((r) => ["open", "approved"].includes(coverState(r, now))) : [];
+  // Availability staff sent for this week (managers, owners, ops): before the rota is written, and while it's worked on.
+  const allSites = await db.sites();
+  const avail = isManager && week > thisWeek ? availabilityGrid(people, allSites, site.id as SiteId, week, await db.availability(week)) : undefined;
   const href = (w: string) => `/rota?week=${w}${site.id !== ctx.site.id ? `&site=${site.id}` : ""}`;
   const me = ctx.person.id;
   const tone = (personId: string) => { const p = people.find((x) => x.id === personId); return p ? toneOf(p, site.id as SiteId) : undefined; };
@@ -76,6 +80,49 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
 
         {!visible && <div className="card muted">This week&apos;s rota isn&apos;t published yet. It shows here as soon as it is.</div>}
         {visible && team.rows.length === 0 && leave.length === 0 && <div className="card muted">No shifts on the rota for this week{status ? "" : " yet"}.</div>}
+
+        {avail && avail.rows.length > 0 && (
+          <section className="card stack avail-grid" aria-label="Availability" style={{ gap: 10 }}>
+            <div className="row wrap" style={{ gap: 8, alignItems: "baseline" }}>
+              <h2 className="h-sec grow" style={{ margin: 0 }}>Availability</h2>
+              <span className="muted">{avail.rows.length - avail.waiting.length} of {avail.rows.length} sent · due {shortDay(dueDay(week))}</span>
+            </div>
+            <div className="rota-grid-wrap">
+              <table className="rota-grid">
+                <colgroup><col className="name" />{avail.days.map((d) => <col key={d} />)}</colgroup>
+                <thead>
+                  <tr><th scope="col">Name</th>{avail.days.map((d) => <th key={d} scope="col">{dayName(d)}<br /><span className="muted">{shortDay(d).split(" ").slice(1).join(" ")}</span></th>)}</tr>
+                </thead>
+                <tbody>
+                  {avail.rows.map((r) => (
+                    <tr key={r.personId}>
+                      <th scope="row">
+                        <span className="row" style={{ gap: 8 }}>
+                          <Avatar name={r.name} tone={tone(r.personId)} size={28} />
+                          <span><span className="strong" style={{ fontSize: 14, display: "block", whiteSpace: "normal", lineHeight: 1.2 }}>{r.name}</span>
+                            {r.sections.map((x) => <span key={x} className={`sec ${x}`}>{x}</span>)}{r.late && <span className="muted" style={{ fontSize: 12 }}> · late</span>}</span>
+                        </span>
+                      </th>
+                      {avail.days.map((d, i) => {
+                        const day = r.answer?.days[i];
+                        return (
+                          <td key={d}>
+                            {day ? <span className={`avail-cell ${day.a}`} title={AVAIL_LABEL[day.a]}>{AVAIL_SHORT[day.a]}</span> : <span className="muted" style={{ fontSize: 12 }}>–</span>}
+                            {day?.note && <span className="avail-note">{day.note}</span>}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {avail.waiting.length > 0
+              ? <div className="muted"><span className="strong">Not sent yet:</span> {avail.waiting.map((r) => r.name).join(", ")}. They&apos;re reminded on Wednesday and Thursday.</div>
+              : <div className="muted">Everyone has sent theirs.</div>}
+            <div className="muted" style={{ fontSize: 13 }}>AM = morning (to 15:00), PM = evening, All = all day. Staff send it from My shifts.</div>
+          </section>
+        )}
 
         <div className={`cols ${isManager ? "two narrow" : ""}`}>
           {visible && (team.rows.length > 0 || leave.length > 0) && (

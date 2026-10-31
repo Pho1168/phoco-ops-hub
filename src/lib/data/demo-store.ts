@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { makeStockDemo, resetStockDemo, stockMediaUsed } from "./stock-demo";
 import { makeCleaningDemo, resetCleaningDemo } from "./cleaning-demo";
+import { makeAvailabilityDemo, resetAvailabilityDemo } from "./availability-demo";
 import library from "../../../data/checklist-library.json";
 import { hashPin } from "@/lib/domain/pin";
 import type { Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Person, Site, SiteId, TempRule } from "@/lib/domain/types";
@@ -450,10 +451,11 @@ const lastPosition = (section: Skill["section"], liveOnly = false) =>
 const g = globalThis as unknown as { __phocoDemo?: State };
 const S = (): State => (g.__phocoDemo ??= seed());
 
-export function resetDemo() { g.__phocoDemo = seed(); resetStockDemo(); resetCleaningDemo(); }
+export function resetDemo() { g.__phocoDemo = seed(); resetStockDemo(); resetCleaningDemo(); resetAvailabilityDemo(); }
 
 export const demoStore: Store = {
   ...makeCleaningDemo({ personName: (id) => nameOf(id) }),
+  ...makeAvailabilityDemo({ personName: (id) => nameOf(id) }),
   ...makeStockDemo({
     personName: (id) => nameOf(id),
     setStockReminder: (siteId, on) => { const x = S().sites.find((y) => y.id === siteId); if (x) x.stockReminder = on; },
