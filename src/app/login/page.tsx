@@ -33,7 +33,7 @@ export default async function LoginPage(props: { searchParams: Promise<{ next?: 
     <>
       {DEMO_MODE && <div className="banner">Demo mode with sample data · PINs: owner {DEMO_PINS.owner} · everyone else {DEMO_PINS.staff}</div>}
       <LoginForm deviceLabel={device?.label} returnTo={next} dateLine={longDay(today)}
-        sites={sites.map((s) => ({ id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason }))} groups={groups} />
+        sites={sites.map((s) => ({ id: s.id, name: s.name, closed: s.status === "closed", reason: s.closedReason, brand: s.brand }))} groups={groups} />
     </>
   );
 }

@@ -10,6 +10,8 @@ export interface Site {
   id: SiteId;
   name: string;
   kind: "restaurant" | "production";
+  /** The business it trades under (`brand.ts`); PHO & CO when unset. */
+  brand?: "phoco" | "clv";
   status: "open" | "closed";
   closedReason?: string;
   /** "12:00": the opening checks must be signed by then (ready to open). */

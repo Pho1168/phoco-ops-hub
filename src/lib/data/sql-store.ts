@@ -149,8 +149,8 @@ function toPerson(r: PersonRow): Person {
   };
 }
 
-function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null; ready_by: string | null; gas_by: string | null; stock_reminder: boolean }): Site {
-  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason), readyBy: r.ready_by ?? undefined, gasBy: r.gas_by ?? undefined, stockReminder: r.stock_reminder };
+function toSite(r: { id: SiteId; name: string; kind: Site["kind"]; status: Site["status"]; closed_reason: string | null; ready_by: string | null; gas_by: string | null; stock_reminder: boolean; brand?: string | null }): Site {
+  return { id: r.id, name: r.name, kind: r.kind, status: r.status, closedReason: opt(r.closed_reason), readyBy: r.ready_by ?? undefined, gasBy: r.gas_by ?? undefined, stockReminder: r.stock_reminder, brand: r.brand === "clv" ? "clv" : "phoco" };
 }
 
 async function selectPeople(where: postgres.PendingQuery<postgres.Row[]> | null): Promise<Person[]> {
@@ -353,12 +353,12 @@ export const sqlStore: Store = {
   ...availabilitySql,
   async sites() {
     const q = sql();
-    return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by, stock_reminder from sites order by position, id`)
+    return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by, stock_reminder, brand from sites order by position, id`)
       .map((r) => toSite(r as Parameters<typeof toSite>[0]));
   },
   async site(id) {
     const q = sql();
-    const [r] = await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by, stock_reminder from sites where id = ${id}`;
+    const [r] = await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by, stock_reminder, brand from sites where id = ${id}`;
     return r ? toSite(r as Parameters<typeof toSite>[0]) : undefined;
   },
   async setSiteStatus(id, status, reason) {

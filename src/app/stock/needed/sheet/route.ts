@@ -4,6 +4,7 @@ import { editsSiteNeeded, neededCount, neededReceipt, neededSheet, ordersByRound
 import { londonDate, londonHM, longDay } from "@/lib/domain/time";
 import { checklistPdf, receiptPdf } from "@/lib/pdf";
 import { current } from "@/lib/session";
+import { brandPrefix, brandSlug } from "@/lib/domain/brand";
 import { neededView, siteNeededView } from "@/lib/stock-service";
 
 export const dynamic = "force-dynamic";
@@ -36,12 +37,12 @@ export async function GET(req: Request) {
   const suppliers = groups.filter((g) => g.rows.length).length;
   const today = londonDate(now);
   const head = {
-    title: orders ? "PHO & CO stock needed" : `PHO & CO stock needed \u00b7 ${ctx.site.name}`,
+    title: `${brandPrefix(sites) ? `${brandPrefix(sites)}stock needed` : "Stock needed"}${orders ? "" : ` \u00b7 ${ctx.site.name}`}`,
     lines: [longDay(today), `${items} item${items === 1 ? "" : "s"} from ${suppliers} supplier${suppliers === 1 ? "" : "s"}`, `Printed by ${ctx.person.name.split(" ")[0]} at ${londonHM(now)}`],
     foot: "Tick in the app too, so the list stays right for everyone.",
   };
   const pdf = receipt ? receiptPdf({ ...head, groups: neededReceipt(sheet) }) : checklistPdf({ ...head, groups: sheet });
   return new NextResponse(Buffer.from(pdf), {
-    headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="PHO-CO-stock-needed-${today}-${londonHM(now).replace(":", "")}.pdf"`, "cache-control": "no-store, no-cache, must-revalidate, max-age=0", pragma: "no-cache", expires: "0", "x-content-type-options": "nosniff" },
+    headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${brandSlug(sites)}-stock-needed-${today}-${londonHM(now).replace(":", "")}.pdf"`, "cache-control": "no-store, no-cache, must-revalidate, max-age=0", pragma: "no-cache", expires: "0", "x-content-type-options": "nosniff" },
   });
 }

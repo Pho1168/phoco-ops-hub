@@ -23,6 +23,11 @@ a { color: inherit; }
 /* The bar at the top: the screen's name, who's signed in, the time. Sticky so "Switch user" is always there. */
 .top { position: sticky; top: 0; z-index: 5; background: var(--brand); color: var(--brand-ink); padding: 0 16px; min-height: 64px; display: flex; align-items: center; gap: 12px; }
 .top-logo { height: 30px; width: auto; display: block; flex-shrink: 0; }
+/* A business with no logo image yet: its name as a wordmark. */
+.wordmark { font-family: var(--display); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; line-height: 1; white-space: nowrap; height: auto; color: inherit; }
+.top-logo.wordmark { height: auto; font-size: 18px; padding: 4px 8px; border: 2px solid currentColor; border-radius: 6px; }
+.login-logo.logo-clv { height: auto; width: 100%; max-width: 260px; }
+.login-logo.wordmark { font-size: 26px; padding: 8px 12px; border: 3px solid currentColor; border-radius: 8px; align-self: flex-start; }
 .top-site { font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: .5px; line-height: 1; white-space: nowrap; }
 .logo { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: 1px; line-height: 1; white-space: nowrap; }
 .top-back { min-width: 44px; padding: 0 10px; }
@@ -181,7 +186,9 @@ main { width: 100%; max-width: 760px; margin: 0 auto; padding: 20px 16px 120px; 
   .login-shell { display: grid; grid-template-columns: 360px minmax(0, 1fr); }
   .login-aside { padding: 40px 36px 32px; gap: 28px; position: sticky; top: 0; height: 100dvh; }
   .login-logo { height: 120px; }
+  .login-logo.wordmark { height: auto; font-size: 38px; white-space: normal; max-width: 9ch; text-align: center; line-height: 1.05; }
   .login-site { font-size: 52px; }
+  .login-site.long { font-size: 38px; }
   .login-clock { font-size: 44px; margin-top: 8px; }
   .login-note { display: block; }
   .login-main { padding: 36px 40px 28px; gap: 26px; }

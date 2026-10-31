@@ -6,12 +6,13 @@ import { signIn } from "@/app/actions";
 import { Avatar } from "@/components/Avatar";
 import { Clock } from "@/components/Clock";
 import { Icon } from "@/components/Icon";
-import { Logo } from "@/components/Logo";
+import { BrandStyle, Logo } from "@/components/Logo";
+import { brandOf } from "@/lib/domain/brand";
 import type { LoginGroups, LoginPerson } from "@/lib/domain/login";
 import { firstName } from "@/lib/domain/names";
 import type { SiteId } from "@/lib/domain/types";
 
-interface S { id: SiteId; name: string; closed: boolean; reason?: string }
+interface S { id: SiteId; name: string; closed: boolean; reason?: string; brand?: "phoco" | "clv" }
 
 export function LoginForm({ sites, groups, deviceLabel, returnTo, dateLine }: {
   sites: S[]; groups: Record<SiteId, LoginGroups>; deviceLabel?: string; returnTo?: string; dateLine: string;
@@ -23,6 +24,7 @@ export function LoginForm({ sites, groups, deviceLabel, returnTo, dateLine }: {
   const [err, setErr] = useState("");
   const [pending, start] = useTransition();
   const site = sites.find((s) => s.id === siteId);
+  const brand = brandOf(site);
   const g = groups[siteId] ?? { onToday: [], others: [] };
   const empty = g.onToday.length + g.others.length === 0;
 
@@ -56,10 +58,11 @@ export function LoginForm({ sites, groups, deviceLabel, returnTo, dateLine }: {
   return (
     <div className="login-shell">
       <aside className="login-aside">
-        <Logo kind="stacked" className="login-logo" />
+        <BrandStyle brand={brand} />
+        <Logo kind="stacked" className="login-logo" brand={brand} />
         <div className="login-title">
           <span className="login-eyebrow">Site tablet</span>
-          <span className="login-site">{site?.name ?? "PHO & CO"}</span>
+          <span className={`login-site ${(site?.name ?? brand.name).length > 16 ? "long" : ""}`}>{site?.name ?? brand.name}</span>
           <span className="login-date">{dateLine}</span>
           <Clock className="login-clock" />
         </div>

@@ -4,7 +4,6 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { pairDevice, staffIdSignIn } from "@/app/actions";
 import { Icon } from "@/components/Icon";
-import { Logo } from "@/components/Logo";
 
 /**
  * An unregistered device: a tablet pairs with a one-time code; owners and operations managers (and staff, on their
@@ -22,7 +21,6 @@ export function SetupScreen({ removed, returnTo }: { removed: boolean; returnTo?
   return (
     <div className="login-shell setup">
       <aside className="login-aside">
-        <Logo kind="stacked" className="login-logo" />
         <div className="login-title">
           <span className="login-eyebrow">Ops Hub</span>
           <span className="login-site">Sign in</span>
