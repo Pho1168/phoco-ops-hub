@@ -6,13 +6,15 @@ import { PATHWAY_TEXT, type Guide, type Skill } from "@/lib/domain/training";
  * teal and peach panels. Why it matters and when it applies, the numbered steps with their pictures (a numbered
  * tile until a picture is added), the never-do list, what good looks like, and a closing line. Prints on A4.
  */
-export function SkillCard({ skill, guide, erased, links }: {
+export function SkillCard({ skill, guide, erased, links, team = "Ops Hub" }: {
   skill: Pick<Skill, "title" | "section" | "group" | "about" | "handsOn" | "refresherMonths">;
   guide: Guide;
   /** Photos the owner has erased: shown as removed. */
   erased: string[];
   /** The linked SOPs and recipes, as the page resolved them. */
   links?: React.ReactNode;
+  /** Whose card it is: the reader's business. */
+  team?: string;
 }) {
   const pic = (p: { id: string; w: number; h: number } | undefined, alt: string, cls: string) =>
     p && !erased.includes(p.id)
@@ -82,7 +84,7 @@ export function SkillCard({ skill, guide, erased, links }: {
 
       <footer className="tc-foot">
         <span className="tc-foot-main">{guide.closing ?? "Good food, brighter days"}</span>
-        <span className="tc-foot-sub">Thank you · the Pho &amp; Co team{skill.refresherMonths ? ` · done again every ${skill.refresherMonths} months` : ""}</span>
+        <span className="tc-foot-sub">Thank you · the {team} team{skill.refresherMonths ? ` · done again every ${skill.refresherMonths} months` : ""}</span>
       </footer>
     </article>
   );

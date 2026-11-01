@@ -21,7 +21,7 @@ export async function GET(req: Request) {
   if (key.length > 64) return new NextResponse("Not found", { status: 404 });
   const db = store();
   const now = Date.now();
-  const { group } = await neededGroup(db, ctx.person, key, now);
+  const { group } = await neededGroup(db, ctx.person, key, now, brandOf(ctx.site).id);
   if (!group?.supplier) return new NextResponse("Nothing to order from that supplier", { status: 404 });
   const lines = orderSheetLines(group);
   const toId = await deliversTo(db, group.supplier.id);

@@ -73,9 +73,21 @@ export function parseWeekTable(rows: string[][]): Map<string, WeekStatus> {
   return out;
 }
 
-export function parseExport(siteId: string, rows: string[][], staff: StaffRow[]): { shifts: ImportedShift[]; issues: ImportIssue[] } {
+/**
+ * The sheet only knows FOH and BOH. At a production kitchen (Wembley) the kitchen team is Production, so a BOH row
+ * there is imported as PROD: that's the lane, checks and training they get in the app. The Staff tab is still matched
+ * on the sheet's own section.
+ */
+export const sheetSection = (section: string, kitchen: boolean): string => (kitchen && section === "BOH" ? "PROD" : section);
+
+/**
+ * `held`: source keys (or a row's `site|week|code|section|` prefix) the sheet couldn't be read for this time: a row the
+ * sheet flags, a day with a bad time. Those shifts are unknown, not gone, so the sync leaves what's stored alone.
+ */
+export function parseExport(siteId: string, rows: string[][], staff: StaffRow[], opts: { kitchen?: boolean } = {}): { shifts: ImportedShift[]; issues: ImportIssue[]; held: string[] } {
   const shifts: ImportedShift[] = [];
   const issues: ImportIssue[] = [];
+  const held: string[] = [];
   const key = (n: string, s: string) => `${n.trim().toLowerCase()}|${s.trim().toUpperCase()}`;
   const index = new Map(staff.map((s) => [key(s.name, s.section), s.staffCode]));
 
@@ -87,21 +99,23 @@ export function parseExport(siteId: string, rows: string[][], staff: StaffRow[])
     if (!name) return; // empty slot
     const week = isoFromSlash(r[0] || "");
     if (!week) { issues.push({ row: rowNo, message: `Week start "${r[0]}" is not a date` }); return; }
-    if (Number(r[14] || 0) > 0) { issues.push({ row: rowNo, message: `${name} (${section}), week of ${shortDay(week)}: the sheet flags this row (Checks), so it wasn't imported` }); return; }
     const staffCode = index.get(key(name, section));
     if (!staffCode) { issues.push({ row: rowNo, message: `${name} (${section}) has no Staff ID in the Staff tab` }); return; }
+    const stored = sheetSection(section, !!opts.kitchen);
+    const rowKey = `${siteId}|${week}|${staffCode}|${stored}|`;
+    if (Number(r[14] || 0) > 0) { issues.push({ row: rowNo, message: `${name} (${section}), week of ${shortDay(week)}: the sheet flags this row (Checks), so it wasn't imported` }); held.push(rowKey); return; }
     for (let d = 0; d < 7; d++) {
       const start = (r[DAY_START_COL + d * 2] || "").trim();
       const end = (r[DAY_START_COL + d * 2 + 1] || "").trim();
       if (!start && !end) continue;
       const date = addDays(week, d);
-      if (!TIME.test(start) || !TIME.test(end)) { issues.push({ row: rowNo, message: `${name}, ${shortDay(date)}: times "${start}–${end}" aren't valid` }); continue; }
+      if (!TIME.test(start) || !TIME.test(end)) { issues.push({ row: rowNo, message: `${name}, ${shortDay(date)}: times "${start}–${end}" aren't valid` }); held.push(`${rowKey}${d}`); continue; }
       const hrs = Number(r[HOURS_START_COL + d]);
-      shifts.push({ sourceKey: `${siteId}|${week}|${staffCode}|${section}|${d}`, staffCode, section, week, date, start: pad(start), end: pad(end), endsNextDay: pad(end) <= pad(start),
+      shifts.push({ sourceKey: `${siteId}|${week}|${staffCode}|${stored}|${d}`, staffCode, section: stored, week, date, start: pad(start), end: pad(end), endsNextDay: pad(end) <= pad(start),
         hours: Number.isFinite(hrs) && hrs > 0 ? hrs : undefined });
     }
   });
-  return { shifts, issues };
+  return { shifts, issues, held };
 }
 
 export interface SyncPlan {
@@ -111,17 +125,21 @@ export interface SyncPlan {
   cancelled: StoredShift[];
 }
 
-/** What to change in the stored shifts so they match the sheet. Only weeks present in the import are touched. */
-export function planSync(existing: StoredShift[], imported: ImportedShift[], weeks: Set<string>): SyncPlan {
+/**
+ * What to change in the stored shifts so they match the sheet. Only weeks present in the import are touched, and a
+ * shift the sheet couldn't be read for (`held`: a flagged row, a bad time) is left as it is rather than cancelled.
+ */
+export function planSync(existing: StoredShift[], imported: ImportedShift[], weeks: Set<string>, held: string[] = []): SyncPlan {
   const byKey = new Map(existing.map((s) => [s.sourceKey, s]));
   const incoming = new Set(imported.map((s) => s.sourceKey));
+  const isHeld = (k: string) => held.some((h) => (h.endsWith("|") ? k.startsWith(h) : k === h));
   const plan: SyncPlan = { added: [], changed: [], cancelled: [] };
   for (const s of imported) {
     const old = byKey.get(s.sourceKey);
     if (!old || old.cancelled) plan.added.push(s);
     else if (old.start !== s.start || old.end !== s.end || (s.hours !== undefined && old.hours !== s.hours)) plan.changed.push({ before: old, after: s });
   }
-  for (const old of existing) if (!old.cancelled && weeks.has(old.week) && !incoming.has(old.sourceKey)) plan.cancelled.push(old);
+  for (const old of existing) if (!old.cancelled && weeks.has(old.week) && !incoming.has(old.sourceKey) && !isHeld(old.sourceKey)) plan.cancelled.push(old);
   return plan;
 }
 

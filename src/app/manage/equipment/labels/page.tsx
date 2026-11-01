@@ -4,6 +4,8 @@ import { store } from "@/lib/data";
 import { requireManager } from "@/lib/session";
 import { pickSite } from "../../load";
 import { PrintButton } from "@/app/manage/records/PrintButton";
+import { brandOf } from "@/lib/domain/brand";
+import { BrandStyle } from "@/components/Logo";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +14,7 @@ export default async function Labels(props: { searchParams: Promise<{ site?: str
   const searchParams = await props.searchParams;
   const ctx = await requireManager();
   const { site } = await pickSite(ctx.managed, searchParams.site, ctx.site.id);
+  const brand = brandOf(site);
   const items = await store().equipment(site.id);
   const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "phoco-ops-hub.vercel.app";
@@ -22,6 +25,7 @@ export default async function Labels(props: { searchParams: Promise<{ site?: str
 
   return (
     <main className="wide labels-page">
+      <BrandStyle brand={brand} />
       <div className="row wrap no-print" style={{ alignItems: "flex-end" }}>
         <div className="grow">
           <div className="eyebrow">Equipment · {site.name}</div>
@@ -36,7 +40,7 @@ export default async function Labels(props: { searchParams: Promise<{ site?: str
           <div key={eq.id} className="label">
             <div className="label-qr" dangerouslySetInnerHTML={{ __html: svg }} />
             <div className="label-text">
-              <div className="logo" style={{ color: "var(--brand)", fontSize: 14 }}>PHO &amp; CO</div>
+              <div className="logo" style={{ color: "var(--brand)", fontSize: 14 }}>{brand.name}</div>
               <div className="strong" style={{ fontSize: 16, lineHeight: 1.2 }}>{eq.name}</div>
               {eq.location && <div className="muted" style={{ fontSize: 12 }}>{eq.location}</div>}
               <div style={{ fontSize: 12, marginTop: 4 }}>Not working? Scan to report it.</div>

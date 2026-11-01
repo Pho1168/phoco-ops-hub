@@ -19,7 +19,7 @@ import { pushToPerson } from "@/lib/push";
 import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
-import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn } from "@/lib/domain/access";
+import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn, worksAcrossBusinesses } from "@/lib/domain/access";
 import { rotaSitesOf } from "@/lib/availability-service";
 import { AVAIL_LABEL, asksAvailability, canAnswer as canAnswerAvailability, checkChange as checkAvailChange, cleanAvailability, isLate as availLate, latestAvailability } from "@/lib/domain/availability";
 import { canCancel, canDecide, clashes, kindLabel, rangeLabel, timeOffDeciders, validateRequest } from "@/lib/domain/timeoff";
@@ -49,7 +49,7 @@ import { canEditPrepList, canLinkRecipe, prepListBrands, canRetirePrepItem, canU
 import { NOTE_CATEGORIES } from "@/lib/domain/handover";
 import { canBeGiven, noteCanBeFor } from "@/lib/domain/assign";
 import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
-import type { Person, Role, SiteId } from "@/lib/domain/types";
+import type { Checklist, Person, Role, SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, requireLead, SESSION_COOKIE, SESSION_TTL_MS, type Ctx } from "@/lib/session";
 import { cleanMyTask, currentDue, handled, ownsTask, startsFor } from "@/lib/domain/my-day";
 
@@ -92,6 +92,11 @@ async function startSession(personId: string, siteId: SiteId, deviceId?: string,
   (await cookies()).set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: ttl / 1000, path: "/" });
 }
 
+/** The sites someone manages in the business they're working at: actions never criss-cross businesses, like the screens. */
+async function managedHere(ctx: Ctx): Promise<SiteId[]> {
+  return sameBusinessIds(managedSites(ctx.person), await store().sites(), ctx.site);
+}
+
 /**
  * Sign-in by staff ID + PIN on a device that isn't a registered site tablet (someone's own phone or computer).
  * Owners and operations managers get the full app. Everyone else gets "My shifts" only: their own shifts and
@@ -108,13 +113,16 @@ export async function staffIdSignIn(staffCode: string, pin: string): Promise<Act
   if (!landing) return notRecognised;
   const { site, scope } = landing;
   const now = Date.now();
-  const gate = canSignIn(person, site, now);
-  if (!gate.allowed) return { ok: false, error: gate.reason };
+  // The PIN is checked before anything about the account is said: staff IDs are three digits, so a public screen
+  // that answered "frozen" or "left" before the PIN would let anyone list who works here.
+  if (isPinLocked(person, now)) return notRecognised;
   if (!verifyPin(pin, person.pinHash)) {
     await db.updatePerson(person.id, registerPinFailure(person, now));
     await db.audit({ actorId: person.id, action: "signin.failed", detail: "Wrong PIN (staff ID sign-in, unregistered device)" });
     return notRecognised;
   }
+  const gate = canSignIn(person, site, now);
+  if (!gate.allowed) return { ok: false, error: gate.reason };
   if (scope === "full") {
     await startSession(person.id, site.id);
     await db.audit({ actorId: person.id, siteId: site.id, action: "signin", detail: `${isOwner(person) ? "Owner" : "Operations manager"} signed in on an unregistered device` });
@@ -149,12 +157,20 @@ export async function signOut() {
   redirect("/login");
 }
 
+/** A checklist someone may work on: at the site they're signed in at, in their section (managers: any section there). */
+async function myChecklist(ctx: Ctx, listId: string): Promise<{ ok: true; list: Checklist } | { ok: false; error: string }> {
+  const list = await store().checklist(listId);
+  if (!list || list.siteId !== ctx.site.id) return { ok: false, error: "Checklist not found" };
+  if (!ctx.isManager && !ctx.access.sections.includes(list.area)) return { ok: false, error: "This checklist is for another section" };
+  return { ok: true, list };
+}
+
 export async function answerItem(listId: string, itemId: string, raw: string | boolean): Promise<ActionResult> {
   const ctx = await requireCtx();
   const db = store();
-  const list = await db.checklist(listId);
-  if (!list || list.siteId !== ctx.site.id) return { ok: false, error: "Checklist not found" };
-  if (!ctx.isManager && !ctx.access.sections.includes(list.area)) return { ok: false, error: "This checklist is for another section" };
+  const got = await myChecklist(ctx, listId);
+  if (!got.ok) return got;
+  const list = got.list;
   const item = list.items.find((i) => i.id === itemId);
   if (!item) return { ok: false, error: "Check not found" };
   const { date, hm } = londonNow();
@@ -181,12 +197,18 @@ export async function answerItem(listId: string, itemId: string, raw: string | b
 export async function recordAction(listId: string, itemId: string, action: string): Promise<ActionResult> {
   const ctx = await requireCtx();
   const db = store();
+  const got = await myChecklist(ctx, listId);
+  if (!got.ok) return got;
+  const text = z.string().trim().min(1).max(200).safeParse(action);
+  if (!text.success) return { ok: false, error: "Say what was done (up to 200 characters)" };
+  if (!got.list.items.some((i) => i.id === itemId)) return { ok: false, error: "Check not found" };
   const { date } = londonNow();
   const run = await db.run(listId, date);
+  if (run.signedAt) return { ok: false, error: "Already signed off. Add a correction through your manager" };
   const last = [...run.answers].reverse().find((a) => a.itemId === itemId);
   if (!last) return { ok: false, error: "Record the reading first" };
-  await db.addAnswer(listId, date, { ...last, action: action.slice(0, 200), recordedBy: ctx.person.id, capturedAt: Date.now() });
-  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "corrective_action", detail: `${itemId}: ${action}` });
+  await db.addAnswer(listId, date, { ...last, action: text.data, recordedBy: ctx.person.id, capturedAt: Date.now() });
+  await db.audit({ actorId: ctx.person.id, siteId: ctx.site.id, action: "corrective_action", detail: `${got.list.name} · ${itemId}: ${text.data}` });
   revalidatePath(`/run/${listId}`);
   return { ok: true };
 }
@@ -209,8 +231,9 @@ export async function signOffRun(listId: string, pin: string): Promise<ActionRes
     return { ok: false, error: "PIN doesn't match" };
   }
   if (ctx.person.pinFailed > 0) await db.updatePerson(ctx.person.id, { pinFailed: 0 });
-  const list = await db.checklist(listId);
-  if (!list) return { ok: false, error: "Checklist not found" };
+  const got = await myChecklist(ctx, listId);
+  if (!got.ok) return got;
+  const list = got.list;
   const { date } = londonNow();
   const run = await db.run(listId, date);
   const check = canSignOff(list, run.answers, !!run.signedAt);
@@ -646,7 +669,7 @@ export async function resolveAlert(id: string, note: string): Promise<ActionResu
   if (!note.trim()) return { ok: false, error: "Say what was done" };
   const alertId = z.string().max(64).parse(id);
   const db = store();
-  const siteIds = ctx.isOwner ? (await db.sites()).map((s) => s.id) : managedSites(ctx.person);
+  const siteIds = await managedHere(ctx);
   const mine = (await Promise.all(siteIds.map((s) => db.alerts(s)))).flat();
   const alert = mine.find((a) => a.id === alertId);
   if (!alert) return { ok: false, error: "Only managers of that site can resolve its alerts" };
@@ -686,17 +709,26 @@ export async function clearAlerts(siteId?: string): Promise<ActionResult & { cle
  * Owners and operations managers move their session to another site they have access to, then go on to `next` (the
  * screen they switched from) or Today.
  */
+/**
+ * "Work at": the session moves to another site, keeping its scope. Owners and operations managers from the full app;
+ * anyone who works for both businesses from their own phone (`worksAcrossBusinesses`), never from a tablet.
+ */
 export async function switchSite(siteId: string, next?: string): Promise<void> {
-  const ctx = await requireLead();
+  const ctx = await current();
+  if (!ctx) redirect("/login");
+  if (ctx.person.pinMustChange) redirect("/pin");
   const db = store();
   const id = SiteIdZ.parse(siteId);
   const site = await db.site(id);
-  if (!site || !canSwitchTo(ctx.person, site)) redirect("/owner");
-  await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
   const prev = await db.session(ctx.sessionId);
-  const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS, prev?.deviceId);
-  (await cookies()).set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
-  redirect(sameSitePath(next) ?? "/today");
+  const phone = ctx.scope === "shifts" && !prev?.deviceId;
+  if (!ctx.isLead && !(phone && worksAcrossBusinesses(ctx.person, await db.sites()))) redirect("/me");
+  if (!site || !canSwitchTo(ctx.person, site)) redirect(ctx.isLead ? "/owner" : "/me");
+  await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
+  const ttl = ctx.scope === "shifts" ? SHIFTS_TTL_MS : SESSION_TTL_MS;
+  const s = await db.createSession(ctx.person.id, id, ttl, prev?.deviceId, ctx.scope);
+  (await cookies()).set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: ttl / 1000, path: "/" });
+  redirect(sameSitePath(next) ?? (ctx.scope === "shifts" ? "/me" : "/today"));
 }
 /** A path on this app to go back to after switching (never another host, never the sign-in or PIN screens). */
 function sameSitePath(next: string | undefined): string | undefined {
@@ -834,7 +866,7 @@ export async function createPairingCode(siteId: string, label: string): Promise<
   if (!site) return { ok: false, error: "Site not found" };
   if (!ctx.allLeads.includes(site.id)) return { ok: false, error: "You can only set up tablets at sites you run" };
   const name = z.string().max(80).parse(label).trim().replace(/\s+/g, " ");
-  if (!name) return { ok: false, error: "Give the device a name, e.g. Eastcote kitchen tablet" };
+  if (!name) return { ok: false, error: "Give the device a name, e.g. Kitchen tablet" };
   if (name.length > 40) return { ok: false, error: "Keep the name under 40 characters" };
   const code = makePairCode(() => randomInt(0, 1_000_000_000) / 1_000_000_000);
   const expiresAt = Date.now() + PAIR_TTL_MINUTES * 60_000;
@@ -1173,7 +1205,7 @@ const NoticeZ = z.object({
 /** An owner or manager posts a notice. Important ones also go to the phones of people it's for. */
 export async function postNotice(input: unknown): Promise<ActionResult & { sentTo?: number }> {
   const ctx = await requireCtx();
-  const managed = managedSites(ctx.person);
+  const managed = await managedHere(ctx);
   if (!managed.length) return { ok: false, error: "Only owners and managers can post notices" };
   const n = NoticeZ.safeParse(input);
   if (!n.success) return { ok: false, error: n.error.issues[0]?.message ?? "That notice couldn't be posted" };
@@ -1207,7 +1239,7 @@ export async function endNotice(id: string): Promise<ActionResult> {
   const db = store();
   const n = (await db.teamNotices()).find((x) => x.id === id);
   if (!n) return { ok: false, error: "That notice isn't there any more" };
-  if (!canPostTo(managedSites(ctx.person), await db.sites(), n)) return { ok: false, error: "Only a manager of that site can take it down" };
+  if (!canPostTo(await managedHere(ctx), await db.sites(), n)) return { ok: false, error: "Only a manager of that site can take it down" };
   if (!(await db.endTeamNotice(n.id, ctx.person.id))) return { ok: false, error: "It has already been taken down" };
   await db.audit({ actorId: ctx.person.id, siteId: n.siteId, action: "notice.end", detail: `Took down notice: ${n.title}` });
   revalidatePath("/manage/notices"); revalidatePath("/today"); revalidatePath("/me");
@@ -1300,7 +1332,7 @@ export async function saveAvailability(week: string, days: { a: string; note?: s
 export async function decideTimeOff(id: string, decision: "approved" | "declined", note: string): Promise<ActionResult> {
   const ctx = await requireCtx();
   const db = store();
-  const t = (await db.timeOff({ siteIds: managedSites(ctx.person) })).find((x) => x.id === id);
+  const t = (await db.timeOff({ siteIds: await managedHere(ctx) })).find((x) => x.id === id);
   if (!t) return { ok: false, error: "That request isn't there any more" };
   const requester = await db.person(t.personId);
   if (!requester) return { ok: false, error: "That request isn't there any more" };
@@ -1409,7 +1441,8 @@ const equipmentPaths = (id?: string) => { revalidatePath("/manage/equipment"); r
 export async function addEquipment(siteId: string, input: unknown, lastServicedOn?: string): Promise<ActionResult & { id?: string }> {
   const ctx = await requireCtx();
   const site = SiteIdZ.safeParse(siteId);
-  if (!site.success || !canManageEquipment(ctx.person, site.data)) return { ok: false, error: "Only a manager of that site can add equipment" };
+  if (!site.success || !canManageEquipment(ctx.person, site.data) || !(await managedHere(ctx)).includes(site.data)) return { ok: false, error: "Only a manager of that site can add equipment" };
+  if ((await store().site(site.data))?.status !== "open") return { ok: false, error: "That site is closed" };
   const e = EquipmentZ.safeParse(input);
   if (!e.success) return { ok: false, error: e.error.issues[0]?.message ?? "That couldn't be saved" };
   const data = equipmentData(e.data);
@@ -1544,12 +1577,13 @@ const TaskZ = z.object({
 export async function addTask(siteId: string, input: unknown): Promise<ActionResult> {
   const ctx = await requireCtx();
   const site = SiteIdZ.safeParse(siteId);
-  if (!site.success || !canManage(ctx.person, site.data)) return { ok: false, error: "Only a manager of that site can add tasks" };
+  if (!site.success || !(await managedHere(ctx)).includes(site.data)) return { ok: false, error: "Only a manager of that site can add tasks" };
   const t = TaskZ.safeParse(input);
   if (!t.success) return { ok: false, error: t.error.issues[0]?.message ?? "That task couldn't be saved" };
   const db = store();
   const siteRow = await db.site(site.data);
   if (!siteRow) return { ok: false, error: "Unknown site" };
+  if (siteRow.status !== "open") return { ok: false, error: `${siteRow.name} is closed` };
   const data = { title: t.data.title, detail: t.data.detail || undefined, priority: t.data.priority as Priority, category: t.data.category,
     assigneeId: t.data.assigneeId || undefined, section: t.data.section, dueOn: t.data.dueOn || undefined };
   const now = Date.now();
@@ -1609,7 +1643,7 @@ export async function cancelTask(id: string): Promise<ActionResult> {
   const db = store();
   const t = await db.task(String(id ?? "").slice(0, 64));
   if (!t || t.status !== "open") return { ok: false, error: "That task has already been done or taken off" };
-  if (!canManage(ctx.person, t.siteId)) return { ok: false, error: "Only a manager of that site can take a task off" };
+  if (!(await managedHere(ctx)).includes(t.siteId)) return { ok: false, error: "Only a manager of that site can take a task off" };
   if (!(await db.cancelTask(t.id, ctx.person.id))) return { ok: false, error: "It has just changed" };
   await db.audit({ actorId: ctx.person.id, siteId: t.siteId, action: "task.cancel", detail: `Took off: ${t.title}` });
   revalidatePath("/manage/tasks"); revalidatePath("/today"); revalidatePath("/me");
@@ -2684,8 +2718,8 @@ export async function tickNeededAction(key: string, productIds: string[], site?:
   if (!p.success) return { ok: false, error: "Pick what to tick off" };
   const db = store();
   const now = Date.now();
-  const before = (await neededView(db, who.ctx.person, now)).groups.find((g) => g.key === p.data.key);
-  const r = await tickNeeded(db, who.ctx.person, p.data.key, p.data.ids, now, p.data.site);
+  const before = (await neededView(db, who.ctx.person, now, brandOf(who.ctx.site).id)).groups.find((g) => g.key === p.data.key);
+  const r = await tickNeeded(db, who.ctx.person, p.data.key, p.data.ids, now, p.data.site, brandOf(who.ctx.site).id);
   if (!r.ok) return r;
   const names = before?.rows.filter((x) => p.data.ids.includes(x.product.id)).map((x) => `${x.qty} × ${x.product.name}`) ?? [];
   await db.audit({ actorId: who.ctx.person.id, action: "stock.tick",
@@ -2723,9 +2757,9 @@ export async function untickNeededAction(key: string, productId: string, site?: 
   if (!p.success) return { ok: false, error: "That isn't ticked any more" };
   const db = store();
   const now = Date.now();
-  const before = (await neededView(db, who.ctx.person, now)).groups.find((g) => g.key === p.data.key);
+  const before = (await neededView(db, who.ctx.person, now, brandOf(who.ctx.site).id)).groups.find((g) => g.key === p.data.key);
   const row = before?.ticked.find((x) => x.product.id === p.data.id);
-  const r = await untickNeeded(db, who.ctx.person, p.data.key, p.data.id, now, p.data.site);
+  const r = await untickNeeded(db, who.ctx.person, p.data.key, p.data.id, now, p.data.site, brandOf(who.ctx.site).id);
   if (!r.ok) return r;
   await db.audit({ actorId: who.ctx.person.id, action: "stock.untick",
     detail: `${before?.supplier?.name ?? "No supplier"}: unticked ${row ? `${row.qty} × ${row.product.name}` : r.value.name}, back on Stock needed` });
@@ -2742,7 +2776,7 @@ export async function giveNeededToDriver(key: string, driverId: string, productI
   const bad = await checkPeople(p.data.driver, undefined, "shop");
   if (bad) return { ok: false, error: bad };
   const db = store();
-  const r = await giveToDriver(db, who.ctx.person, p.data.key, p.data.driver, p.data.ids?.length ? p.data.ids : undefined, Date.now());
+  const r = await giveToDriver(db, who.ctx.person, p.data.key, p.data.driver, p.data.ids?.length ? p.data.ids : undefined, Date.now(), brandOf(who.ctx.site).id);
   if (!r.ok) return r;
   const [driver, sup] = await Promise.all([db.person(p.data.driver), db.stockCatalog().then((c) => c.suppliers.find((s) => s.id === p.data.key))]);
   await db.audit({ actorId: who.ctx.person.id, action: "stock.driver", detail: `${sup?.name ?? "No supplier"} list given to ${driver?.name ?? "a driver"}` });
@@ -2758,7 +2792,7 @@ export async function takeBackFromDriver(taskId: string): Promise<ActionResult> 
   const db = store();
   const d = await db.stockTask(taskId);
   const t = d?.tasks.find((x) => x.id === taskId);
-  const sites = orderingSites(who.ctx.person, (await db.sites()).map((s) => s.id));
+  const sites = sameBusinessIds(orderingSites(who.ctx.person, (await db.sites()).map((s) => s.id)), await db.sites(), who.ctx.site);
   if (!d || !t || !d.requests.every((r) => sites.includes(r.siteId))) return { ok: false, error: "That list isn't one you order for" };
   if (!(await db.cancelStockTask(taskId, who.ctx.person.id, "Taken back on Stock needed"))) return { ok: false, error: "That list has already been taken back" };
   await db.audit({ actorId: who.ctx.person.id, action: "stock.driver.back", detail: `${stockTaskCode(t)} taken back from ${t.assigneeName ?? "the driver"}` });
@@ -2774,7 +2808,7 @@ export async function setNeededAmount(requestId: string, qty: number): Promise<A
   if (!p.success) return { ok: false, error: "Enter how many, above 0" };
   const db = store();
   const req = (await db.stockData({ since: 0 })).requests.find((r) => r.id === p.data.id);
-  const sites = orderingSites(who.ctx.person, (await db.sites()).map((s) => s.id));
+  const sites = sameBusinessIds(orderingSites(who.ctx.person, (await db.sites()).map((s) => s.id)), await db.sites(), who.ctx.site);
   if (!req || !sites.includes(req.siteId)) return { ok: false, error: "That request isn't one you order for" };
   const r = await db.changeStockRequest(req.id, { fixedQty: p.data.qty }, who.ctx.person.id);
   if (!r.ok) return r;
@@ -2791,7 +2825,7 @@ export async function moveNeededAction(key: string, productId: string, supplierI
   const p = z.object({ key: KeyZ, product: StockIdZ, supplier: StockIdZ }).safeParse({ key, product: productId, supplier: supplierId });
   if (!p.success) return { ok: false, error: "Choose where to buy it" };
   const db = store();
-  const r = await moveNeeded(db, who.ctx.person, p.data.key, p.data.product, p.data.supplier, Date.now());
+  const r = await moveNeeded(db, who.ctx.person, p.data.key, p.data.product, p.data.supplier, Date.now(), brandOf(who.ctx.site).id);
   if (!r.ok) return r;
   const prod = (await db.stockCatalog()).products.find((x) => x.id === p.data.product);
   await db.audit({ actorId: who.ctx.person.id, action: "stock.request", detail: `${prod?.name ?? "Item"} moved to ${r.value.to} (${r.value.moved} request${r.value.moved === 1 ? "" : "s"})${r.value.kept ? `, ${r.value.kept} left (partly bought)` : ""}` });
@@ -2852,7 +2886,7 @@ export async function saveStockSupplier(id: string | undefined, input: { name: s
   const suppliers = all.filter((s) => inStockBrand(s, brand));
   const clean = cleanSupplier({ ...input, siteId: input.siteId || undefined }, suppliers, id);
   if (!clean.ok) return clean;
-  if (clean.value.method === "production" && brand !== "phoco") return { ok: false, error: "Only PHO & CO has a production kitchen" };
+  if (clean.value.method === "production" && brand !== "phoco") return { ok: false, error: "This business has no production kitchen" };
   if (clean.value.siteId && (await db.site(clean.value.siteId))?.kind !== "production") return { ok: false, error: "Choose a production kitchen" };
   await db.saveSupplier(id, { ...clean.value, brand }, input.active !== false);
   await db.audit({ actorId: who.ctx.person.id, action: "stock.supplier", detail: `${id ? "Changed" : "Added"} ${BRANDS[brand].name} supplier ${clean.value.name}${input.active === false ? " (off)" : ""}` });
@@ -2890,7 +2924,7 @@ export async function addStockPrice(productId: string, input: { pounds: string; 
   if (!who.ok) return who;
   const db = store();
   const product = (await db.stockCatalog()).products.find((p) => p.id === productId);
-  if (!product) return { ok: false, error: "That product isn't in the catalogue" };
+  if (!product || (product.brand ?? "phoco") !== brandOf(who.ctx.site).id) return { ok: false, error: "That product isn't in the catalogue" };
   const clean = cleanStockPrice(input);
   if (!clean.ok) return clean;
   await db.addPrice({ productId, ...clean.value }, who.ctx.person.id);

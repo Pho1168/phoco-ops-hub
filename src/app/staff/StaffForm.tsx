@@ -7,7 +7,7 @@ import { createPerson, resetPin, setLeft, updatePerson } from "@/app/actions";
 import { ROLE_SHORT } from "@/lib/domain/staff";
 import type { Area, Role, SiteAccess, SiteId } from "@/lib/domain/types";
 
-export interface SiteOpt { id: SiteId; name: string; sections: Area[]; closed: boolean }
+export interface SiteOpt { id: SiteId; name: string; sections: Area[]; closed: boolean; /** Set when the site belongs to another business than the viewer's: its name. Folded away until the person works there. */ other?: string }
 export interface PersonView { id: string; staffCode: string; name: string; status: string; self: boolean; access: SiteAccess[] }
 
 const ROLE_NOTE: Partial<Record<Role, string>> = {
@@ -28,10 +28,49 @@ export function StaffForm({ sites, roles, person, suggestedCode }: { sites: Site
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
 
+  // Sites of the other business the person doesn't work at are folded away (less to read); decided once, so a site
+  // ticked inside the fold stays there until the form is saved.
+  const [folded] = useState(() => new Set(sites.filter((s) => s.other && !person?.access.some((a) => a.siteId === s.id)).map((s) => s.id)));
+  const otherNames = Array.from(new Set(sites.filter((s) => folded.has(s.id)).map((s) => s.other))).join(" or ");
+
   const at = (id: SiteId) => access.find((a) => a.siteId === id);
   const toggleSite = (s: SiteOpt, on: boolean) =>
     setAccess((cur) => on ? [...cur, { siteId: s.id, role: "staff", sections: s.sections.length === 1 ? s.sections : [] }] : cur.filter((a) => a.siteId !== s.id));
   const patch = (id: SiteId, p: Partial<SiteAccess>) => setAccess((cur) => cur.map((a) => (a.siteId === id ? { ...a, ...p } : a)));
+
+  const siteBox = (s: SiteOpt) => {
+    const a = at(s.id);
+    return (
+      <fieldset key={s.id} className="site-box">
+        <legend className="sr-only">{s.name}</legend>
+        <label className="row" style={{ gap: 10 }}>
+          <input type="checkbox" className="check" checked={!!a} onChange={(e) => toggleSite(s, e.target.checked)} />
+          <span className="strong">{s.name}</span>{s.closed && <span className="chip">closed</span>}
+        </label>
+        {a && (
+          <div className="stack" style={{ gap: 10, paddingLeft: 34 }}>
+            <div className="seg roles" role="group" aria-label={`Role at ${s.name}`}>
+              {roles.map((r) => (
+                <button key={r} type="button" aria-pressed={a.role === r} onClick={() => patch(s.id, { role: r })}>{ROLE_SHORT[r]}</button>
+              ))}
+            </div>
+            {!ROLE_NOTE[a.role] && (
+              <div className="row wrap" style={{ gap: 14 }}>
+                {s.sections.map((sec) => (
+                  <label key={sec} className="row" style={{ gap: 8 }}>
+                    <input type="checkbox" className="check" checked={a.sections.includes(sec)}
+                      onChange={(e) => patch(s.id, { sections: e.target.checked ? [...a.sections, sec] : a.sections.filter((x) => x !== sec) })} />
+                    <span>{AREA_LABEL[sec]}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {ROLE_NOTE[a.role] && <span className="muted">{ROLE_NOTE[a.role]}</span>}
+          </div>
+        )}
+      </fieldset>
+    );
+  };
 
   const submit = () => start(async () => {
     setErr(""); setMsg("");
@@ -56,39 +95,13 @@ export function StaffForm({ sites, roles, person, suggestedCode }: { sites: Site
           <span className="muted">Three digits, e.g. 009. Must match the Staff ID column in the rota sheet.</span></label>
 
         <h2 className="h-sec" style={{ marginTop: 6 }}>Sites and roles</h2>
-        {sites.map((s) => {
-          const a = at(s.id);
-          return (
-            <fieldset key={s.id} className="site-box">
-              <legend className="sr-only">{s.name}</legend>
-              <label className="row" style={{ gap: 10 }}>
-                <input type="checkbox" className="check" checked={!!a} onChange={(e) => toggleSite(s, e.target.checked)} />
-                <span className="strong">{s.name}</span>{s.closed && <span className="chip">closed</span>}
-              </label>
-              {a && (
-                <div className="stack" style={{ gap: 10, paddingLeft: 34 }}>
-                  <div className="seg roles" role="group" aria-label={`Role at ${s.name}`}>
-                    {roles.map((r) => (
-                      <button key={r} type="button" aria-pressed={a.role === r} onClick={() => patch(s.id, { role: r })}>{ROLE_SHORT[r]}</button>
-                    ))}
-                  </div>
-                  {!ROLE_NOTE[a.role] && (
-                    <div className="row wrap" style={{ gap: 14 }}>
-                      {s.sections.map((sec) => (
-                        <label key={sec} className="row" style={{ gap: 8 }}>
-                          <input type="checkbox" className="check" checked={a.sections.includes(sec)}
-                            onChange={(e) => patch(s.id, { sections: e.target.checked ? [...a.sections, sec] : a.sections.filter((x) => x !== sec) })} />
-                          <span>{AREA_LABEL[sec]}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  {ROLE_NOTE[a.role] && <span className="muted">{ROLE_NOTE[a.role]}</span>}
-                </div>
-              )}
-            </fieldset>
-          );
-        })}
+        {sites.filter((s) => !folded.has(s.id)).map(siteBox)}
+        {folded.size > 0 && (
+          <details className="fold">
+            <summary>Also works at {otherNames}?</summary>
+            <div className="stack" style={{ gap: 10, marginTop: 10 }}>{sites.filter((s) => folded.has(s.id)).map(siteBox)}</div>
+          </details>
+        )}
 
         {!person && (
           <>

@@ -169,12 +169,13 @@ export async function queueRoundReminders(now = Date.now(), db: Store = store())
     const next = nextDelivery(s.deliveryDays ?? [], now);
     const g = groups.find((x) => x.supplier?.id === s.id);
     const waiting = g ? neededCount([g]) : 0;
-    const stages = roundRemindersDue(next, today, hm, waiting);
+    const stages = roundRemindersDue(next, today, hm, waiting, s.deliveryDays ?? []);
     if (!next || !stages.length) continue;
     const to = delivers.find((d) => d.supplierId === s.id)?.deliversTo;
+    const toSite = sites.find((x) => x.id === to);
     const who = people.filter((p) => p.status === "active" && (isOwner(p) || (runsOrdering(p) && (!to || leadSites(p, open).includes(to)))));
     for (const stage of stages) {
-      const msg = roundReminderMessage(s.name, next, waiting, stage, shortDay);
+      const msg = roundReminderMessage(s.name, next, waiting, stage, shortDay, toSite ? { siteName: toSite.name, kitchen: toSite.kind === "production" } : undefined);
       for (const p of who) {
         if (await db.queueNotice({ personId: p.id, kind: "stock", title: msg.title, body: msg.body,
           dedupeKey: `round|${s.id}|${next.date}|${stage}|${p.id}`, sendAfter: now, url: `/stock/order/${s.id}` })) queued++;
@@ -268,8 +269,8 @@ export async function editSiteNeeded(db: Store, person: Pick<Person, "id">, site
 }
 
 /** One supplier's group as it is now (the page sends its key), or undefined. */
-export async function neededGroup(db: Store, person: Pick<Person, "status" | "access">, key: string, now: number): Promise<{ group?: NeededGroup; siteIds: string[] }> {
-  const v = await neededView(db, person, now);
+export async function neededGroup(db: Store, person: Pick<Person, "status" | "access">, key: string, now: number, brand?: BrandId): Promise<{ group?: NeededGroup; siteIds: string[] }> {
+  const v = await neededView(db, person, now, brand);
   return { group: v.groups.find((g) => g.key === key), siteIds: v.siteIds };
 }
 
@@ -280,15 +281,15 @@ export async function neededGroup(db: Store, person: Pick<Person, "status" | "ac
  * can't tick the same thing twice: the task's lines are checked again in the store).
  */
 /** `site`: only that site's requests (a round supplier's order page shows only the kitchen's own). */
-export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productIds: string[], now: number, site?: SiteId): Promise<Done<{ ticked: number }>> {
-  let { group } = await neededGroup(db, person, key, now);
+export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productIds: string[], now: number, site?: SiteId, brand?: BrandId): Promise<Done<{ ticked: number }>> {
+  let { group } = await neededGroup(db, person, key, now, brand);
   if (!group) return { ok: false, error: "That list has changed. Refresh and try again" };
   // A production product asked for but not yet on the kitchen's order (it had no amount then): onto it first.
   const unrouted = group.production ? group.rows.filter((r) => productIds.includes(r.product.id)).flatMap((r) => r.requestIds) : [];
   if (unrouted.length) {
     const reqs = (await db.stockData({ since: stockSince(now) })).requests.filter((r) => unrouted.includes(r.id));
     await routeProduction(db, reqs, person.id, now);
-    group = (await neededGroup(db, person, key, now)).group;
+    group = (await neededGroup(db, person, key, now, brand)).group;
     if (!group) return { ok: false, error: "That list has changed. Refresh and try again" };
   }
   const rows = group.rows.filter((r) => productIds.includes(r.product.id));
@@ -326,8 +327,8 @@ export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status"
  * back as a new request (the tick itself is kept, with a note), so it's on the list again. A production kitchen's goes
  * back onto its order for that restaurant.
  */
-export async function untickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productId: string, now: number, site?: SiteId): Promise<Done<{ unticked: number; name: string }>> {
-  const { group } = await neededGroup(db, person, key, now);
+export async function untickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productId: string, now: number, site?: SiteId, brand?: BrandId): Promise<Done<{ unticked: number; name: string }>> {
+  const { group } = await neededGroup(db, person, key, now, brand);
   const row = group?.ticked.find((r) => r.product.id === productId);
   if (!group || !row) return { ok: false, error: "That isn't ticked any more. Refresh to see the list as it is now" };
   const made: string[] = [];
@@ -388,8 +389,8 @@ export async function clearNeeded(db: Store, person: Pick<Person, "id" | "status
 }
 
 /** Gives what a supplier's list still needs (or some of it) to a driver: one task, theirs to tick off on their phone. */
-export async function giveToDriver(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, driverId: string, productIds: string[] | undefined, now: number): Promise<Done<string>> {
-  const { group } = await neededGroup(db, person, key, now);
+export async function giveToDriver(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, driverId: string, productIds: string[] | undefined, now: number, brand?: BrandId): Promise<Done<string>> {
+  const { group } = await neededGroup(db, person, key, now, brand);
   if (!group || group.production) return { ok: false, error: "That list has changed. Refresh and try again" };
   const items = withProgress(await db.stockData({ since: stockSince(now) }));
   const lines = group.rows.filter((r) => !productIds || productIds.includes(r.product.id)).flatMap((r) => r.requestIds).flatMap((id) => {
@@ -407,8 +408,8 @@ export async function giveToDriver(db: Store, person: Pick<Person, "id" | "statu
  * Moves an item on Stock needed to another supplier that sells it (before anyone has it): each of its requests there
  * now, so it shows on that supplier's card (and its PDF or driver's list). One partly bought already stays put.
  */
-export async function moveNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productId: string, supplierId: string, now: number): Promise<Done<{ moved: number; kept: number; to: string }>> {
-  const { group } = await neededGroup(db, person, key, now);
+export async function moveNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productId: string, supplierId: string, now: number, brand?: BrandId): Promise<Done<{ moved: number; kept: number; to: string }>> {
+  const { group } = await neededGroup(db, person, key, now, brand);
   const row = group?.rows.find((r) => r.product.id === productId);
   if (!group || group.production || !row) return { ok: false, error: "That list has changed. Refresh and try again" };
   const { suppliers } = await db.stockCatalog();

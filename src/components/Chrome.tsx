@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { signOut } from "@/app/actions";
 import type { Ctx } from "@/lib/session";
-import { managedSites } from "@/lib/domain/access";
 import { firstName } from "@/lib/domain/names";
 import { londonDate, longDay } from "@/lib/domain/time";
 import { Clock } from "./Clock";
@@ -10,7 +9,7 @@ import { BackButton } from "./BackButton";
 import { BrandStyle, Logo } from "./Logo";
 import { SiteSwitch } from "./SiteSwitch";
 import { store } from "@/lib/data";
-import { canSwitchTo } from "@/lib/domain/access";
+import { canSwitchTo, worksAcrossBusinesses } from "@/lib/domain/access";
 import { BRAND_IDS, BRANDS } from "@/lib/domain/brand";
 import { brandOf, NEUTRAL } from "@/lib/domain/brand";
 
@@ -54,10 +53,14 @@ function Brand({ ctx, title, eyebrow, back, neutral }: BarProps) {
   );
 }
 
-/** Owners and operations managers: the sites they can work at, by business, to switch from any screen. */
+/**
+ * The sites to switch to from any screen, by business. Owners and operations managers: the sites they run. Anyone
+ * else: only on their own phone, and only when they work for both businesses, so one sign-in shows either rota.
+ */
 async function siteChoices(ctx: Ctx) {
-  if (!ctx.isLead) return undefined;
-  const sites = (await store().sites()).filter((s) => s.status === "open" && canSwitchTo(ctx.person, s));
+  const all = await store().sites();
+  if (!ctx.isLead && !(ctx.scope === "shifts" && worksAcrossBusinesses(ctx.person, all))) return undefined;
+  const sites = all.filter((s) => s.status === "open" && canSwitchTo(ctx.person, s));
   if (sites.length < 2) return undefined;
   return BRAND_IDS.map((b) => ({ name: BRANDS[b].name, sites: sites.filter((s) => brandOf(s).id === b).map((s) => ({ id: s.id, name: s.name })) }))
     .filter((g) => g.sites.length > 0);
@@ -83,13 +86,15 @@ export async function TopBar(props: BarProps) {
 }
 
 /** The bar on a staff member's own phone (My shifts scope): back to My shifts (unless this is it), sign out. */
-export function PhoneTopBar(props: BarProps & { home?: boolean }) {
+export async function PhoneTopBar(props: BarProps & { home?: boolean }) {
   const { ctx, children, home } = props;
+  const choices = await siteChoices(ctx);
   return (
     <header className="top">
       <Brand {...props} />
       <div className="grow" />
       {children}
+      {choices && <SiteSwitch current={ctx.site.id} groups={choices} />}
       <form className="who" action={signOut}>
         <span className="who-name">{firstName(ctx.person.name)}</span>
         {!home && <Link className="pill-btn" href="/me" aria-label="My shifts"><span className="sw-text">My shifts</span><Icon name="clock" /></Link>}
@@ -113,7 +118,7 @@ export function BottomNav({ ctx, current }: { ctx: Ctx; current: "shift" | "toda
       {item("/stock", "stock", "Stock", "box")}
       {ctx.isLead
         ? item("/owner", "owner", ctx.isOwner ? "Owner" : "Overview", "owner")
-        : managedSites(ctx.person).length > 0 && item("/manage", "manage", "Manage", "manage")}
+        : ctx.isManager && item("/manage", "manage", "Manage", "manage")}
     </nav>
   );
 }

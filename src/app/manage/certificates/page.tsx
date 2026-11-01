@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { brandOf } from "@/lib/domain/brand";
 import { store } from "@/lib/data";
 import { canSeeRightToWork, certStatus, certType, expectedKinds, issueCount, peopleInCare, siteCover, statusText, visibleTypes, type CertKind } from "@/lib/domain/certificates";
 import { londonDate } from "@/lib/domain/time";
@@ -128,7 +129,7 @@ export default async function Certificates(props: { searchParams: Promise<{ site
                 <span className="muted">{t.expectedFor === "everyone" ? "Expected for everyone (not owners)." : t.expectedFor === "managers" ? "Expected for managers." : t.sitecover ? "At least one person per site." : "Optional."}{t.restricted ? " Private: only you can see or change this." : ""}</span>
               </div>
             ))}
-            <div className="muted">These are PHO &amp; CO&apos;s working standard, not legal advice. Reminders go to the person and their managers 30 days and 7 days before a date, and when it passes.</div>
+            <div className="muted">These are {brandOf(ctx.site).name}&apos;s working standard, not legal advice. Reminders go to the person and their managers 30 days and 7 days before a date, and when it passes.</div>
           </div>
         </details>
       </main>

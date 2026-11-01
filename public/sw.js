@@ -1,9 +1,9 @@
-// PHO & CO Ops Hub service worker: shows messages and opens the page they're about when tapped.
+// Ops Hub service worker: shows messages and opens the page they're about when tapped.
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 
 self.addEventListener("push", (event) => {
-  let data = { title: "PHO & CO", body: "", url: "/me" };
+  let data = { title: "Ops Hub", body: "", url: "/me" };
   try { data = { ...data, ...event.data.json() }; } catch (_) { /* plain text */ }
   event.waitUntil(self.registration.showNotification(data.title, {
     body: data.body, icon: "/icon-192.png", badge: "/icon-192.png", data: { url: data.url }, tag: data.tag || "phoco-rota", renotify: true,

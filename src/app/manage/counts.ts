@@ -6,7 +6,7 @@ import { centreFor } from "@/lib/task-centre";
 import { coverState } from "@/lib/domain/cover";
 import { londonDate } from "@/lib/domain/time";
 import { managedSites } from "@/lib/domain/access";
-import { sameBusinessIds } from "@/lib/domain/brand";
+import { brandOf, inBrand, sameBusinessIds } from "@/lib/domain/brand";
 import type { Site } from "@/lib/domain/types";
 import { canDecide } from "@/lib/domain/timeoff";
 import { libraryToDo } from "@/lib/domain/library";
@@ -42,16 +42,18 @@ export async function manageCounts(actor: Pick<Person, "id" | "access" | "status
   // Time off to decide: only requests this person can decide (not their own; an operations manager's go to the owner).
   const byId = new Map(people.map((p) => [p.id, p]));
   const toDecide = pending.filter((t) => { const who = byId.get(t.personId); return !!who && canDecide(actor, t, who).ok; });
+  // People in their care, in this business only (an owner of both businesses counts each business's on its own screens).
+  const inCare = peopleInCare(actor, people).filter((p) => inBrand(p, brandOf(at).id, sites));
   return {
     urgent,
     timeOffPending: toDecide.length,
     noticesActive: notices.filter((n) => isLive(n, today) && noticeSites(n, sites).some((s) => managed.includes(s))).length,
-    certIssues: issueCount(peopleInCare(actor, people), certs, today, canSeeRightToWork(actor), openManaged),
+    certIssues: issueCount(inCare, certs, today, canSeeRightToWork(actor), openManaged),
     equipmentIssues,
     coverToDo,
     libraryToDo: libraryToDo(actor, sops, sites),
     recipesToDo: libraryToDo(actor, [...preps, ...dishes], sites),
     // Training: hands-on skills they can confirm now, people (in their care) with something overdue, quizzes to approve.
-    trainingToDo: (({ ready, overdue, toApprove }) => ready + overdue + toApprove)(trainingToDo(actor, peopleInCare(actor, people), sites, training, today)),
+    trainingToDo: (({ ready, overdue, toApprove }) => ready + overdue + toApprove)(trainingToDo(actor, inCare, sites, training, today)),
   };
 }

@@ -1,3 +1,4 @@
+import { sameBusinessIds } from "@/lib/domain/brand";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
@@ -47,7 +48,7 @@ export async function RecipeDoc({ ctx, doc, wanted }: { ctx: Ctx; doc: LibraryDo
   const changedAt = isCurrent && kind === "dish" ? v.allergensChangedAt : undefined;
   const stats = writer && changedAt
     ? alertStats(v.body.sections, doc.id, changedAt, await db.people(), await db.libraryAcks({ docId: doc.id }), sites)
-      .filter((s) => ctx.isOwner || ctx.person.access.some((a) => a.siteId === s.siteId))
+      .filter((s) => sameBusinessIds(ctx.isOwner ? sites.map((x) => x.id) : ctx.person.access.map((a) => a.siteId), sites, ctx.site).includes(s.siteId))
     : [];
   const review = writer && isCurrent ? reviewState(v.reviewBy, londonDate(Date.now())) : undefined;
   // Writers: a dish that now disagrees with its prep recipes (say the broth changed since) needs a new version.
