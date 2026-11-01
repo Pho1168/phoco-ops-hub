@@ -10,7 +10,7 @@ import { londonNow, requireCtx } from "@/lib/session";
 import { BottomNav, TopBar } from "@/components/Chrome";
 import { Icon } from "@/components/Icon";
 import { NoticeBanner } from "@/components/NoticeBanner";
-import { unreadFor } from "@/lib/domain/notices";
+import { noticesOfBusiness, unreadFor } from "@/lib/domain/notices";
 import { teamRowsView, teamToday } from "@/lib/team-today";
 import { TeamToday } from "@/components/TeamToday";
 import { ReadyLight } from "@/components/ReadyLight";
@@ -51,7 +51,8 @@ export default async function Today() {
   const notesOpen = currentNotes(await db.handover(ctx.site.id), sent, Date.now()).filter((n) => n.needsAction);
   const toDo = [...prepOpen, ...notesOpen];
   const urgent = prepOpen.filter((e) => e.urgent).length + notesOpen.filter((n) => n.category === "Food safety").length;
-  const unread = unreadFor(await db.teamNotices(0), ctx.person, date, await db.sites());
+  const allSites = await db.sites();
+  const unread = unreadFor(noticesOfBusiness(await db.teamNotices(0), allSites, ctx.site), ctx.person, date, allSites);
   const [kit, kitOpen] = await Promise.all([db.equipment(ctx.site.id), db.equipmentEvents({ siteId: ctx.site.id, openFaultsOnly: true })]);
   const now = Date.now();
   const siteTasks = await db.tasks({ siteIds: [ctx.site.id], closedSince: now - 10 * 60_000 });

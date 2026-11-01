@@ -46,6 +46,12 @@ export function isLive(n: Pick<TeamNotice, "endedAt" | "showUntil">, today: stri
 }
 
 /** Live notices for this person that they haven't read yet: important first, then newest. */
+/** Only the notices of the business of the site someone is working at (a tablet shows nothing of the other business). */
+export function noticesOfBusiness<N extends Pick<TeamNotice, "siteId" | "brand">>(notices: N[], sites: SiteBrand[], at: Pick<Site, "brand">): N[] {
+  const brand = brandOf(at).id;
+  return notices.filter((n) => noticeSites(n, sites).some((id) => brandOf(sites.find((s) => s.id === id)).id === brand));
+}
+
 export function unreadFor(notices: TeamNotice[], person: Pick<Person, "id" | "status" | "access">, today: string, sites: SiteBrand[]): TeamNotice[] {
   return notices
     .filter((n) => isLive(n, today) && inAudience(n, person, sites) && !n.reads.some((r) => r.personId === person.id))

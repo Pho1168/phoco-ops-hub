@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/data";
 import { managedSites } from "@/lib/domain/access";
+import { sameBusinessIds } from "@/lib/domain/brand";
 import { clampRange } from "@/lib/domain/records";
 import { describeRule } from "@/lib/domain/temperature";
 import { londonDate, londonHM } from "@/lib/domain/time";
@@ -22,7 +23,7 @@ export async function GET(req: Request) {
   if (!ctx || ctx.scope !== "full") return new NextResponse("Sign in first", { status: 401 });
   const url = new URL(req.url);
   const site = url.searchParams.get("site") as SiteId;
-  if (!managedSites(ctx.person).includes(site)) return new NextResponse("Not allowed", { status: 403 });
+  if (!sameBusinessIds(managedSites(ctx.person), await store().sites(), ctx.site).includes(site)) return new NextResponse("Not allowed", { status: 403 });
   const { from, to } = clampRange(url.searchParams.get("from") ?? undefined, url.searchParams.get("to") ?? undefined, londonDate(Date.now()), 7);
   const r = await loadRecords(site, from, to);
   const kind = url.searchParams.get("kind") === "signoffs" ? "signoffs" : "temps";

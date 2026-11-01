@@ -29,7 +29,7 @@ export default async function NewLibraryItem(props: { searchParams: Promise<{ ki
         <TopBar ctx={ctx} title={kind === "prep" ? "New prep recipe" : "New dish"} eyebrow="Recipes · a draft until it's approved" back="/library/recipes" />
         <main>
           <div className="muted">{kind === "prep"
-            ? "A batch the kitchen or Wembley makes: what one batch makes, the ingredients, the method, storage and shelf life, and its allergens."
+            ? "A batch the kitchen or the production kitchen makes: what one batch makes, the ingredients, the method, storage and shelf life, and its allergens."
             : "How a menu item is built, per portion, and its allergens for front of house."} When it&apos;s ready, send it for approval: the owner or an operations manager publishes it.</div>
           <RecipeEditor kind={kind} mode="new" personId={ctx.person.id} initial={{ title: "", body }} {...await editorLists(kind, db)} />
         </main>

@@ -36,12 +36,17 @@ describe("certificate reminders on the scheduler", () => {
     const monday = weekStartOf(londonDate(Date.now()));
     expect(await queueWeeklyReport(londonToUtc(addDays(monday, 1), "09:05"), demoStore)).toBe(0); // not on a Tuesday
     const at = londonToUtc(monday, "09:05");
-    expect(await queueWeeklyReport(at, demoStore)).toBe(3); // the owner and the operations manager (Eastcote and Wembley), and the Eastcote manager
+    // One report per business: the owner gets PHO & CO's (Eastcote and Wembley) and Cafe La Viet's, the operations
+    // manager PHO & CO's, the Eastcote manager Eastcote's.
+    expect(await queueWeeklyReport(at, demoStore)).toBe(4);
     expect(await queueWeeklyReport(at + 600_000, demoStore)).toBe(0);
-    const [own] = (await demoStore.notices("DEMO-OWN", 20)).filter((n) => n.kind === "report");
+    const owns = (await demoStore.notices("DEMO-OWN", 20)).filter((n) => n.kind === "report");
+    expect(owns).toHaveLength(2);
+    const own = owns.find((n) => n.body.includes("Eastcote:"))!;
     expect(own.title).toMatch(/^Weekly report: Mon \d+ \w+ to Sun \d+ \w+$/);
-    expect(own.body).toContain("Eastcote:");
     expect(own.body).toContain("Wembley:");
+    expect(own.body).not.toContain("Cafe La Viet");
+    expect(owns.find((n) => n.body.includes("Cafe La Viet"))!.body).not.toContain("Eastcote");
     const [mgr] = (await demoStore.notices("DEMO-MGR", 20)).filter((n) => n.kind === "report");
     expect(mgr.body).not.toContain("Wembley");
     const [ops] = (await demoStore.notices("DEMO-OPS", 20)).filter((n) => n.kind === "report");
