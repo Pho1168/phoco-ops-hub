@@ -3,6 +3,7 @@ import { sql, withTx } from "./pg";
 import { stockSql } from "./stock-sql";
 import { cleaningSql } from "./cleaning-sql";
 import { availabilitySql } from "./availability-sql";
+import { myDaySql } from "./my-day-sql";
 import type { Answer, Area, Checklist, ChecklistItem, ChecklistTemplate, ChecklistVersion, Outcome, Person, Role, Site, SiteId, TempRule } from "@/lib/domain/types";
 import type { Alert, AuditEntry, ChecklistDraftItem, HandoverItem, NoticeRow, PrepEntryView, PrepHandover, Run, RotaResult, Session, SessionScope, ShiftView, Store } from "./store";
 import type { RawAnswer } from "@/lib/domain/records";
@@ -351,6 +352,7 @@ export const sqlStore: Store = {
   ...stockSql,
   ...cleaningSql,
   ...availabilitySql,
+  ...myDaySql,
   async sites() {
     const q = sql();
     return (await q`select id, name, kind, status, closed_reason, to_char(ready_by, 'HH24:MI') as ready_by, to_char(gas_by, 'HH24:MI') as gas_by, stock_reminder, brand from sites order by position, id`)

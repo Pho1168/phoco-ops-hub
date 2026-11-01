@@ -1,4 +1,5 @@
 import { queueAvailabilityReminders } from "@/lib/availability-service";
+import { queueMyDayAlerts } from "@/lib/my-day-service";
 import { store } from "@/lib/data";
 import { buildEveningNotices, buildImportNotices, EVENING_REMINDER_AT, parseExport, parseStaffTab, parseWeekTable, planSync } from "@/lib/domain/rota";
 import { addDays, afterQuietHours, londonDate, londonHM, londonToUtc, QUIET_START } from "@/lib/domain/time";
@@ -98,6 +99,7 @@ export async function tick(now = Date.now()): Promise<{ queued: number; sent: nu
   try { queued += await queueRoundReminders(now, db); } catch (e) { console.error("tick: round order reminders failed", e); }
   try { queued += await queueCleaningMissed(now, db); } catch (e) { console.error("tick: cleaning missed failed", e); }
   try { queued += await queueAvailabilityReminders(now, db); } catch (e) { console.error("tick: availability reminders failed", e); }
+  try { queued += await queueMyDayAlerts(now, db); } catch (e) { console.error("tick: my day alerts failed", e); }
   if (hm >= DAILY_DIGEST_FROM && hm < DAILY_DIGEST_UNTIL) {
     try { queued += await queueDailyDigest(now, db); } catch (e) { console.error("tick: daily digest failed", e); }
   }

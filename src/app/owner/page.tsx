@@ -13,6 +13,8 @@ import { ManageTiles, NeedsYou } from "../manage/ManageTiles";
 import { manageCounts } from "../manage/counts";
 import { RemindersCard } from "./RemindersCard";
 import { RightNow } from "./RightNow";
+import { MyDayCard } from "./MyDayCard";
+import { myDayFor, rowView } from "@/lib/my-day-service";
 import { AvailabilityBanner, AvailabilityCard } from "@/components/AvailabilityCard";
 import { rotaSitesOf } from "@/lib/availability-service";
 import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
@@ -131,7 +133,14 @@ export default async function Owner() {
       team={{ onRota: teamRows.length, late: teamRows.filter((r) => r.reply?.kind === "late").length, cantMakeIt: teamRows.filter((r) => r.reply?.kind === "cant_make_it").length }}
     />
   );
-  const rightNow = <>{availAsked && !availSent && <AvailabilityBanner week={availWeek} now={now} />}{rightNowCard}{availAsked && availSent && <AvailabilityCard week={availWeek} sent now={now} />}</>;
+  // The owner's own list first: their Top 3 for today (private to them).
+  const mine = ctx.isOwner ? await myDayFor(db, ctx.person.id, now) : undefined;
+  const myDayCard = mine && (() => {
+    const v = mine.view;
+    const all = [...v.top, ...v.today, ...v.week, ...v.later, ...v.anytime];
+    return <MyDayCard top={v.top.map((i) => rowView(i, mine.today))} left={v.leftToday} more={v.today.length} carried={all.filter((i) => i.state === "late").length} />;
+  })();
+  const rightNow = <>{myDayCard}{availAsked && !availSent && <AvailabilityBanner week={availWeek} now={now} />}{rightNowCard}{availAsked && availSent && <AvailabilityCard week={availWeek} sent now={now} />}</>;
   return (
     <>
       <TopBar ctx={ctx} neutral title="Right now" eyebrow={lead === "owner" ? `${BRANDS[biz].name} · owner` : `${sites.map((s) => s.name).join(" · ")} · operations`}>
