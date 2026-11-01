@@ -132,4 +132,22 @@ describe("Stock needed beside a round supplier's order", () => {
     expect(m[0].rows[0].sites).toEqual([{ siteId: "EAS", qty: 3, unknown: 0 }, { siteId: "WEM", qty: 9, unknown: 0 }]);
     expect(m[1].rows[0].urgent).toBe(true);
   });
+
+  it("keeps a restaurant's items off the kitchen's order and in the mirror, so nothing shows twice", async () => {
+    const { neededMirror, kitchenOnly } = await import("@/lib/domain/stock");
+    const sup = { id: "SG", name: "Surelygrow", method: "delivery" as const, active: true, deliveryDays: [1, 5] };
+    const prawn = { id: "Prawn", name: "Prawn", active: true, supplierId: "SG" };
+    const g = { key: "SG", supplier: sup, production: false, drivers: [],
+      rows: [{ product: prawn, qty: 8, sites: [{ siteId: "EAS", qty: 5, unknown: 0 }, { siteId: "WEM", qty: 3, unknown: 0 }],
+        requestIds: ["r1", "r2"], lineIds: [], unknownIds: [], notes: [], photoIds: [], urgent: false }],
+      ticked: [{ product: prawn, qty: 6, sites: [{ siteId: "EAS", qty: 6 }], lineIds: ["l1"], by: [], at: 0 }],
+      removed: [] };
+    const k = kitchenOnly(g as never, "WEM", (id) => (id === "r1" ? "EAS" : "WEM"));
+    expect(k.rows.map((r) => [r.qty, r.requestIds, r.sites.map((x) => x.siteId)])).toEqual([[3, ["r2"], ["WEM"]]]);
+    expect(k.ticked).toEqual([]);
+    const m = neededMirror([g as never], [prawn], "SG", "WEM");
+    expect(m.map((x) => [x.name, x.rows.map((r) => [r.product.id, r.total, r.sites.map((s) => s.siteId)])])).toEqual([["Surelygrow", [["Prawn", 5, ["EAS"]]]]]);
+    // Cafe La Viet's Surelygrow delivers to the restaurant itself: all of it is on the order, none in the mirror.
+    expect(neededMirror([g as never], [prawn], "SG", "EAS").map((x) => x.rows.map((r) => r.sites.map((s) => s.siteId)))).toEqual([[["WEM"]]]);
+  });
 });

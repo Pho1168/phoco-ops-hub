@@ -5,7 +5,7 @@ import { isOwner, leadSites } from "@/lib/domain/access";
 import { catalogFor, buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NOTE, stillWaiting, TICK_NOTE, untickedLines, cleanNewItems, cleanProduct, lineEnd, runsPurchasing, sameProduct, type NewItem, methodOf, neededGroups, needsEscalation, orderingSites, productionQueue, productLabel, reqCode, taskCode, withProgress, type NeededGroup, type Product, type ProductionRow, type Progress, type StockRequest, type Supplier, orderableAt, ordersByRound, nextDelivery, neededCount, roundRemindersDue, roundReminderMessage, runsOrdering, cleanCatalogueLines, type CatalogueLine } from "@/lib/domain/stock";
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM, shortDay } from "@/lib/domain/time";
-import type { Person, Site } from "@/lib/domain/types";
+import type { Person, Site, SiteId } from "@/lib/domain/types";
 import { brandOf, brandsOf, type BrandId } from "@/lib/domain/brand";
 
 /**
@@ -279,7 +279,8 @@ export async function neededGroup(db: Store, person: Pick<Person, "status" | "ac
  * kitchen's products are sent (dispatched) and arrived. Only what's still needed now is ticked (two people at once
  * can't tick the same thing twice: the task's lines are checked again in the store).
  */
-export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productIds: string[], now: number): Promise<Done<{ ticked: number }>> {
+/** `site`: only that site's requests (a round supplier's order page shows only the kitchen's own). */
+export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productIds: string[], now: number, site?: SiteId): Promise<Done<{ ticked: number }>> {
   let { group } = await neededGroup(db, person, key, now);
   if (!group) return { ok: false, error: "That list has changed. Refresh and try again" };
   // A production product asked for but not yet on the kitchen's order (it had no amount then): onto it first.
@@ -308,7 +309,7 @@ export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status"
   const items = withProgress(await db.stockData({ since: stockSince(now) }));
   const lines = rows.flatMap((r) => r.requestIds).flatMap((id) => {
     const x = items.find((i) => i.request.id === id);
-    return x && x.progress.toPlan > 0 ? [{ requestId: id, qty: x.progress.toPlan }] : [];
+    return x && x.progress.toPlan > 0 && (!site || x.request.siteId === site) ? [{ requestId: id, qty: x.progress.toPlan }] : [];
   });
   if (!lines.length) return { ok: false, error: "Those are already done. Refresh to see the list as it is now" };
   const method = group.supplier?.method ?? "shop";
@@ -325,13 +326,19 @@ export async function tickNeeded(db: Store, person: Pick<Person, "id" | "status"
  * back as a new request (the tick itself is kept, with a note), so it's on the list again. A production kitchen's goes
  * back onto its order for that restaurant.
  */
-export async function untickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productId: string, now: number): Promise<Done<{ unticked: number; name: string }>> {
+export async function untickNeeded(db: Store, person: Pick<Person, "id" | "status" | "access">, key: string, productId: string, now: number, site?: SiteId): Promise<Done<{ unticked: number; name: string }>> {
   const { group } = await neededGroup(db, person, key, now);
   const row = group?.ticked.find((r) => r.product.id === productId);
   if (!group || !row) return { ok: false, error: "That isn't ticked any more. Refresh to see the list as it is now" };
   const made: string[] = [];
   let error = "";
-  for (const id of row.lineIds) {
+  let lineIds = row.lineIds;
+  if (site) {
+    const data = await db.stockData({ since: stockSince(now) });
+    const siteOf = new Map(data.requests.map((r) => [r.id, r.siteId]));
+    lineIds = lineIds.filter((id) => { const l = data.lines.find((x) => x.id === id); return !!l && siteOf.get(l.requestId) === site; });
+  }
+  for (const id of lineIds) {
     const r = await db.untickLine(id, person.id, "list");
     if (r.ok) made.push(r.value.requestId); else error = r.error;
   }

@@ -2676,15 +2676,15 @@ export async function addFromCatalogueAction(supplierId: string, lines: { produc
 }
 
 /** Ticks products off a supplier's list (ordered or bought, so done; production: sent). */
-export async function tickNeededAction(key: string, productIds: string[]): Promise<ActionResult & { ticked?: number }> {
+export async function tickNeededAction(key: string, productIds: string[], site?: string): Promise<ActionResult & { ticked?: number }> {
   const who = await orderingLead();
   if (!who.ok) return who;
-  const p = z.object({ key: KeyZ, ids: z.array(StockIdZ).min(1).max(300) }).safeParse({ key, ids: productIds });
+  const p = z.object({ key: KeyZ, ids: z.array(StockIdZ).min(1).max(300), site: SiteIdZ.optional() }).safeParse({ key, ids: productIds, site });
   if (!p.success) return { ok: false, error: "Pick what to tick off" };
   const db = store();
   const now = Date.now();
   const before = (await neededView(db, who.ctx.person, now)).groups.find((g) => g.key === p.data.key);
-  const r = await tickNeeded(db, who.ctx.person, p.data.key, p.data.ids, now);
+  const r = await tickNeeded(db, who.ctx.person, p.data.key, p.data.ids, now, p.data.site);
   if (!r.ok) return r;
   const names = before?.rows.filter((x) => p.data.ids.includes(x.product.id)).map((x) => `${x.qty} × ${x.product.name}`) ?? [];
   await db.audit({ actorId: who.ctx.person.id, action: "stock.tick",
@@ -2715,16 +2715,16 @@ export async function editSiteNeededAction(productId: string, qty: number | null
 }
 
 /** Takes back a tick on Stock needed made this working day: the item is back on its supplier's card. */
-export async function untickNeededAction(key: string, productId: string): Promise<ActionResult> {
+export async function untickNeededAction(key: string, productId: string, site?: string): Promise<ActionResult> {
   const who = await orderingLead();
   if (!who.ok) return who;
-  const p = z.object({ key: KeyZ, id: StockIdZ }).safeParse({ key, id: productId });
+  const p = z.object({ key: KeyZ, id: StockIdZ, site: SiteIdZ.optional() }).safeParse({ key, id: productId, site });
   if (!p.success) return { ok: false, error: "That isn't ticked any more" };
   const db = store();
   const now = Date.now();
   const before = (await neededView(db, who.ctx.person, now)).groups.find((g) => g.key === p.data.key);
   const row = before?.ticked.find((x) => x.product.id === p.data.id);
-  const r = await untickNeeded(db, who.ctx.person, p.data.key, p.data.id, now);
+  const r = await untickNeeded(db, who.ctx.person, p.data.key, p.data.id, now, p.data.site);
   if (!r.ok) return r;
   await db.audit({ actorId: who.ctx.person.id, action: "stock.untick",
     detail: `${before?.supplier?.name ?? "No supplier"}: unticked ${row ? `${row.qty} × ${row.product.name}` : r.value.name}, back on Stock needed` });

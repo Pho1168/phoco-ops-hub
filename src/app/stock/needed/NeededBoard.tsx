@@ -35,7 +35,7 @@ const forSites = (sites: { name: string; qty: number }[]) => (sites.length === 1
  * is saved at once and the item moves to "Ticked today" on the same card, crossed out, where Untick puts it back (a
  * mistaken tap) until 05:00. Shops can be given to a driver; a delivery supplier downloads a PDF.
  */
-export function NeededBoard({ groups, drivers, hideMethod }: { groups: BoardGroup[]; drivers: { id: string; name: string }[]; /** The round order page: no "Supplier delivers" chip. */ hideMethod?: boolean }) {
+export function NeededBoard({ groups, drivers, hideMethod, site }: { groups: BoardGroup[]; drivers: { id: string; name: string }[]; /** The round order page: no "Supplier delivers" chip. */ hideMethod?: boolean; /** The round order page: ticks only that kitchen's own requests. */ site?: string }) {
   const router = useRouter();
   /** Rows being ticked or unticked right now (shown at once, before the page refreshes). */
   const [ticking, setTicking] = useState<Set<string>>(new Set());
@@ -55,7 +55,7 @@ export function NeededBoard({ groups, drivers, hideMethod }: { groups: BoardGrou
     const keys = ids.map((id) => `${key}|${id}`);
     setTicking((s) => new Set([...s, ...keys]));
     start(async () => {
-      const r = await tickNeededAction(key, ids);
+      const r = await tickNeededAction(key, ids, site);
       if (!r.ok) { setErr(r.error); setTicking((s) => new Set([...s].filter((x) => !keys.includes(x)))); }
       router.refresh();
     });
@@ -64,7 +64,7 @@ export function NeededBoard({ groups, drivers, hideMethod }: { groups: BoardGrou
     setErr("");
     setUnticking((s) => new Set([...s, `${key}|${id}`]));
     start(async () => {
-      const r = await untickNeededAction(key, id);
+      const r = await untickNeededAction(key, id, site);
       if (!r.ok) { setErr(r.error); setUnticking((s) => new Set([...s].filter((x) => x !== `${key}|${id}`))); }
       router.refresh();
     });
