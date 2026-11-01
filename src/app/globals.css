@@ -31,6 +31,9 @@ a { color: inherit; }
 .top-site { font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: .5px; line-height: 1; white-space: nowrap; }
 .logo { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: 1px; line-height: 1; white-space: nowrap; }
 .top-back { min-width: 44px; padding: 0 10px; }
+/* Every bar starts with a back arrow; on a phone it takes the logo's place to leave room for the title. */
+@media (max-width: 699px) { .top-back + .top-logo { display: none; } }
+.btn.small .ico { width: 16px; height: 16px; margin-right: 4px; vertical-align: -3px; }
 .top-ttl { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
 .top-eyebrow { font-family: var(--display); font-weight: 600; font-size: 12px; letter-spacing: 1.4px; text-transform: uppercase; color: color-mix(in srgb, var(--brand-ink) 72%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .top-h1 { font-family: var(--display); font-weight: 700; font-size: 22px; line-height: 1; letter-spacing: .3px; color: var(--brand-ink); text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -946,6 +949,12 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 .stock-row.done { opacity: .7; }
 .stock-ticked-head { border-top: 1px dashed var(--line); padding-top: 10px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
 .stock-ticked-head + .stock-row { border-top: 0; padding-top: 0; }
+.stock-ticked { display: flex; flex-direction: column; gap: 10px; }
+.stock-ticked > summary { cursor: pointer; list-style: none; min-height: 40px; display: flex; align-items: center; }
+.stock-ticked > summary::-webkit-details-marker { display: none; }
+.stock-ticked > summary::before { content: "▸"; margin-right: 8px; }
+.stock-ticked[open] > summary::before { content: "▾"; }
+.stock-ticked[open] > summary + .stock-row { border-top: 0; padding-top: 0; }
 .tick.on { background: var(--brand); border-color: var(--brand); cursor: default; }
 .stock-row-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .stock-site { display: flex; align-items: center; gap: 10px; padding-left: 4px; flex-wrap: wrap; font-size: 15px; }

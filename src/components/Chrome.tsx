@@ -5,6 +5,7 @@ import { firstName } from "@/lib/domain/names";
 import { londonDate, longDay } from "@/lib/domain/time";
 import { Clock } from "./Clock";
 import { Icon } from "./Icon";
+import { BackButton } from "./BackButton";
 import { BrandStyle, Logo } from "./Logo";
 import { SiteSwitch } from "./SiteSwitch";
 import { store } from "@/lib/data";
@@ -32,6 +33,7 @@ function Brand({ ctx, title, eyebrow, back, neutral }: BarProps) {
     return (
       <>
         <BrandStyle brand={brand} />
+        <BackButton />
         <Logo className="top-logo" brand={brand} />
         <span className="top-site">{ctx.site.name}</span>
       </>
@@ -42,7 +44,7 @@ function Brand({ ctx, title, eyebrow, back, neutral }: BarProps) {
       <BrandStyle brand={brand} />
       {back
         ? <Link className="pill-btn top-back" href={back} aria-label="Back"><Icon name="back" /></Link>
-        : <Logo className="top-logo" brand={brand} />}
+        : <><BackButton /><Logo className="top-logo" brand={brand} /></>}
       <div className="top-ttl">
         <span className="top-eyebrow">{eyebrow ?? <>{ctx.site.name} · {longDay(londonDate(Date.now()))}</>}</span>
         <h1 className="top-h1">{title}</h1>
