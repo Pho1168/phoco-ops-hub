@@ -67,7 +67,7 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
           </div>
           <div className="strong">{n ? `${n} item${n === 1 ? "" : "s"} to order` : "Nothing to order yet"}</div>
         </section>
-        {board.length > 0 && <NeededBoard groups={board} drivers={drivers} />}
+        {board.length > 0 && <NeededBoard groups={board} drivers={drivers} hideMethod />}
         {kitchen && range.length > 0 && <RoundCatalogue supplierId={supplier.id} supplierName={supplier.name} siteName={kitchen.name} products={range} onOrder={onOrder} wanted={wanted} />}
         <nav className="row wrap" style={{ gap: 8 }}>
           <Link className="btn ghost small" href="/stock/needed">Back to Stock needed</Link>
