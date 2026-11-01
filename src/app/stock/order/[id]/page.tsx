@@ -1,9 +1,7 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { brandOf } from "@/lib/domain/brand";
 import { store } from "@/lib/data";
-import { canPurchase, catalogFor, deliveryDaysText, neededMirror, restaurantDemand, neededCount, nextDelivery, ordersByRound } from "@/lib/domain/stock";
-import { londonDate, longDay } from "@/lib/domain/time";
+import { canPurchase, catalogFor, neededMirror, restaurantDemand, ordersByRound } from "@/lib/domain/stock";
 import { neededView, roundSite } from "@/lib/stock-service";
 import { RoundCatalogue } from "./RoundCatalogue";
 import { NeededMirror } from "./NeededMirror";
@@ -39,20 +37,15 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
   const kitchen = kitchenId && siteIds.includes(kitchenId) ? sites.find((s) => s.id === kitchenId) : undefined;
   const range = catalog.products.filter((p) => p.active && p.supplierId === supplier.id).map((p) => ({ id: p.id, name: p.name, size: p.size, category: p.category }));
   const group = groups.find((g) => g.supplier?.id === supplier.id);
-  const next = nextDelivery(supplier.deliveryDays ?? [], now);
-  const today = londonDate(now);
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   const board = group ? boardGroups([group], { siteName, items, suppliers: catalog.suppliers }) : [];
   const drivers = people.filter((p) => canPurchase({ ...p, purchaser: purchasers.includes(p.id) }))
     .map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
-  const n = group ? neededCount([group]) : 0;
-  const closesToday = next?.orderBy === today;
   // What the restaurants want of each one: still to send of the kitchen's copies (restaurants order those).
   const demand = restaurantDemand(groups, catalog.products, kitchen?.id);
   const wanted: Record<string, { qty: number; sizes: string[]; sites: string }> = {};
   for (const [pid, d] of demand) wanted[pid] = { qty: d.qty, sizes: d.sizes, sites: d.sites.map((x) => `${siteName.get(x.siteId) ?? x.siteId} ${x.qty}`).join(", ") };
   // Beside it: Stock needed as it is (this business's), every supplier's items per branch and in total.
-  const toRestaurant = !!kitchen && kitchen.kind !== "production";
   const mirror = neededMirror(groups, catalog.products, supplier.id);
   const mirrorSites = sites.filter((s) => siteIds.includes(s.id)).map((s) => ({ id: s.id, name: s.name }));
   const onOrder: Record<string, number> = {};
@@ -63,22 +56,8 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
       <main className="wide">
         <div className="round-cols">
         <div className="stack round-left">
-        <section className={`card stack round-head${closesToday ? " closing" : ""}`} style={{ gap: 6 }}>
-          <div className="row wrap" style={{ gap: 8, alignItems: "baseline" }}>
-            <h2 className="h-sec grow" style={{ margin: 0 }}>{next ? `For ${longDay(next.date)}` : supplier.name}</h2>
-            {closesToday ? <span className="chip late">Order closes today</span> : next && <span className="chip warn">Order by end of {longDay(next.orderBy)}</span>}
-          </div>
-          <div className="muted">
-            {supplier.name} delivers to {toRestaurant ? kitchen.name : "the production kitchen"} on {deliveryDaysText(supplier.deliveryDays ?? [])}. Everything still to order is for the next delivery; anything asked for after the cut-off goes on the one after.
-            This list is kept off Stock needed.
-          </div>
-          <div className="strong">{n ? `${n} item${n === 1 ? "" : "s"} to order` : "Nothing to order yet"}</div>
-        </section>
-        {board.length > 0 && <NeededBoard groups={board} drivers={drivers} hideMethod />}
+        {board.some((g) => g.rows.length > 0) && <NeededBoard groups={board.filter((g) => g.rows.length > 0)} drivers={drivers} round />}
         {kitchen && range.length > 0 && <RoundCatalogue supplierId={supplier.id} supplierName={supplier.name} siteName={kitchen.name} products={range} onOrder={onOrder} wanted={wanted} />}
-        <nav className="row wrap" style={{ gap: 8 }}>
-          <Link className="btn ghost small" href="/stock/needed">Back to Stock needed</Link>
-        </nav>
         </div>
         <NeededMirror groups={mirror} supplierName={supplier.name} sites={mirrorSites} />
         </div>

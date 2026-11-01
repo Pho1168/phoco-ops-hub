@@ -35,7 +35,7 @@ const forSites = (sites: { name: string; qty: number }[]) => (sites.length === 1
  * is saved at once and the item moves to "Ticked today" on the same card, crossed out, where Untick puts it back (a
  * mistaken tap) until 05:00. Shops can be given to a driver; a delivery supplier downloads a PDF.
  */
-export function NeededBoard({ groups, drivers, hideMethod }: { groups: BoardGroup[]; drivers: { id: string; name: string }[]; /** The round order page: no "Supplier delivers" chip. */ hideMethod?: boolean }) {
+export function NeededBoard({ groups, drivers, round }: { groups: BoardGroup[]; drivers: { id: string; name: string }[]; /** The round order page: just the items to tick (no intro, method chip or "Ticked today"). */ round?: boolean }) {
   const router = useRouter();
   /** Rows being ticked or unticked right now (shown at once, before the page refreshes). */
   const [ticking, setTicking] = useState<Set<string>>(new Set());
@@ -85,9 +85,9 @@ export function NeededBoard({ groups, drivers, hideMethod }: { groups: BoardGrou
   }
   return (
     <div className="stack">
-      <p className="muted lead" style={{ margin: 0 }}>
+      {!round && <p className="muted lead" style={{ margin: 0 }}>
         {total} item{total === 1 ? "" : "s"} asked for, by supplier. Tick each one once it&apos;s ordered or bought (production: when sent). Ticked items stay at the bottom of the card, crossed out, until 5am: tap Untick if you ticked one by mistake.
-      </p>
+      </p>}
       {err && <div className="fix" role="alert" style={{ margin: 0 }}>{err}</div>}
       {groups.map((g) => {
         const tickable = g.rows.filter((r) => r.qty > 0 && !ticking.has(`${g.key}|${r.productId}`));
@@ -97,7 +97,7 @@ export function NeededBoard({ groups, drivers, hideMethod }: { groups: BoardGrou
           <section key={g.key || "none"} className="stock-group" aria-label={g.name}>
             <div className="stock-group-head">
               <h3 className="grow">{g.name}</h3>
-              {!hideMethod && <span className="chip">{g.production ? "Production" : g.methodLabel}</span>}
+              {!round && <span className="chip">{g.production ? "Production" : g.methodLabel}</span>}
               {count > 0 && <span className="chip late">{count}</span>}
             </div>
             {tickable.length > 0 && (
@@ -160,7 +160,7 @@ export function NeededBoard({ groups, drivers, hideMethod }: { groups: BoardGrou
               </div>
             ))}
             {g.removed.length > 0 && <div className="muted" style={{ fontSize: 13 }}>{g.removed.join(" · ")}</div>}
-            {ticked.length > 0 && (
+            {!round && ticked.length > 0 && (
               <>
                 <div className="stock-ticked-head muted">{g.production ? "Sent today" : "Ticked today"}</div>
                 {ticked.map((t) => (
