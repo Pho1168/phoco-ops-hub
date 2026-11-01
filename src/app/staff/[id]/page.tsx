@@ -29,7 +29,7 @@ export default async function EditPerson(
           <div className="alert good" role="status"><div><div className="strong">{p.name} added</div>
             <div style={{ fontSize: 13 }}>Give them the temporary PIN in person. They&apos;ll choose their own when they first sign in.</div></div></div>
         )}
-        <StaffForm sites={await siteOptions(ctx.leads)} roles={givableRoles(ctx.person)} suggestedCode={p.staffCode}
+        <StaffForm sites={await siteOptions(ctx.allLeads)} roles={givableRoles(ctx.person)} suggestedCode={p.staffCode}
           person={{ id: p.id, staffCode: p.staffCode, name: p.name, status: p.status, self: p.id === ctx.person.id, access: p.access }} />
       </main>
       <BottomNav ctx={ctx} current="owner" />

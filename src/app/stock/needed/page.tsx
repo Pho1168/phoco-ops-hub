@@ -4,9 +4,9 @@ import { canPurchase, deliveryDaysText, editsSiteNeeded, lookAlikes, methodOf, n
 import { boardGroups } from "./board";
 import Link from "next/link";
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
-import { neededView, orderBrands, pickBrand, siteNeededView } from "@/lib/stock-service";
+import { neededView, siteNeededView } from "@/lib/stock-service";
+import { brandOf } from "@/lib/domain/brand";
 import { catalogFor } from "@/lib/domain/stock";
-import { BusinessTabs } from "../BusinessTabs";
 import type { Ctx } from "@/lib/session";
 import { StockBar, StockNav } from "../Bar";
 import { stockCtx } from "../load";
@@ -30,8 +30,7 @@ export const dynamic = "force-dynamic";
  * checklist. Tick = ordered or bought (production: sent). Shop runs can go to a driver; a delivery supplier's list
  * downloads as a PDF to email.
  */
-export default async function NeededPage(props: { searchParams: Promise<{ b?: string }> }) {
-  const { b } = await props.searchParams;
+export default async function NeededPage() {
   const { ctx, onPhone, can } = await stockCtx();
   if (!can.ordering) {
     // Everyone else, on the restaurant's tablet: its own list, to change or take things off.
@@ -40,9 +39,9 @@ export default async function NeededPage(props: { searchParams: Promise<{ b?: st
   }
   const db = store();
   const now = Date.now();
-  // One business at a time: PHO & CO and Cafe La Viet order from their own catalogues.
-  const brand = pickBrand(await orderBrands(db, ctx.person), b, ctx.site);
-  const [{ groups, sites, items, siteIds, catalog: everything, brands }, people, purchasers] = await Promise.all([neededView(db, ctx.person, now, brand), db.people(), db.purchaserIds()]);
+  // The business of the site they're working at only: PHO & CO and Cafe La Viet never criss-cross.
+  const brand = brandOf(ctx.site).id;
+  const [{ groups, sites, items, siteIds, catalog: everything }, people, purchasers] = await Promise.all([neededView(db, ctx.person, now, brand), db.people(), db.purchaserIds()]);
   const catalog = catalogFor(everything, brand);
   const newItems = await db.stockNewItems({ open: true, siteIds });
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
@@ -60,8 +59,7 @@ export default async function NeededPage(props: { searchParams: Promise<{ b?: st
     <>
       <StockBar ctx={ctx} neutral onPhone={onPhone} title="Stock needed" back="/stock" eyebrow={`Stock · ${shortDay(londonDate(now))}`} />
       <main className="stack">
-        <BusinessTabs brands={brands} current={brand} path="/stock/needed" />
-        <PrintStock label="Everything below, with boxes to tick." brand={brands.length > 1 ? brand : undefined} />
+        <PrintStock label="Everything below, with boxes to tick." />
         {newItems.length > 0 && (
           <NewItemsCard owner={runsPurchasing(ctx.person)}
             items={newItems.map((n) => ({ id: n.id, name: n.name, size: n.size, qty: n.qty, note: n.note, site: siteName.get(n.siteId) ?? n.siteId,
@@ -80,7 +78,7 @@ export default async function NeededPage(props: { searchParams: Promise<{ b?: st
           </Link>
         ))}
         <NeededBoard groups={board} drivers={drivers} />
-        {(clearable > 0) && <ClearNeeded count={clearable} brand={brand} />}
+        {(clearable > 0) && <ClearNeeded count={clearable} />}
       </main>
       <StockNav ctx={ctx} onPhone={onPhone} />
     </>

@@ -1,6 +1,6 @@
 import { store } from "@/lib/data";
 import { audienceLabel, canPostTo, isLive, noticeSites, readStats } from "@/lib/domain/notices";
-import { brandsOf } from "@/lib/domain/brand";
+import { brandsOf, sameBusiness } from "@/lib/domain/brand";
 import { sectionsFor } from "@/lib/domain/staff";
 import { londonDate, shortDay } from "@/lib/domain/time";
 import { BottomNav, TopBar } from "@/components/Chrome";
@@ -32,7 +32,7 @@ export default async function Notices() {
     <>
       <TopBar ctx={ctx} title="Team notices" eyebrow="Manager tools" back="/manage" />
       <main>
-        <NoticeForm sites={mine.map((s) => ({ id: s.id, name: s.name, sections: sectionsFor(s.kind), brand: s.brand }))} allSites={brandsOf(allSites).filter((b) => canPostTo(ctx.managed, allSites, { brand: b.id })).map((b) => ({ id: b.id, name: b.name }))} today={today} />
+        <NoticeForm sites={mine.map((s) => ({ id: s.id, name: s.name, sections: sectionsFor(s.kind), brand: s.brand }))} allSites={brandsOf(sameBusiness(allSites, ctx.site)).filter((b) => canPostTo(ctx.managed, allSites, { brand: b.id })).map((b) => ({ id: b.id, name: b.name }))} today={today} />
 
         <section className="stack">
           <h2 className="h-sec">Showing now</h2>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { brandsOf, inBrand } from "@/lib/domain/brand";
+import { BRANDS, brandOf, inBrand } from "@/lib/domain/brand";
 import { DEMO_MODE, store } from "@/lib/data";
 import { currentDevice } from "@/lib/device";
 import { DevicesCard, type DeviceRow } from "./DevicesCard";
@@ -77,16 +77,17 @@ export default async function Owner() {
   }));
   const names = new Map(everyone.map((p) => [p.id, p.name]));
   const order = { active: 0, frozen: 1, left: 2 } as const;
-  const people: PersonRow[] = [...all].sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name)).map((p) => ({
+  // Staff accounts of the business of the site they're working at (someone at both businesses is on both).
+  const biz = brandOf(ctx.site).id;
+  const people: PersonRow[] = [...all].filter((p) => inBrand(p, biz, allSites) || !p.access.length).sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name)).map((p) => ({
     id: p.id, name: p.name, code: p.staffCode, status: p.status, self: p.id === ctx.person.id,
     sites: p.access.map((a) => `${a.siteId} ${ROLE_SHORT[a.role].toLowerCase()}`).join(" · "),
     canEdit: canManageAccount(ctx.person, p).ok,
-    // Which business's staff list they're on (someone at both is on both; nobody with no site is left out).
-    brands: (() => { const b = brandsOf(allSites).filter((x) => inBrand(p, x.id, allSites)).map((x) => x.id); return b.length ? b : ["phoco" as const]; })(),
+    brands: [biz],
   }));
-  const businesses = brandsOf(allSites).map((b) => ({ id: b.id, name: b.name }));
   // An operations manager's log: their sites and their own actions (more are read so 30 are left after filtering).
-  const log = activityFor(ctx.person, await db.auditLog(ctx.isOwner ? 30 : 300), ctx.leads).slice(0, 30).map((e) => ({
+  // Only this business's activity: its sites' entries, and anything not tied to a site.
+  const log = activityFor(ctx.person, await db.auditLog(300), ctx.leads).filter((e) => !e.siteId || (ctx.leads as string[]).includes(e.siteId)).slice(0, 30).map((e) => ({
     at: new Date(e.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }), site: e.siteId ?? "", who: e.actorId ? names.get(e.actorId) ?? "" : "", action: e.action, detail: e.detail,
   }));
   const here = await currentDevice();
@@ -111,10 +112,10 @@ export default async function Owner() {
   const teamRows = await teamToday(openSites.map((s) => s.id), now);
   const team = teamRowsView(teamRows, now);
   const withPush = await db.peopleWithPush();
-  const active = all.filter((p) => p.status === "active");
+  const active = all.filter((p) => p.status === "active" && inBrand(p, biz, allSites));
   const lead = ctx.isOwner ? "owner" as const : "ops" as const;
   const missing = active.filter((p) => !withPush.has(p.id)).map((p) => p.name);
-  const counts = await manageCounts(ctx.person);
+  const counts = await manageCounts(ctx.person, ctx.site);
   // The first glance: urgent things, sites ready to open, prep still to do, who's on (and late or not coming).
   const prepSites = (await db.prepEnabledSites()).filter((id) => openSites.some((s) => s.id === id));
   const prepOpen = (await Promise.all(prepSites.map((id) => db.prepOutstanding(id)))).flat();
@@ -133,11 +134,11 @@ export default async function Owner() {
   const rightNow = <>{availAsked && !availSent && <AvailabilityBanner week={availWeek} now={now} />}{rightNowCard}{availAsked && availSent && <AvailabilityCard week={availWeek} sent now={now} />}</>;
   return (
     <>
-      <TopBar ctx={ctx} neutral title="Right now" eyebrow={lead === "owner" ? "All sites · owner" : `${sites.map((s) => s.name).join(" · ")} · operations`}>
+      <TopBar ctx={ctx} neutral title="Right now" eyebrow={lead === "owner" ? `${BRANDS[biz].name} · owner` : `${sites.map((s) => s.name).join(" · ")} · operations`}>
         {ctx.site.status === "open" && <Link className="pill-btn top-extra" href="/shift?view=lanes">Lanes at {ctx.site.name}</Link>}
       </TopBar>
       <OwnerClient lead={lead} rightNow={rightNow} needs={<NeedsYou counts={counts} />} tools={<ManageTiles counts={counts} owner={ctx.isOwner} />}
-        reminders={<RemindersCard rows={team} active={active.length} pushOn={active.length - missing.length} missing={missing} />} sites={summaries} people={people} businesses={businesses} log={log} currentSite={ctx.site.id}
+        reminders={<RemindersCard rows={team} active={active.length} pushOn={active.length - missing.length} missing={missing} />} sites={summaries} people={people} log={log} currentSite={ctx.site.id}
         rota={<RotaCard rows={rota} canConnect={ctx.isOwner} />}
         devices={<DevicesCard devices={devices} demo={DEMO_MODE} sites={sites.filter((s) => s.status === "open").map((s) => ({ id: s.id, name: s.name }))} />} />
       <BottomNav ctx={ctx} current="owner" />

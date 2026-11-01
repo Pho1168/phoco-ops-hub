@@ -43,7 +43,7 @@ a { color: inherit; }
 /* Owners and ops: which site they're working at, grouped by business. */
 .site-switch select { border: 0; border-radius: 999px; min-height: 40px; padding: 0 30px 0 14px; max-width: 220px; font-weight: 600; font-size: 13px; color: var(--brand-ink); background: color-mix(in srgb, var(--brand-ink) 16%, transparent); cursor: pointer; }
 .site-switch select option, .site-switch select optgroup { color: var(--ink); background: var(--surface); }
-@media (max-width: 699px) { .site-switch select { max-width: 120px; padding: 0 22px 0 10px; font-size: 12px; } }
+@media (max-width: 699px) { .site-switch select { max-width: 132px; padding: 0 22px 0 10px; font-size: 12px; } .top:has(.site-switch) .who-name { display: none; } .top:has(.site-switch) .top-clock { display: none; } }
 .pill-btn { border: 0; border-radius: 999px; padding: 8px 14px; background: color-mix(in srgb, var(--brand-ink) 16%, transparent); color: var(--brand-ink); font-weight: 600; font-size: 13px; cursor: pointer; min-height: 40px; white-space: nowrap; text-decoration: none; display: inline-flex; align-items: center; }
 @media (max-width: 699px) { .top { overflow: hidden; gap: 8px; } .top .top-extra { display: none; } .top-ttl { min-width: 38%; } .who { flex-shrink: 1; } .who .pill-btn { padding: 0 10px; font-size: 12px; white-space: nowrap; } .who .sw-text { display: none; } }
 .who .pill-btn .ico { width: 18px; height: 18px; }

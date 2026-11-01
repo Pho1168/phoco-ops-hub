@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
 import { catalogFor, orderableAt, type NeededGroup } from "@/lib/domain/stock";
-import { clearNeeded, neededView, orderBrands, pickBrand, sendStockReport } from "@/lib/stock-service";
+import { clearNeeded, neededView, sendStockReport } from "@/lib/stock-service";
 
 // Runs against the in-memory demo store only, never a real database.
 const NOW = Date.UTC(2026, 9, 16, 21, 0);
@@ -44,15 +44,10 @@ describe("each business keeps its own stock catalogue", () => {
     await db.saveStockDraft("EAS", "DEMO-BOH", "2026-10-16", [{ productId: pho.id, level: "low", qty: 1 }], false);
     expect((await sendStockReport(db, { id: "DEMO-BOH" }, { id: "EAS" }, NOW)).ok).toBe(true);
     const owner = (await db.person("DEMO-OWN"))!;
-    expect(await orderBrands(db, owner)).toEqual(["phoco", "clv"]);
-    expect(pickBrand(["phoco", "clv"], "clv")).toBe("clv");
-    expect(pickBrand(["phoco"], "clv")).toBe("phoco");
     const ids = (g: NeededGroup[]) => g.flatMap((x) => x.rows.map((r) => r.product.id));
     expect(ids((await neededView(db, owner, NOW + 1000, "clv")).groups)).toEqual([pid]);
     expect(ids((await neededView(db, owner, NOW + 1000, "phoco")).groups)).toContain(pho.id);
     expect(ids((await neededView(db, owner, NOW + 1000, "phoco")).groups)).not.toContain(pid);
-    // An operations manager at Eastcote and Wembley only orders for PHO & CO.
-    expect(await orderBrands(db, (await db.person("DEMO-OPS"))!)).toEqual(["phoco"]);
     expect((await clearNeeded(db, owner, NOW + 2000, "clv")).ok).toBe(true);
     expect(ids((await neededView(db, owner, NOW + 3000, "clv")).groups)).toEqual([]);
     expect(ids((await neededView(db, owner, NOW + 3000, "phoco")).groups)).toContain(pho.id);

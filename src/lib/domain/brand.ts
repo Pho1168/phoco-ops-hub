@@ -51,6 +51,19 @@ export function brandCss(b: Brand): string {
   return body ? `:root{${body}}` : "";
 }
 
+/**
+ * The sites of the business of the site someone is working at: what their screens cover. Nothing criss-crosses:
+ * signed in at Cafe La Viet, an owner sees and changes only Cafe La Viet's; switching site switches business.
+ */
+export function sameBusiness<T extends Pick<Site, "id" | "brand">>(sites: T[], at: Pick<Site, "brand"> | undefined): T[] {
+  const b = brandOf(at).id;
+  return sites.filter((s) => brandOf(s).id === b);
+}
+export const sameBusinessIds = (ids: string[], sites: Pick<Site, "id" | "brand">[], at: Pick<Site, "brand"> | undefined) => {
+  const keep = new Set(sameBusiness(sites, at).map((s) => s.id));
+  return ids.filter((id) => keep.has(id));
+};
+
 /** Who belongs to a business's staff list: anyone with access at one of its sites (someone at both is on both). */
 export function inBrand(p: { access: { siteId: string }[] }, brand: BrandId, sites: Pick<Site, "id" | "brand">[]): boolean {
   const ids = new Set(sites.filter((s) => brandOf(s).id === brand).map((s) => s.id));

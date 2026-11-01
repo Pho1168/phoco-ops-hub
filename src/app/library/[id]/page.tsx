@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { sameBusiness } from "@/lib/domain/brand";
 import { notFound, redirect } from "next/navigation";
 import { store } from "@/lib/data";
 import { managedSites } from "@/lib/domain/access";
@@ -47,7 +48,7 @@ export default async function SopPage(props: { params: Promise<{ id: string }>; 
   const [sites, gone] = await Promise.all([db.sites(), erasedPhotos(v.body, db)]);
   const forMe = isCurrent && readsAny(v.body.sections, ctx.person, sites);
   const [mine] = await db.libraryAcks({ versionIds: [v.id], personId: ctx.person.id });
-  const watched = ctx.isOwner ? sites : sites.filter((s) => managedSites(ctx.person).includes(s.id));
+  const watched = sameBusiness(ctx.isOwner ? sites : sites.filter((s) => managedSites(ctx.person).includes(s.id)), ctx.site);
   const [people, acks, history] = writer
     ? await Promise.all([db.people(), db.libraryAcks({ versionIds: [v.id] }), db.libraryVersions(doc.id)])
     : [[], [], []];

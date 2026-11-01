@@ -7,7 +7,7 @@ import { z } from "zod";
 import { cleanNewSite } from "@/lib/domain/sites";
 import { raisesAlert } from "@/lib/domain/temperature";
 import { cleanJob, jobId } from "@/lib/domain/cleaning";
-import { BRANDS, brandOf, isBrandId, type BrandId } from "@/lib/domain/brand";
+import { BRANDS, brandOf, sameBusinessIds, type BrandId } from "@/lib/domain/brand";
 import { canPurchase, canReportAt, canSeeTask, orderingSites, runsOrdering, catalogFor, inBrand as inStockBrand, cleanLines as cleanStockLines, cleanNewItems, cleanAlsoFrom, cleanPrice as cleanStockPrice, cleanProduct, cleanSupplier, methodOf as stockMethodOf, onProductionTeam,
   reqCode as stockReqCode, runsPurchasing, taskCode as stockTaskCode, editsSiteNeeded } from "@/lib/domain/stock";
 import { addFromCatalogue, addNewItem, clearNeeded, driverTick, driverUntick, editSiteNeeded, moveNeeded, giveToDriver, neededView, notifyTask, routeProduction, sendProductionCount, sendStockReport, stockSince, tickNeeded, untickNeeded } from "@/lib/stock-service";
@@ -402,7 +402,8 @@ const PrepFieldsZ = z.object({ name: z.string().max(200), kind: z.string().max(1
 /** Managers, operations managers and the owner, on the full app. */
 async function prepListCtx(): Promise<{ ctx: Ctx; error?: string; brands: BrandId[] }> {
   const ctx = await requireCtx();
-  const brands = prepListBrands(ctx.person, await store().sites());
+  // Only the list of the business of the site they're working at, and only if they manage a site of it.
+  const brands = prepListBrands(ctx.person, await store().sites()).filter((b) => b === brandOf(ctx.site).id);
   return canEditPrepList(ctx.person) ? { ctx, brands } : { ctx, brands, error: "Only managers change the handover list" };
 }
 /** An item's business's list, if this person can change it (a Cafe La Viet manager never changes PHO & CO's). */
@@ -425,7 +426,7 @@ export async function savePrepItem(id: string | null, input: unknown, list?: str
   if (!f.success || (itemId && !itemId.success)) return { ok: false, error: "That change couldn't be saved" };
   const db = store();
   // An edit stays on its item's business's list; a new item goes on the list being looked at.
-  let brand: BrandId = isBrandId(list) ? list : brandOf(ctx.site).id;
+  let brand: BrandId = brandOf(ctx.site).id; void list;
   if (itemId) { const of = await prepListOf(brands, itemId.data); if (!of.ok) return of; brand = of.brand; }
   if (!brands.includes(brand)) return { ok: false, error: `Only ${BRANDS[brand].name}'s managers change its handover list` };
   const items = await db.prepItems(brand);
@@ -500,7 +501,7 @@ export async function setPrepItemActive(id: string, active: boolean): Promise<Ac
   if (!itemId.success || !on.success) return { ok: false, error: "That change couldn't be saved" };
   const db = store();
   // Owners and operations managers, on the lists of businesses whose sites they run.
-  const of = await prepListOf(prepListBrands(ctx.person, await db.sites()), itemId.data);
+  const of = await prepListOf(prepListBrands(ctx.person, await db.sites()).filter((b) => b === brandOf(ctx.site).id), itemId.data);
   if (!of.ok) return of;
   const { it, items } = of;
   if (on.data) {
@@ -662,7 +663,9 @@ export async function resolveAlert(id: string, note: string): Promise<ActionResu
 export async function clearAlerts(siteId?: string): Promise<ActionResult & { cleared?: number }> {
   const ctx = await requireCtx();
   const db = store();
-  const allowed = ctx.isOwner ? (await db.sites()).map((s) => s.id) : managedSites(ctx.person);
+  const all = await db.sites();
+  // Only the business of the site they're working at (clearing at Cafe La Viet never touches PHO & CO's alerts).
+  const allowed = sameBusinessIds(ctx.isOwner ? all.map((s) => s.id) : managedSites(ctx.person), all, ctx.site);
   const only = siteId === undefined ? undefined : SiteIdZ.parse(siteId);
   const sites = only ? allowed.filter((s) => s === only) : allowed;
   if (!sites.length) return { ok: false, error: "Only managers of that site can clear its alerts" };
@@ -828,7 +831,7 @@ export async function createPairingCode(siteId: string, label: string): Promise<
   const db = store();
   const site = await db.site(SiteIdZ.parse(siteId));
   if (!site) return { ok: false, error: "Site not found" };
-  if (!ctx.leads.includes(site.id)) return { ok: false, error: "You can only set up tablets at sites you run" };
+  if (!ctx.allLeads.includes(site.id)) return { ok: false, error: "You can only set up tablets at sites you run" };
   const name = z.string().max(80).parse(label).trim().replace(/\s+/g, " ");
   if (!name) return { ok: false, error: "Give the device a name, e.g. Eastcote kitchen tablet" };
   if (name.length > 40) return { ok: false, error: "Keep the name under 40 characters" };
@@ -844,7 +847,7 @@ export async function removeDevice(deviceId: string): Promise<ActionResult> {
   const db = store();
   const device = await db.device(z.string().max(64).parse(deviceId));
   if (!device) return { ok: false, error: "Device not found" };
-  if (!ctx.leads.includes(device.siteId)) return { ok: false, error: "You can only remove tablets at sites you run" };
+  if (!ctx.allLeads.includes(device.siteId)) return { ok: false, error: "You can only remove tablets at sites you run" };
   await db.setDeviceStatus(device.id, "locked");
   const ended = await db.revokeSessions({ deviceId: device.id }, "device removed");
   await db.audit({ actorId: ctx.person.id, siteId: device.siteId, action: "device.removed", detail: `${device.label} removed · ${ended} sessions ended` });
@@ -2636,12 +2639,12 @@ export async function dismissNewStockItem(id: string, reason: string): Promise<A
 }
 
 /** Clears Stock needed without ordering: everything on it is cancelled (kept in the history), drivers' lists taken back. */
-export async function clearNeededAction(brand?: string): Promise<ActionResult & { cancelled?: number; kept?: number }> {
+export async function clearNeededAction(): Promise<ActionResult & { cancelled?: number; kept?: number }> {
   const who = await orderingLead();
   if (!who.ok) return who;
   const db = store();
-  // Only the business whose list is open: clearing PHO & CO's never touches Cafe La Viet's.
-  const b = isBrandId(brand) ? brand : brandOf(who.ctx.site).id;
+  // Only the business of the site they're working at: clearing PHO & CO's never touches Cafe La Viet's.
+  const b = brandOf(who.ctx.site).id;
   const r = await clearNeeded(db, who.ctx.person, Date.now(), b);
   if (!r.ok) return r;
   const v = r.value;
@@ -2842,8 +2845,9 @@ export async function saveStockSupplier(id: string | undefined, input: { name: s
   const all = (await db.stockCatalog()).suppliers;
   // A supplier stays in the business it was added to; a new one goes into the catalogue being looked at.
   const existing = id ? all.find((s) => s.id === id) : undefined;
-  if (id && !existing) return { ok: false, error: "That supplier isn't in the list" };
-  const brand = existing?.brand ?? (isBrandId(input.brand) ? input.brand : "phoco");
+  // Only the catalogue of the business of the site they're working at.
+  const brand = brandOf(who.ctx.site).id;
+  if (id && (!existing || (existing.brand ?? "phoco") !== brand)) return { ok: false, error: "That supplier isn't in the list" };
   const suppliers = all.filter((s) => inStockBrand(s, brand));
   const clean = cleanSupplier({ ...input, siteId: input.siteId || undefined }, suppliers, id);
   if (!clean.ok) return clean;
@@ -2863,8 +2867,8 @@ export async function saveStockProduct(id: string | undefined, input: { name: st
   const cat = await db.stockCatalog();
   // A product stays in its business's catalogue, with that business's suppliers only.
   const existing = id ? cat.products.find((p) => p.id === id) : undefined;
-  if (id && !existing) return { ok: false, error: "That product isn't in the catalogue" };
-  const brand = existing?.brand ?? (isBrandId(input.brand) ? input.brand : "phoco");
+  const brand = brandOf(who.ctx.site).id;
+  if (id && (!existing || (existing.brand ?? "phoco") !== brand)) return { ok: false, error: "That product isn't in the catalogue" };
   const { suppliers, products } = catalogFor(cat, brand);
   const clean = cleanProduct(input, suppliers, products, id);
   if (!clean.ok) return clean;

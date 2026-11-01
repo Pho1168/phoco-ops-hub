@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { brandOf } from "@/lib/domain/brand";
 import { store } from "@/lib/data";
 import { canPurchase, catalogFor, deliveryDaysText, neededMirror, restaurantDemand, neededCount, nextDelivery, ordersByRound } from "@/lib/domain/stock";
 import { londonDate, longDay } from "@/lib/domain/time";
@@ -30,6 +31,8 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
   if (!supplier || !ordersByRound(supplier)) notFound();
   // Only its own business's sites and catalogue (PHO & CO's Surelygrow and Cafe La Viet's are separate orders).
   const brand = supplier.brand ?? "phoco";
+  // Only the business of the site they're working at: another business's round order isn't reachable from here.
+  if (brand !== brandOf(ctx.site).id) redirect("/stock");
   const [{ groups, sites, items, catalog: everything, siteIds }, people, purchasers, kitchenId] = await Promise.all([neededView(db, ctx.person, now, brand), db.people(), db.purchaserIds(), roundSite(db, id)]);
   const catalog = catalogFor(everything, brand);
   // Its whole catalogue, for whoever orders for the kitchen it delivers to.
@@ -56,7 +59,7 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
   for (const r of group?.rows ?? []) if (kitchen && r.sites.some((x) => x.siteId === kitchen.id)) onOrder[r.product.id] = r.sites.filter((x) => x.siteId === kitchen.id).reduce((t, x) => t + x.qty, 0);
   return (
     <>
-      <StockBar ctx={ctx} neutral onPhone={onPhone} title={`${supplier.name} order`} back={`/stock/needed?b=${brand}`} />
+      <StockBar ctx={ctx} neutral onPhone={onPhone} title={`${supplier.name} order`} back="/stock/needed" />
       <main className="wide">
         <div className="round-cols">
         <div className="stack round-left">
@@ -74,7 +77,7 @@ export default async function RoundOrderPage({ params }: { params: Promise<{ id:
         {board.length > 0 && <NeededBoard groups={board} drivers={drivers} />}
         {kitchen && range.length > 0 && <RoundCatalogue supplierId={supplier.id} supplierName={supplier.name} siteName={kitchen.name} products={range} onOrder={onOrder} wanted={wanted} />}
         <nav className="row wrap" style={{ gap: 8 }}>
-          <Link className="btn ghost small" href={`/stock/needed?b=${brand}`}>Back to Stock needed</Link>
+          <Link className="btn ghost small" href="/stock/needed">Back to Stock needed</Link>
         </nav>
         </div>
         <NeededMirror groups={mirror} supplierName={supplier.name} sites={mirrorSites} />
