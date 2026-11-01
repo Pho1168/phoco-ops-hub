@@ -134,7 +134,15 @@ export interface SheetGroup { heading: string; sub?: string; rows: SheetRow[]; n
  * small grey line under it when there is one, in two columns so a normal day fits on one A4 page; it runs on to more
  * pages when it has to. Page numbers at the foot.
  */
-export function checklistPdf(o: { title: string; lines: string[]; groups: SheetGroup[]; foot: string }): Uint8Array {
+/** "#2C6E63" → [r, g, b] in 0–1, for a PDF fill. */
+export const pdfColour = (hex: string): [number, number, number] => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return [0.173, 0.431, 0.388];
+  const n = parseInt(m[1], 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+};
+
+export function checklistPdf(o: { title: string; lines: string[]; groups: SheetGroup[]; foot: string; /** The business's deep colour behind the title (PHO & CO's teal when unset). */ colour?: string }): Uint8Array {
   const M = 32, gap = 18, colW = (A4.w - 2 * M - gap) / 2, bottom = 44, top = A4.h - 40;
   const pages: PdfOp[][] = [];
   let ops: PdfOp[] = [];
@@ -145,8 +153,8 @@ export function checklistPdf(o: { title: string; lines: string[]; groups: SheetG
     ops = []; col = 0;
     y = top;
     if (first) {
-      // The brand's deep teal (#2C6E63) behind the title.
-      ops.push({ t: "rect", x: M, y: y - 34, w: A4.w - 2 * M, h: 42, fill: [0.173, 0.431, 0.388] });
+      // The business's deep colour (PHO & CO's teal #2C6E63) behind the title.
+      ops.push({ t: "rect", x: M, y: y - 34, w: A4.w - 2 * M, h: 42, fill: pdfColour(o.colour ?? "#2C6E63") });
       ops.push({ t: "text", x: M + 12, y: y - 13, size: 16, bold: true, text: o.title, grey: 1 });
       ops.push({ t: "text", x: M + 12, y: y - 27, size: 9, text: o.lines.join("   \u00b7   "), grey: 1 });
       y -= 52;

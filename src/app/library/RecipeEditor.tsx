@@ -265,7 +265,7 @@ export function RecipeEditor({ kind, mode, docId, versionId, rev, published, ini
                     <label key={sec} className="row" style={{ gap: 8 }}>
                       <input type="checkbox" className="check" checked={s.sections.includes(sec)}
                         onChange={(e) => { const on = e.target.checked; set((x) => ({ ...x, sections: on ? [...x.sections, sec] : x.sections.filter((y) => y !== sec) })); }} />
-                      <span>{sec === "BOH" ? "Back of house (restaurants)" : "Production (Wembley)"}</span>
+                      <span>{sec === "BOH" ? "Back of house (restaurants)" : "Production (the production kitchen)"}</span>
                     </label>
                   ))}
                 </div>

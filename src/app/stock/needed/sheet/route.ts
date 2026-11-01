@@ -43,7 +43,7 @@ export async function GET(req: Request) {
     lines: [longDay(today), `${items} item${items === 1 ? "" : "s"} from ${suppliers} supplier${suppliers === 1 ? "" : "s"}`, `Printed by ${ctx.person.name.split(" ")[0]} at ${londonHM(now)}`],
     foot: "Tick in the app too, so the list stays right for everyone.",
   };
-  const pdf = receipt ? receiptPdf({ ...head, groups: neededReceipt(sheet) }) : checklistPdf({ ...head, groups: sheet });
+  const pdf = receipt ? receiptPdf({ ...head, groups: neededReceipt(sheet) }) : checklistPdf({ ...head, groups: sheet, colour: brandOf(ctx.site).colours?.brand });
   return new NextResponse(Buffer.from(pdf), {
     headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${brandSlug(sites)}-stock-needed-${today}-${londonHM(now).replace(":", "")}.pdf"`, "cache-control": "no-store, no-cache, must-revalidate, max-age=0", pragma: "no-cache", expires: "0", "x-content-type-options": "nosniff" },
   });

@@ -11,7 +11,7 @@ import { boardRows, cleaningBoards } from "@/lib/cleaning-service";
 import { TimeOffCard } from "./TimeOffCard";
 import { canCancel, kindLabel, rangeLabel } from "@/lib/domain/timeoff";
 import { NoticeBanner } from "@/components/NoticeBanner";
-import { inAudience, isLive, unreadFor } from "@/lib/domain/notices";
+import { inAudience, isLive, noticesOfBusiness, unreadFor } from "@/lib/domain/notices";
 import { certStatus, expectedKinds, statusText, visibleTypes } from "@/lib/domain/certificates";
 import { CHIP } from "@/app/manage/certificates/cells";
 import { dueText, isForPerson, priorityCode, taskOrder } from "@/lib/domain/tasks";
@@ -35,6 +35,7 @@ import { phoneHandoverSites } from "@/lib/domain/handover";
 import { askedWeek, asksAvailability, latestAvailability } from "@/lib/domain/availability";
 import { AvailabilityBanner, AvailabilityCard } from "@/components/AvailabilityCard";
 import { rotaSitesOf } from "@/lib/availability-service";
+import { brandOf, sameBusinessIds } from "@/lib/domain/brand";
 
 export const dynamic = "force-dynamic";
 const when = (t: number) => new Date(t).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
@@ -52,8 +53,11 @@ export default async function MyShifts() {
   const notices = (await db.notices(ctx.person.id, 60))
     .filter((n) => n.kind !== "notice" && !(n.kind === "shift" && n.createdAt < now - 18 * 3_600_000) && !(n.kind === "evening" && n.createdAt < now - 36 * 3_600_000))
     .slice(0, 15);
-  const teamNotices = await db.teamNotices(0);
   const allSites = await db.sites();
+  const session = await db.session(ctx.sessionId);
+  const onTablet = !!session?.deviceId;
+  // On a tablet, only its business's notices and tasks; on their own phone, everything that's theirs.
+  const teamNotices = onTablet ? noticesOfBusiness(await db.teamNotices(0), allSites, ctx.site) : await db.teamNotices(0);
   const unread = unreadFor(teamNotices, ctx.person, today, allSites);
   const myTimeOff = (await db.timeOff({ personId: ctx.person.id, from: addDays(today, -60) })).filter((t) => t.status !== "cancelled" || t.endsOn >= today);
   const readLive = teamNotices.filter((n) => isLive(n, today) && inAudience(n, ctx.person, allSites) && !unread.includes(n));
@@ -61,9 +65,8 @@ export default async function MyShifts() {
   const expectedCerts = new Set(expectedKinds(ctx.person));
   const certRows = visibleTypes(false).filter((t) => expectedCerts.has(t.id) || myCerts.some((c) => c.kind === t.id))
     .map((t) => ({ t, s: certStatus(myCerts, t.id, expectedCerts.has(t.id), today) }));
-  const myTasks = (await db.tasks({ siteIds: ctx.person.access.map((a) => a.siteId) })).filter((t) => isForPerson(t, ctx.person)).sort(taskOrder(today));
-  const session = await db.session(ctx.sessionId);
-  const onTablet = !!session?.deviceId;
+  const taskSites = ctx.person.access.map((a) => a.siteId);
+  const myTasks = (await db.tasks({ siteIds: onTablet ? sameBusinessIds(taskSites, allSites, ctx.site) : taskSites })).filter((t) => isForPerson(t, ctx.person)).sort(taskOrder(today));
   const publicKey = onTablet ? "" : (await vapidKeys()).publicKey;
 
   const replyable = shifts.filter((s) => replyOpen(s, now));
@@ -158,7 +161,7 @@ export default async function MyShifts() {
           </section>
         )}
 
-        {!onTablet && <RemindersToggle publicKey={publicKey} />}
+        {!onTablet && <RemindersToggle publicKey={publicKey} appName={brandOf(ctx.site).name} />}
 
         <CoverOffers rows={canCoverRows} />
 

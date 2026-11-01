@@ -13,6 +13,7 @@ import { dayMonthYearAt } from "../../format";
 import { StateChips } from "../parts";
 import { MarkDone } from "./MarkDone";
 import { SkillCard } from "../SkillCard";
+import { brandOf } from "@/lib/domain/brand";
 
 export const dynamic = "force-dynamic";
 
@@ -83,7 +84,7 @@ export default async function SkillPage(props: { params: Promise<{ id: string }>
           </section>
         )}
 
-        {guide && <SkillCard skill={skill} guide={guide} erased={erased} />}
+        {guide && <SkillCard skill={skill} guide={guide} erased={erased} team={brandOf(ctx.site).name} />}
         {skill.about && !guide && <section className="card" aria-label="What it covers" style={{ whiteSpace: "pre-wrap" }}>{skill.about}</section>}
 
         {shown.length > 0 && (

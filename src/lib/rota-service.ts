@@ -1,6 +1,8 @@
 import { queueAvailabilityReminders } from "@/lib/availability-service";
 import { queueMyDayAlerts } from "@/lib/my-day-service";
 import { store } from "@/lib/data";
+import { sha256 } from "@/lib/device";
+import { brandOf, brandsOf } from "@/lib/domain/brand";
 import { buildEveningNotices, buildImportNotices, EVENING_REMINDER_AT, parseExport, parseStaffTab, parseWeekTable, planSync } from "@/lib/domain/rota";
 import { addDays, afterQuietHours, londonDate, londonHM, londonToUtc, QUIET_START } from "@/lib/domain/time";
 import type { RotaResult, Store } from "@/lib/data/store";
@@ -32,7 +34,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   if (!site) throw new Error("Unknown site");
   const staff = parseStaffTab(upload.staff);
   const weeks = parseWeekTable(upload.weeks);
-  const { shifts, issues } = parseExport(siteId, upload.export, staff, { kitchen: site.kind === "production" });
+  const { shifts, issues, held } = parseExport(siteId, upload.export, staff, { kitchen: site.kind === "production" });
 
   // Staff IDs in the sheet must exist in the Hub (Owner → Staff accounts) to get shifts.
   const people = await db.people();
@@ -47,7 +49,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
 
   const weekSet = new Set([...Array.from(weeks.keys()), ...known.map((s) => s.week)]);
   const before = await db.weekStatuses(siteId);
-  const plan = planSync(await db.siteShifts(siteId), known, weekSet);
+  const plan = planSync(await db.siteShifts(siteId), known, weekSet, held);
   await db.applyShiftSync(siteId, plan, byCode);
   await db.setWeekStatuses(siteId, weeks);
 
@@ -56,7 +58,9 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   let queued = 0;
   for (const n of notices) {
     const personId = byCode.get(n.staffCode);
-    if (personId && (await db.queueNotice({ personId, kind: n.kind, title: n.title, body: n.body, sendAfter }))) queued++;
+    // The same message isn't sent twice (an import retried, a week published, drafted and published again unchanged).
+    const dedupeKey = personId ? `rota|${siteId}|${n.kind}|${personId}|${sha256(`${n.title}\n${n.body}`).slice(0, 24)}` : undefined;
+    if (personId && (await db.queueNotice({ personId, kind: n.kind, title: n.title, body: n.body, sendAfter, dedupeKey }))) queued++;
   }
 
   const result: RotaResult = {
@@ -182,11 +186,13 @@ export async function queueWeeklyReport(now = Date.now(), db: Store = store()): 
   const reports = new Map<SiteId, SiteWeekReport>();
   let queued = 0;
   for (const p of (await db.people()).filter((x) => x.status === "active")) {
-    const mine = sites.filter((s) => canManage(p, s.id));
-    if (!mine.length) continue;
-    for (const s of mine) if (!reports.has(s.id)) reports.set(s.id, (await loadSiteReport(s, week, now, db)).week);
-    const d = weeklyDigest(week, mine.map((s) => ({ name: s.name, r: reports.get(s.id)! })));
-    if (await db.queueNotice({ personId: p.id, kind: "report", title: d.title, body: d.body, dedupeKey: `report|${week}|${p.id}`, sendAfter: afterQuietHours(now), url: `/manage/report?week=${week}` })) queued++;
+    // One message per business: the two businesses never share a report.
+    for (const brand of brandsOf(sites.filter((s) => canManage(p, s.id)))) {
+      const mine = sites.filter((s) => canManage(p, s.id) && brandOf(s).id === brand.id);
+      for (const s of mine) if (!reports.has(s.id)) reports.set(s.id, (await loadSiteReport(s, week, now, db)).week);
+      const d = weeklyDigest(week, mine.map((s) => ({ name: s.name, r: reports.get(s.id)! })));
+      if (await db.queueNotice({ personId: p.id, kind: "report", title: d.title, body: d.body, dedupeKey: `report|${week}|${brand.id}|${p.id}`, sendAfter: afterQuietHours(now), url: `/manage/report?week=${week}` })) queued++;
+    }
   }
   return queued;
 }
@@ -294,19 +300,21 @@ export async function queueReadyAlerts(now = Date.now(), db: Store = store()): P
 export async function queueDailyDigest(now = Date.now(), db: Store = store()): Promise<number> {
   const yesterday = addDays(londonDate(now), -1);
   const sites = (await db.sites()).filter((s) => s.status === "open");
-  const key = (id: string) => `daily|${yesterday}|${id}`;
+  // One message per business (the two never share a digest), so the key carries the business too.
+  const key = (id: string, brand: string) => `daily|${yesterday}|${brand}|${id}`;
   const managers = (await db.people()).filter((p) => p.status === "active" && sites.some((s) => canManage(p, s.id)));
-  const sent = await db.noticeKeys(managers.map((p) => key(p.id)));
+  const pairs = managers.flatMap((p) => brandsOf(sites.filter((s) => canManage(p, s.id))).map((b) => ({ p, brand: b.id })));
+  const sent = await db.noticeKeys(pairs.map((x) => key(x.p.id, x.brand)));
   const facts = new Map<SiteId, DayFacts>();
   let queued = 0;
-  for (const p of managers.filter((x) => !sent.has(key(x.id)))) {
-    const mine = sites.filter((s) => canManage(p, s.id));
+  for (const { p, brand } of pairs.filter((x) => !sent.has(key(x.p.id, x.brand)))) {
+    const mine = sites.filter((s) => canManage(p, s.id) && brandOf(s).id === brand);
     for (const s of mine) if (!facts.has(s.id)) facts.set(s.id, await dayFacts(s, yesterday, now, db));
     // A site that wasn't in use yesterday (not on the rota, no checklists, nothing reported) is left out.
     const used = mine.map((s) => facts.get(s.id)!).filter((f) => f.onRota || f.checks.expected || f.faults.reported || f.notesLeft || f.alertsRaised);
     if (!used.length) continue;
     const d = dailyDigest(yesterday, used);
-    if (await db.queueNotice({ personId: p.id, kind: "daily", title: d.title, body: d.body, dedupeKey: key(p.id), sendAfter: now, url: "/manage/records" })) queued++;
+    if (await db.queueNotice({ personId: p.id, kind: "daily", title: d.title, body: d.body, dedupeKey: key(p.id, brand), sendAfter: now, url: "/manage/records" })) queued++;
   }
   return queued;
 }

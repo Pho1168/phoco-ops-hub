@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { signOut } from "@/app/actions";
 import type { Ctx } from "@/lib/session";
-import { managedSites } from "@/lib/domain/access";
 import { firstName } from "@/lib/domain/names";
 import { londonDate, longDay } from "@/lib/domain/time";
 import { Clock } from "./Clock";
@@ -117,7 +116,7 @@ export function BottomNav({ ctx, current }: { ctx: Ctx; current: "shift" | "toda
       {item("/stock", "stock", "Stock", "box")}
       {ctx.isLead
         ? item("/owner", "owner", ctx.isOwner ? "Owner" : "Overview", "owner")
-        : managedSites(ctx.person).length > 0 && item("/manage", "manage", "Manage", "manage")}
+        : ctx.isManager && item("/manage", "manage", "Manage", "manage")}
     </nav>
   );
 }

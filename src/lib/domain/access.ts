@@ -50,7 +50,8 @@ export const runsSite = (p: Pick<Person, "access">, siteId: SiteId) => leadSites
  * manager whose sites are all closed): My shifts at an open site.
  */
 export function remoteSignIn(p: Pick<Person, "access">, sites: Site[]): { site: Site; scope: "full" | "shifts" } | undefined {
-  const mine = p.access.map((a) => sites.find((s) => s.id === a.siteId)).filter((s): s is Site => !!s);
+  // In the sites' own order (`sites.position`: Eastcote first), not the order of the person's access rows.
+  const mine = sites.filter((s) => p.access.some((a) => a.siteId === s.id));
   const open = mine.filter((s) => s.status === "open");
   if (isOwner(p)) {
     const site = open[0] ?? mine[0];

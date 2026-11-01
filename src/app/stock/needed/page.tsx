@@ -5,7 +5,8 @@ import { boardGroups } from "./board";
 import Link from "next/link";
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import { neededView, siteNeededView } from "@/lib/stock-service";
-import { brandOf } from "@/lib/domain/brand";
+import { brandOf, inBrand } from "@/lib/domain/brand";
+import { isOwner } from "@/lib/domain/access";
 import { catalogFor } from "@/lib/domain/stock";
 import type { Ctx } from "@/lib/session";
 import { StockBar, StockNav } from "../Bar";
@@ -47,7 +48,8 @@ export default async function NeededPage() {
   const siteName = new Map(sites.map((s) => [s.id, s.name]));
   // What clearing would take off: every row and every item with a driver, and new items (the owner's to decide).
   const clearable = groups.filter((g) => !ordersByRound(g.supplier)).reduce((n, g) => n + g.rows.length + g.drivers.reduce((m, d) => m + d.open, 0), 0) + (runsPurchasing(ctx.person) ? newItems.length : 0);
-  const drivers = people.filter((p) => canPurchase({ ...p, purchaser: purchasers.includes(p.id) }))
+  // Drivers of this business only (owners drive for both).
+  const drivers = people.filter((p) => canPurchase({ ...p, purchaser: purchasers.includes(p.id) }) && (isOwner(p) || inBrand(p, brand, sites)))
     .map((p) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name));
   // A round supplier's order (Surelygrow, Monday and Friday) has its own page: kept off this list.
   const rounds = catalog.suppliers.filter((s) => ordersByRound(s)).map((s) => {

@@ -254,7 +254,9 @@ describe("operations manager: messages and activity", () => {
       { actorId: "mgr", siteId: "EAS", action: "cert.add", detail: "Allergen awareness recorded for Cook (runs out 1 Oct 2029)" },
     ];
     expect(activityFor(ops, log, ["EAS", "WEM"]).map((e) => e.detail)).toEqual(["Approved Cook", "Cook (003): details updated", "Allergen awareness recorded for Cook (runs out 1 Oct 2029)"]);
-    expect(activityFor(owner, log, [...ALL])).toHaveLength(log.length);
+    // An owner sees every site, but right to work lines only if they may see right to work.
+    expect(activityFor(owner, log, [...ALL])).toHaveLength(log.length - 2);
+    expect(activityFor({ ...owner, seesRightToWork: true }, log, [...ALL])).toHaveLength(log.length);
     // Someone allowed to see right to work (only if the owner decides so) would see those lines too.
     expect(activityFor({ ...ops, seesRightToWork: true }, log, ["EAS", "WEM"])).toHaveLength(5);
   });

@@ -7,6 +7,7 @@ import { requireManager } from "@/lib/session";
 import { pickSite } from "../load";
 import { loadRecords } from "./data";
 import { PrintButton } from "./PrintButton";
+import { brandOf } from "@/lib/domain/brand";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,7 @@ export default async function Records(
       <main className="wide records">
         {/* The bar doesn't print: the inspector's copy gets its own heading. */}
         <div className="print-only">
-          <div className="eyebrow">PHO &amp; CO · food safety records</div>
+          <div className="eyebrow">{brandOf(site).name} · food safety records</div>
           <h1 className="h-display">{site.name}</h1>
           <div className="strong" style={{ fontSize: 15 }}>{range}</div>
         </div>

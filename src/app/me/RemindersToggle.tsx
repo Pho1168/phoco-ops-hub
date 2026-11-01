@@ -11,7 +11,7 @@ function keyToBytes(base64: string) {
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 
-export function RemindersToggle({ publicKey }: { publicKey: string }) {
+export function RemindersToggle({ publicKey, appName = "Ops Hub" }: { publicKey: string; /** What the installed app is called on this phone: the business's name. */ appName?: string }) {
   const [state, setState] = useState<State>("checking");
   const [err, setErr] = useState("");
   const [pending, start] = useTransition();
@@ -57,7 +57,7 @@ export function RemindersToggle({ publicKey }: { publicKey: string }) {
         {state === "on" && <><div className="strong">Reminders are on</div><div style={{ fontSize: 13 }}>2 hours before each shift, the evening before (18:00), and when your rota changes.</div></>}
         {state === "off" && <><div className="strong">Get reminders on this phone</div><div style={{ fontSize: 13 }}>A message 2 hours before each shift and the evening before, and when your rota changes. Apart from shift reminders, nothing between 22:00 and 08:00.</div></>}
         {state === "blocked" && <><div className="strong">Notifications are blocked</div><div style={{ fontSize: 13 }}>Allow notifications for this site in your browser settings, then reload this page.</div></>}
-        {state === "ios-install" && <><div className="strong">On iPhone: add to Home Screen first</div><div style={{ fontSize: 13 }}>Tap Share, then &quot;Add to Home Screen&quot;. Open PHO &amp; CO from your home screen and turn reminders on there.</div></>}
+        {state === "ios-install" && <><div className="strong">On iPhone: add to Home Screen first</div><div style={{ fontSize: 13 }}>Tap Share, then &quot;Add to Home Screen&quot;. Open {appName} from your home screen and turn reminders on there.</div></>}
         {state === "unsupported" && <><div className="strong">This browser can&apos;t show reminders</div><div style={{ fontSize: 13 }}>Use Chrome on Android, or Safari on iPhone after adding to Home Screen. Your messages still appear below.</div></>}
         {err && <div className="err" role="alert">{err}</div>}
       </div>

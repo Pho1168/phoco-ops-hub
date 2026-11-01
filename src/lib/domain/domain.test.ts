@@ -193,6 +193,19 @@ describe("rota import", () => {
     ]);
   });
 
+  it("a flagged row or a bad time holds what's stored instead of cancelling it", () => {
+    const { shifts, held } = parseExport("EAS", [header, row("Alex", "FOH", { 1: ["11:00", "21:45"] }, "1"), row("Alex", "BOH", { 0: ["25:00", "22:00"], 2: ["9:00", "17:00"] })], staff);
+    expect(held).toEqual(["EAS|2026-10-05|001|FOH|", "EAS|2026-10-05|001|BOH|0"]);
+    expect(shifts).toHaveLength(1);
+    const stored: StoredShift[] = [
+      { sourceKey: "EAS|2026-10-05|001|FOH|1", staffCode: "001", section: "FOH", week: "2026-10-05", date: "2026-10-06", start: "11:00", end: "21:45", endsNextDay: false, cancelled: false },
+      { sourceKey: "EAS|2026-10-05|001|BOH|0", staffCode: "001", section: "BOH", week: "2026-10-05", date: "2026-10-05", start: "11:00", end: "22:00", endsNextDay: false, cancelled: false },
+      { sourceKey: "EAS|2026-10-05|001|BOH|4", staffCode: "001", section: "BOH", week: "2026-10-05", date: "2026-10-09", start: "11:00", end: "22:00", endsNextDay: false, cancelled: false },
+    ];
+    const plan = planSync(stored, shifts, new Set(["2026-10-05"]), held);
+    expect(plan.cancelled.map((s) => s.sourceKey)).toEqual(["EAS|2026-10-05|001|BOH|4"]); // really gone from the sheet
+    expect(planSync(stored, shifts, new Set(["2026-10-05"])).cancelled).toHaveLength(3); // without the hold, all three
+  });
   it("imports a kitchen's BOH rows as Production, matched on the sheet's own section", () => {
     const rows = [header, row("Alex", "BOH", { 3: ["9:00", "21:30"] }), row("Alex", "FOH", { 1: ["11:00", "21:45"] })];
     const kitchen = parseExport("WEM", rows, staff, { kitchen: true }).shifts;
