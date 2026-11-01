@@ -8,6 +8,7 @@ import { current } from "@/lib/session";
 import { BottomNav, PhoneTopBar, TopBar } from "@/components/Chrome";
 import { offOn } from "@/lib/domain/timeoff";
 import { canManage } from "@/lib/domain/access";
+import { sameBusiness } from "@/lib/domain/brand";
 import { coverState, liveOffers } from "@/lib/domain/cover";
 import { Avatar } from "@/components/Avatar";
 import { toneOf } from "@/lib/domain/login";
@@ -30,7 +31,7 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
   if (!ctx) redirect("/login");
   if (ctx.person.pinMustChange) redirect("/pin");
   const db = store();
-  const sites = (await db.sites()).filter((s) => ctx.person.access.some((a) => a.siteId === s.id) && s.status === "open");
+  const sites = sameBusiness((await db.sites()).filter((s) => ctx.person.access.some((a) => a.siteId === s.id) && s.status === "open"), ctx.site);
   const site = sites.find((s) => s.id === searchParams.site) ?? sites.find((s) => s.id === ctx.site.id) ?? sites[0];
   if (!site) redirect(ctx.scope === "shifts" ? "/me" : "/today");
   const isManager = ctx.isOwner || canManage(ctx.person, site.id);

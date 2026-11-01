@@ -9,13 +9,11 @@ type P = Product & { price?: string };
 type Tab = "products" | "suppliers" | "people";
 
 /** Suppliers, products, prices and purchasers, all in one place for the owner. Every change is logged. */
-export function CatalogueEditor({ suppliers, products, productionSites, sites, people, today, brand, tabs }: {
+export function CatalogueEditor({ suppliers, products, productionSites, sites, people, today, brand }: {
   suppliers: Supplier[]; products: P[]; productionSites: { id: string; name: string }[]; sites: { id: string; name: string; reminder: boolean }[];
   people: { id: string; name: string; owner: boolean; on: boolean }[]; today: string;
   /** The business whose catalogue this is: new suppliers and products go into it. */
   brand: "phoco" | "clv";
-  /** PHO & CO / Cafe La Viet switch, above everything. */
-  tabs?: React.ReactNode;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("products");
@@ -36,7 +34,6 @@ export function CatalogueEditor({ suppliers, products, productionSites, sites, p
 
   return (
     <main className="wide stack">
-      {tabs}
       <div className="seg" role="group" aria-label="Show">
         <button type="button" aria-pressed={tab === "products"} onClick={() => setTab("products")}>Products ({products.length})</button>
         <button type="button" aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>Suppliers ({suppliers.length})</button>

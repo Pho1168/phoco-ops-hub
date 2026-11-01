@@ -6,7 +6,7 @@ import { catalogFor, buyFrom, canUntick, cleanLines, qtyPlan, QTY_MAX, REMOVE_NO
 import { belowTarget, cleanCount, countProducts, productionPlan, plansProduction, type PlanRow, type StockCount, type StockTarget } from "@/lib/domain/stock-count";
 import { afterQuietHours, londonDate, londonHM, shortDay } from "@/lib/domain/time";
 import type { Person, Site } from "@/lib/domain/types";
-import { brandOf, brandsOf, isBrandId, type BrandId } from "@/lib/domain/brand";
+import { brandOf, brandsOf, type BrandId } from "@/lib/domain/brand";
 
 /**
  * Stock & Purchasing, put together: the steps that read several records and then write (sending a report, routing
@@ -227,20 +227,6 @@ export async function neededView(db: Store, person: Pick<Person, "status" | "acc
   const siteIds = brand ? all.filter((id) => brandOf(sites.find((s) => s.id === id)).id === brand) : all;
   const groups = neededGroups(items, data, catalog.products, catalog.suppliers, siteIds, now);
   return { catalog, data, items, sites, siteIds, groups, brands };
-}
-
-/** The businesses whose stock this person orders (owners: both). */
-export async function orderBrands(db: Store, person: Pick<Person, "status" | "access">): Promise<BrandId[]> {
-  const sites = await db.sites();
-  const ids = orderingSites(person, sites.filter((s) => s.status === "open").map((s) => s.id));
-  return brandsOf(sites.filter((s) => ids.includes(s.id))).map((b) => b.id);
-}
-
-/** Which business's Stock needed to show: the one asked for (`?b=`) if they order for it, else their site's, else the first. */
-export function pickBrand(brands: BrandId[], asked: string | undefined, site?: Pick<Site, "brand">): BrandId {
-  if (isBrandId(asked) && brands.includes(asked)) return asked;
-  const own = brandOf(site).id;
-  return brands.includes(own) ? own : brands[0] ?? "phoco";
 }
 
 /** Stock needed for one restaurant (what the tablet shows its staff): its own requests, by supplier. */

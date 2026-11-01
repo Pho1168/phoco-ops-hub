@@ -6,6 +6,8 @@ import { centreFor } from "@/lib/task-centre";
 import { coverState } from "@/lib/domain/cover";
 import { londonDate } from "@/lib/domain/time";
 import { managedSites } from "@/lib/domain/access";
+import { sameBusinessIds } from "@/lib/domain/brand";
+import type { Site } from "@/lib/domain/types";
 import { canDecide } from "@/lib/domain/timeoff";
 import { libraryToDo } from "@/lib/domain/library";
 import { trainingToDo } from "@/lib/domain/training";
@@ -14,10 +16,11 @@ import type { Person } from "@/lib/domain/types";
 import type { ManageCounts } from "./ManageTiles";
 
 /** Numbers shown on the manager tiles. */
-export async function manageCounts(actor: Pick<Person, "id" | "access" | "status" | "seesRightToWork">): Promise<ManageCounts> {
+export async function manageCounts(actor: Pick<Person, "id" | "access" | "status" | "seesRightToWork">, at: Pick<Site, "brand">): Promise<ManageCounts> {
   const db = store();
   const today = londonDate(Date.now());
-  const managed = managedSites(actor);
+  // Only the business of the site they're working at.
+  const managed = sameBusinessIds(managedSites(actor), await db.sites(), at);
   const [notices, pending, people, certs, sites, sops, preps, dishes, training] = await Promise.all([
     db.teamNotices(0), db.timeOff({ siteIds: managed, statuses: ["pending"] }), db.people(), db.certificates(), db.sites(),
     db.libraryDocs("sop", { light: true }), db.libraryDocs("prep", { light: true }), db.libraryDocs("dish", { light: true }), trainingData(db),

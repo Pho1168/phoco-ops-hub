@@ -2,7 +2,8 @@ import Link from "next/link";
 import { store } from "@/lib/data";
 import { deliveryDaysText, editsSiteNeeded, lineEnd, neededCount, nextDelivery, ordersByRound, sentTodayLine } from "@/lib/domain/stock";
 import { londonDate, londonHM, shortDay } from "@/lib/domain/time";
-import { kitchenPlan, neededView, orderBrands, pickBrand, siteNeededView } from "@/lib/stock-service";
+import { kitchenPlan, neededView, siteNeededView } from "@/lib/stock-service";
+import { brandOf } from "@/lib/domain/brand";
 import { Icon } from "@/components/Icon";
 import { StockBar, StockNav } from "./Bar";
 import { stockCtx } from "./load";
@@ -21,7 +22,7 @@ export default async function StockHome() {
   const now = Date.now();
   const today = londonDate(now);
   // Only the business of the site they're working at: Cafe La Viet's stock at Colindale, PHO & CO's at Eastcote.
-  const brand = pickBrand(await orderBrands(db, ctx.person), undefined, ctx.site);
+  const brand = brandOf(ctx.site).id;
   const view = await neededView(db, ctx.person, now, brand);
   const { data } = view;
   const [draft, sent] = await Promise.all([
@@ -66,7 +67,7 @@ export default async function StockHome() {
     <>
       <StockBar ctx={ctx} onPhone={onPhone} title="Stock" />
       <main className="stack">
-        {!onPhone && (can.ordering || siteList) && <PrintStock label={can.ordering ? "Print everything on Stock needed." : `Print what ${ctx.site.name} has on Stock needed.`} brand={can.ordering && view.brands.length > 1 ? brand : undefined} />}
+        {!onPhone && (can.ordering || siteList) && <PrintStock label={can.ordering ? "Print everything on Stock needed." : `Print what ${ctx.site.name} has on Stock needed.`} />}
         <div className="tiles">
           {can.report && door("/stock/report", "box", "Report stock", draft && (drafted || draft.noIssues)
             ? `Not sent yet: ${plural(drafted, "item")}`

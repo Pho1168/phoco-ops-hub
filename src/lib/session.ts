@@ -4,6 +4,7 @@ import { DEMO_MODE, store } from "@/lib/data";
 import { sessionDeviceOk } from "@/lib/domain/devices";
 import { canManage, isOps, isOwner, leadSites, managedSites, runsSite } from "@/lib/domain/access";
 import type { Person, Site, SiteAccess, SiteId } from "@/lib/domain/types";
+import { sameBusinessIds } from "@/lib/domain/brand";
 
 export const SESSION_COOKIE = "phoco_sid";
 export const SESSION_TTL_MS = 14 * 60 * 60 * 1000; // one long shift
@@ -44,19 +45,27 @@ export async function requireCtx(): Promise<Ctx> {
   return c;
 }
 
-/** Owners, operations managers and managers only (on the full app). `managed` are the sites they can manage. */
+/**
+ * Owners, operations managers and managers only (on the full app). `managed` are the sites they can manage in the
+ * business of the site they're working at (screens never criss-cross businesses; switching site switches business).
+ */
 export async function requireManager(): Promise<Ctx & { managed: SiteId[] }> {
   const ctx = await requireCtx();
-  const managed = managedSites(ctx.person);
+  const managed = sameBusinessIds(managedSites(ctx.person), await store().sites(), ctx.site);
   if (!managed.length) redirect("/shift");
   return { ...ctx, managed };
 }
 
-/** Owners and operations managers only (on the full app). `leads` are the sites they run: every site for an owner. */
-export async function requireLead(): Promise<Ctx & { leads: SiteId[] }> {
+/**
+ * Owners and operations managers only (on the full app). `leads` are the sites they run in the business of the site
+ * they're working at; `allLeads` every site they run (accounts, whose access can span both businesses).
+ */
+export async function requireLead(): Promise<Ctx & { leads: SiteId[]; allLeads: SiteId[] }> {
   const ctx = await requireCtx();
   if (!ctx.isLead) redirect("/shift");
-  return { ...ctx, leads: leadSites(ctx.person, (await store().sites()).map((s) => s.id)) };
+  const sites = await store().sites();
+  const allLeads = leadSites(ctx.person, sites.map((s) => s.id));
+  return { ...ctx, leads: sameBusinessIds(allLeads, sites, ctx.site), allLeads };
 }
 
 export function londonNow(): { date: string; hm: string } {

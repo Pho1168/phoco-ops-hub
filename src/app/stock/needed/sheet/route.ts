@@ -4,8 +4,8 @@ import { editsSiteNeeded, neededCount, neededReceipt, neededSheet, ordersByRound
 import { londonDate, londonHM, longDay } from "@/lib/domain/time";
 import { checklistPdf, receiptPdf } from "@/lib/pdf";
 import { current } from "@/lib/session";
-import { brandPrefix, brandSlug } from "@/lib/domain/brand";
-import { neededView, orderBrands, pickBrand, siteNeededView } from "@/lib/stock-service";
+import { brandOf, brandPrefix, brandSlug } from "@/lib/domain/brand";
+import { neededView, siteNeededView } from "@/lib/stock-service";
 
 export const dynamic = "force-dynamic";
 
@@ -25,8 +25,8 @@ export async function GET(req: Request) {
   const db = store();
   const now = Date.now();
   // Owners and ops: everything they order for. The tablet: this restaurant's list (new items go to the owner, not shown).
-  // One business per sheet (`?b=`), as on the page.
-  const view = orders ? await neededView(db, ctx.person, now, pickBrand(await orderBrands(db, ctx.person), url.searchParams.get("b") ?? undefined, ctx.site)) : undefined;
+  // The business of the site they're working at, as on the page.
+  const view = orders ? await neededView(db, ctx.person, now, brandOf(ctx.site).id) : undefined;
   const mine = view ? undefined : await siteNeededView(db, ctx.site.id, now);
   // A round supplier's order (Surelygrow) is its own list, kept off Stock needed and so off this sheet.
   const groups = view ? view.groups.filter((g) => !ordersByRound(g.supplier)) : mine!.groups;
