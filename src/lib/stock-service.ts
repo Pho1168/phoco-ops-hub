@@ -169,12 +169,13 @@ export async function queueRoundReminders(now = Date.now(), db: Store = store())
     const next = nextDelivery(s.deliveryDays ?? [], now);
     const g = groups.find((x) => x.supplier?.id === s.id);
     const waiting = g ? neededCount([g]) : 0;
-    const stages = roundRemindersDue(next, today, hm, waiting);
+    const stages = roundRemindersDue(next, today, hm, waiting, s.deliveryDays ?? []);
     if (!next || !stages.length) continue;
     const to = delivers.find((d) => d.supplierId === s.id)?.deliversTo;
+    const toSite = sites.find((x) => x.id === to);
     const who = people.filter((p) => p.status === "active" && (isOwner(p) || (runsOrdering(p) && (!to || leadSites(p, open).includes(to)))));
     for (const stage of stages) {
-      const msg = roundReminderMessage(s.name, next, waiting, stage, shortDay);
+      const msg = roundReminderMessage(s.name, next, waiting, stage, shortDay, toSite ? { siteName: toSite.name, kitchen: toSite.kind === "production" } : undefined);
       for (const p of who) {
         if (await db.queueNotice({ personId: p.id, kind: "stock", title: msg.title, body: msg.body,
           dedupeKey: `round|${s.id}|${next.date}|${stage}|${p.id}`, sendAfter: now, url: `/stock/order/${s.id}` })) queued++;

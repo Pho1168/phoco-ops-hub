@@ -1,4 +1,5 @@
 import type { Person, Site, SiteId } from "./types";
+import { brandsOf } from "./brand";
 
 export const MAX_PIN_ATTEMPTS = 5;
 export const PIN_LOCK_MINUTES = 15;
@@ -60,9 +61,21 @@ export function remoteSignIn(p: Pick<Person, "access">, sites: Site[]): { site: 
   return open[0] ? { site: open[0], scope: "shifts" } : undefined;
 }
 
-/** "Work at": a lead moves their session to a site they run and have access to, if it's open (owners: even if closed). */
+/**
+ * "Work at": a lead moves their session to a site they run and have access to, if it's open (owners: even if closed).
+ * Anyone else may move their own phone's session between the open sites they work at (`worksAcrossBusinesses`: the
+ * switch is only offered when those sites are in both businesses, so one sign-in shows either rota).
+ */
 export function canSwitchTo(p: Pick<Person, "access">, site: Site): boolean {
-  return runsSite(p, site.id) && p.access.some((a) => a.siteId === site.id) && (site.status === "open" || isOwner(p));
+  if (!p.access.some((a) => a.siteId === site.id)) return false;
+  if (isLead(p)) return runsSite(p, site.id) && (site.status === "open" || isOwner(p));
+  return site.status === "open";
+}
+
+/** Someone who isn't a lead but works at open sites of more than one business (a cook at Colindale and Eastcote). */
+export function worksAcrossBusinesses(p: Pick<Person, "access">, sites: Pick<Site, "id" | "status" | "brand">[]): boolean {
+  if (isLead(p)) return false;
+  return brandsOf(sites.filter((s) => s.status === "open" && p.access.some((a) => a.siteId === s.id))).length > 1;
 }
 
 /**

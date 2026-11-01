@@ -193,6 +193,13 @@ describe("rota import", () => {
     ]);
   });
 
+  it("imports a kitchen's BOH rows as Production, matched on the sheet's own section", () => {
+    const rows = [header, row("Alex", "BOH", { 3: ["9:00", "21:30"] }), row("Alex", "FOH", { 1: ["11:00", "21:45"] })];
+    const kitchen = parseExport("WEM", rows, staff, { kitchen: true }).shifts;
+    expect(kitchen.map((s) => `${s.section} ${s.sourceKey}`)).toEqual(["PROD WEM|2026-10-05|001|PROD|3", "FOH WEM|2026-10-05|001|FOH|1"]);
+    expect(parseExport("WEM", rows, staff).shifts.map((s) => s.section)).toEqual(["BOH", "FOH"]);
+  });
+
   const sh = (date: string, start: string, end: string, week = "2026-10-12"): StoredShift =>
     ({ sourceKey: `EAS|${week}|001|FOH|${date}`, staffCode: "001", section: "FOH", week, date, start, end, endsNextDay: false, cancelled: false });
 

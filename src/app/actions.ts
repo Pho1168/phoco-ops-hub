@@ -19,7 +19,7 @@ import { pushToPerson } from "@/lib/push";
 import { rotaScript } from "@/lib/rota-script";
 import { headers } from "next/headers";
 import { randomInt } from "node:crypto";
-import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn } from "@/lib/domain/access";
+import { canFreeze, canManage, canSignIn, canSwitchTo, isOwner, isPinLocked, managedSites, planSiteClosure, registerPinFailure, remoteSignIn, worksAcrossBusinesses } from "@/lib/domain/access";
 import { rotaSitesOf } from "@/lib/availability-service";
 import { AVAIL_LABEL, asksAvailability, canAnswer as canAnswerAvailability, checkChange as checkAvailChange, cleanAvailability, isLate as availLate, latestAvailability } from "@/lib/domain/availability";
 import { canCancel, canDecide, clashes, kindLabel, rangeLabel, timeOffDeciders, validateRequest } from "@/lib/domain/timeoff";
@@ -686,17 +686,26 @@ export async function clearAlerts(siteId?: string): Promise<ActionResult & { cle
  * Owners and operations managers move their session to another site they have access to, then go on to `next` (the
  * screen they switched from) or Today.
  */
+/**
+ * "Work at": the session moves to another site, keeping its scope. Owners and operations managers from the full app;
+ * anyone who works for both businesses from their own phone (`worksAcrossBusinesses`), never from a tablet.
+ */
 export async function switchSite(siteId: string, next?: string): Promise<void> {
-  const ctx = await requireLead();
+  const ctx = await current();
+  if (!ctx) redirect("/login");
+  if (ctx.person.pinMustChange) redirect("/pin");
   const db = store();
   const id = SiteIdZ.parse(siteId);
   const site = await db.site(id);
-  if (!site || !canSwitchTo(ctx.person, site)) redirect("/owner");
-  await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
   const prev = await db.session(ctx.sessionId);
-  const s = await db.createSession(ctx.person.id, id, SESSION_TTL_MS, prev?.deviceId);
-  (await cookies()).set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: SESSION_TTL_MS / 1000, path: "/" });
-  redirect(sameSitePath(next) ?? "/today");
+  const phone = ctx.scope === "shifts" && !prev?.deviceId;
+  if (!ctx.isLead && !(phone && worksAcrossBusinesses(ctx.person, await db.sites()))) redirect("/me");
+  if (!site || !canSwitchTo(ctx.person, site)) redirect(ctx.isLead ? "/owner" : "/me");
+  await db.revokeSessions({ personId: ctx.person.id, siteId: ctx.site.id }, "switched site");
+  const ttl = ctx.scope === "shifts" ? SHIFTS_TTL_MS : SESSION_TTL_MS;
+  const s = await db.createSession(ctx.person.id, id, ttl, prev?.deviceId, ctx.scope);
+  (await cookies()).set(SESSION_COOKIE, s.id, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: ttl / 1000, path: "/" });
+  redirect(sameSitePath(next) ?? (ctx.scope === "shifts" ? "/me" : "/today"));
 }
 /** A path on this app to go back to after switching (never another host, never the sign-in or PIN screens). */
 function sameSitePath(next: string | undefined): string | undefined {

@@ -213,18 +213,30 @@ export function nextDelivery(days: number[], now: number): { date: string; order
  * forgotten), and "last" from 20:00 while something is still waiting to be ordered. Each is sent once (its key).
  */
 export type RoundStage = "first" | "last";
-export function roundRemindersDue(next: { orderBy: string } | undefined, today: string, hm: string, waiting: number): RoundStage[] {
+/**
+ * A supplier delivering on this many days a week or fewer is ordered to a weekly rhythm, so its 15:00 reminder goes out
+ * even with nothing on the order yet (a nudge to check the stock). One delivering most days would nag every day, so
+ * its reminders only go out while something is waiting.
+ */
+export const WEEKLY_RHYTHM_DAYS = 2;
+
+export function roundRemindersDue(next: { orderBy: string } | undefined, today: string, hm: string, waiting: number, deliveryDays: number[] = []): RoundStage[] {
   if (!next || next.orderBy !== today) return [];
+  const nudge = new Set(deliveryDays).size <= WEEKLY_RHYTHM_DAYS;
   const out: RoundStage[] = [];
-  if (hm >= "15:00" && hm < "20:00") out.push("first");
+  if (hm >= "15:00" && hm < "20:00" && (waiting > 0 || nudge)) out.push("first");
   if (hm >= "20:00" && waiting > 0) out.push("last");
   return out;
 }
-export function roundReminderMessage(supplier: string, next: { date: string }, waiting: number, stage: RoundStage, day: (date: string) => string): { title: string; body: string } {
+/** The reminder names where the order is for, since each business has its own Surelygrow. */
+export function roundReminderMessage(supplier: string, next: { date: string }, waiting: number, stage: RoundStage, day: (date: string) => string,
+  to?: { siteName: string; kitchen: boolean }): { title: string; body: string } {
   const items = `${waiting} item${waiting === 1 ? "" : "s"}`;
+  const where = to ? ` for ${to.siteName}` : "";
+  const check = to && !to.kitchen ? "Check the stock" : "Check the kitchen's stock";
   return stage === "first"
-    ? { title: `${supplier} order closes tonight`, body: `For ${day(next.date)}. ${waiting ? `${items} on it so far.` : "Nothing on it yet."} Check the kitchen's stock, then send the order and tick it off.` }
-    : { title: `Last call: ${supplier} order`, body: `${items} for ${day(next.date)} still not ticked as ordered. Send it tonight.` };
+    ? { title: `${supplier} order${where} closes tonight`, body: `For ${day(next.date)}. ${waiting ? `${items} on it so far.` : "Nothing on it yet."} ${check}, then send the order and tick it off.` }
+    : { title: `Last call: ${supplier} order${where}`, body: `${items} for ${day(next.date)} still not ticked as ordered. Send it tonight.` };
 }
 
 /** "Monday and Friday" */

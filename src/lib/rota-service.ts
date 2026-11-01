@@ -32,7 +32,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   if (!site) throw new Error("Unknown site");
   const staff = parseStaffTab(upload.staff);
   const weeks = parseWeekTable(upload.weeks);
-  const { shifts, issues } = parseExport(siteId, upload.export, staff);
+  const { shifts, issues } = parseExport(siteId, upload.export, staff, { kitchen: site.kind === "production" });
 
   // Staff IDs in the sheet must exist in the Hub (Owner → Staff accounts) to get shifts.
   const people = await db.people();

@@ -73,7 +73,14 @@ export function parseWeekTable(rows: string[][]): Map<string, WeekStatus> {
   return out;
 }
 
-export function parseExport(siteId: string, rows: string[][], staff: StaffRow[]): { shifts: ImportedShift[]; issues: ImportIssue[] } {
+/**
+ * The sheet only knows FOH and BOH. At a production kitchen (Wembley) the kitchen team is Production, so a BOH row
+ * there is imported as PROD: that's the lane, checks and training they get in the app. The Staff tab is still matched
+ * on the sheet's own section.
+ */
+export const sheetSection = (section: string, kitchen: boolean): string => (kitchen && section === "BOH" ? "PROD" : section);
+
+export function parseExport(siteId: string, rows: string[][], staff: StaffRow[], opts: { kitchen?: boolean } = {}): { shifts: ImportedShift[]; issues: ImportIssue[] } {
   const shifts: ImportedShift[] = [];
   const issues: ImportIssue[] = [];
   const key = (n: string, s: string) => `${n.trim().toLowerCase()}|${s.trim().toUpperCase()}`;
@@ -90,6 +97,7 @@ export function parseExport(siteId: string, rows: string[][], staff: StaffRow[])
     if (Number(r[14] || 0) > 0) { issues.push({ row: rowNo, message: `${name} (${section}), week of ${shortDay(week)}: the sheet flags this row (Checks), so it wasn't imported` }); return; }
     const staffCode = index.get(key(name, section));
     if (!staffCode) { issues.push({ row: rowNo, message: `${name} (${section}) has no Staff ID in the Staff tab` }); return; }
+    const stored = sheetSection(section, !!opts.kitchen);
     for (let d = 0; d < 7; d++) {
       const start = (r[DAY_START_COL + d * 2] || "").trim();
       const end = (r[DAY_START_COL + d * 2 + 1] || "").trim();
@@ -97,7 +105,7 @@ export function parseExport(siteId: string, rows: string[][], staff: StaffRow[])
       const date = addDays(week, d);
       if (!TIME.test(start) || !TIME.test(end)) { issues.push({ row: rowNo, message: `${name}, ${shortDay(date)}: times "${start}–${end}" aren't valid` }); continue; }
       const hrs = Number(r[HOURS_START_COL + d]);
-      shifts.push({ sourceKey: `${siteId}|${week}|${staffCode}|${section}|${d}`, staffCode, section, week, date, start: pad(start), end: pad(end), endsNextDay: pad(end) <= pad(start),
+      shifts.push({ sourceKey: `${siteId}|${week}|${staffCode}|${stored}|${d}`, staffCode, section: stored, week, date, start: pad(start), end: pad(end), endsNextDay: pad(end) <= pad(start),
         hours: Number.isFinite(hrs) && hrs > 0 ? hrs : undefined });
     }
   });

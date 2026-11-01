@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canFreeze, canManage, canSignIn, canSwitchTo, isLead, isOps, isOwner, leadSites, managedSites, opsSites, planSiteClosure, remoteSignIn, runsSite } from "./access";
+import { canFreeze, canManage, canSignIn, canSwitchTo, isLead, isOps, isOwner, leadSites, managedSites, opsSites, planSiteClosure, remoteSignIn, runsSite, worksAcrossBusinesses } from "./access";
 import { activityFor } from "./activity";
 import { canEditCerts, certReminderMessages, expectedKinds } from "./certificates";
 import { canPostTo } from "./notices";
@@ -77,6 +77,18 @@ describe("operations manager: the role", () => {
     expect(canSwitchTo(ops, site("EAS", "closed"))).toBe(false);
     expect(canSwitchTo(owner, site("SYD", "closed"))).toBe(true);
     expect(canSwitchTo(person("o", [at("EAS", "owner")]), site("WEM"))).toBe(false); // no access there
+  });
+  it("someone working for both businesses switches their own phone between their open sites", () => {
+    const clv = { ...site("CLV"), brand: "clv" as const };
+    const amrit = person("amrit", [at("CLV", "staff", ["BOH"]), at("EAS", "staff", ["BOH"])]);
+    expect(worksAcrossBusinesses(amrit, [site("EAS"), site("WEM"), clv])).toBe(true);
+    expect(worksAcrossBusinesses(amrit, [site("EAS"), site("WEM"), { ...clv, status: "closed" }])).toBe(false);
+    expect(worksAcrossBusinesses(floater, [site("EAS"), site("WEM"), clv])).toBe(false); // one business
+    expect(worksAcrossBusinesses(owner, [site("EAS"), site("WEM"), clv])).toBe(false); // leads have the switch anyway
+    expect(canSwitchTo(amrit, clv)).toBe(true);
+    expect(canSwitchTo(amrit, site("EAS"))).toBe(true);
+    expect(canSwitchTo(amrit, site("WEM"))).toBe(false); // doesn't work there
+    expect(canSwitchTo(amrit, { ...clv, status: "closed" })).toBe(false);
   });
   it("mixed roles: manages where they're a manager, runs only where they're the operations manager", () => {
     const mixed = person("mix", [at("WEM", "ops"), at("SYD", "manager", ["FOH"])]);

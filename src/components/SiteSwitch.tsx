@@ -4,8 +4,9 @@ import { useTransition } from "react";
 import { switchSite } from "@/app/actions";
 
 /**
- * For owners and operations managers: which site (and so which business) they're working at, from any screen.
- * Sites are grouped by business; picking one moves the session there and stays on the same screen.
+ * Which site (and so which business) you're working at, from any screen: owners and operations managers, and anyone
+ * who works for both businesses on their own phone. Sites are grouped by business; picking one moves the session there
+ * and stays on the same screen.
  */
 export function SiteSwitch({ current, groups }: { current: string; groups: { name: string; sites: { id: string; name: string }[] }[] }) {
   const [pending, start] = useTransition();
