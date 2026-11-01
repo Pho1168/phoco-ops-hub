@@ -1,6 +1,7 @@
 import { queueAvailabilityReminders } from "@/lib/availability-service";
 import { queueMyDayAlerts } from "@/lib/my-day-service";
 import { store } from "@/lib/data";
+import { sha256 } from "@/lib/device";
 import { brandOf, brandsOf } from "@/lib/domain/brand";
 import { buildEveningNotices, buildImportNotices, EVENING_REMINDER_AT, parseExport, parseStaffTab, parseWeekTable, planSync } from "@/lib/domain/rota";
 import { addDays, afterQuietHours, londonDate, londonHM, londonToUtc, QUIET_START } from "@/lib/domain/time";
@@ -33,7 +34,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   if (!site) throw new Error("Unknown site");
   const staff = parseStaffTab(upload.staff);
   const weeks = parseWeekTable(upload.weeks);
-  const { shifts, issues } = parseExport(siteId, upload.export, staff, { kitchen: site.kind === "production" });
+  const { shifts, issues, held } = parseExport(siteId, upload.export, staff, { kitchen: site.kind === "production" });
 
   // Staff IDs in the sheet must exist in the Hub (Owner → Staff accounts) to get shifts.
   const people = await db.people();
@@ -48,7 +49,7 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
 
   const weekSet = new Set([...Array.from(weeks.keys()), ...known.map((s) => s.week)]);
   const before = await db.weekStatuses(siteId);
-  const plan = planSync(await db.siteShifts(siteId), known, weekSet);
+  const plan = planSync(await db.siteShifts(siteId), known, weekSet, held);
   await db.applyShiftSync(siteId, plan, byCode);
   await db.setWeekStatuses(siteId, weeks);
 
@@ -57,7 +58,9 @@ export async function importRota(siteId: SiteId, upload: RotaUpload, now = Date.
   let queued = 0;
   for (const n of notices) {
     const personId = byCode.get(n.staffCode);
-    if (personId && (await db.queueNotice({ personId, kind: n.kind, title: n.title, body: n.body, sendAfter }))) queued++;
+    // The same message isn't sent twice (an import retried, a week published, drafted and published again unchanged).
+    const dedupeKey = personId ? `rota|${siteId}|${n.kind}|${personId}|${sha256(`${n.title}\n${n.body}`).slice(0, 24)}` : undefined;
+    if (personId && (await db.queueNotice({ personId, kind: n.kind, title: n.title, body: n.body, sendAfter, dedupeKey }))) queued++;
   }
 
   const result: RotaResult = {
