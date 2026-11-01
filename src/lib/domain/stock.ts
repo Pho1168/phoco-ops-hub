@@ -598,15 +598,18 @@ export interface MirrorGroup { key: string; name: string; production: boolean; r
  * are left out, as on Stock needed. `sold`: this supplier sells the item too (same name, or the kitchen's copy of one
  * of its products), so it can go on this order.
  */
-export function neededMirror(groups: Pick<NeededGroup, "key" | "supplier" | "rows" | "production">[], products: Pick<Product, "id" | "name" | "supplierId" | "copyOf" | "active">[], roundSupplierId: string): MirrorGroup[] {
+export function neededMirror(groups: Pick<NeededGroup, "key" | "supplier" | "rows" | "production">[], products: Pick<Product, "id" | "name" | "supplierId" | "copyOf" | "active">[], roundSupplierId: string, kitchenId?: SiteId): MirrorGroup[] {
   const mine = products.filter((p) => p.active && p.supplierId === roundSupplierId);
   const names = new Set(mine.map((p) => norm(p.name))), ids = new Set(mine.map((p) => p.id));
   const out: MirrorGroup[] = [];
   for (const g of groups) {
-    if (ordersByRound(g.supplier)) continue;
+    // Round suppliers' lists are on their own pages, except what a restaurant asked this one for: that isn't on the
+    // kitchen's order (`kitchenOnly`), so it shows here, once.
+    const ownRound = !!kitchenId && g.supplier?.id === roundSupplierId;
+    if (ordersByRound(g.supplier) && !ownRound) continue;
     const rows: MirrorRow[] = [];
     for (const r of g.rows) {
-      const sites = r.sites.filter((x) => x.qty > 0 || x.unknown > 0).map((x) => ({ ...x }));
+      const sites = r.sites.filter((x) => (x.qty > 0 || x.unknown > 0) && !(ownRound && x.siteId === kitchenId)).map((x) => ({ ...x }));
       if (!sites.length) continue;
       const copyOf = products.find((p) => p.id === r.product.id)?.copyOf;
       rows.push({ product: r.product, sites, urgent: r.urgent,
@@ -616,6 +619,24 @@ export function neededMirror(groups: Pick<NeededGroup, "key" | "supplier" | "row
     if (rows.length) out.push({ key: g.key, name: g.production ? `${g.supplier?.name ?? "Production"} (production)` : g.supplier?.name ?? "No supplier yet", production: g.production, rows });
   }
   return out;
+}
+
+/**
+ * A round supplier's order page lists only what the kitchen it delivers to asks for (its own report or the catalogue).
+ * What a restaurant asked for is in the mirror beside it (`neededMirror` with the kitchen), so nothing shows twice.
+ */
+export function kitchenOnly(g: NeededGroup, kitchenId: SiteId, siteOf: (requestId: string) => SiteId | undefined): NeededGroup {
+  const rows = g.rows.flatMap((r) => {
+    const sites = r.sites.filter((x) => x.siteId === kitchenId);
+    if (!sites.some((x) => x.qty > 0 || x.unknown > 0)) return [];
+    return [{ ...r, sites, qty: Math.round(sites.reduce((t, x) => t + x.qty, 0) * 100) / 100,
+      requestIds: r.requestIds.filter((id) => siteOf(id) === kitchenId), unknownIds: r.unknownIds.filter((id) => siteOf(id) === kitchenId) }];
+  });
+  const ticked = g.ticked.flatMap((t) => {
+    const sites = t.sites.filter((x) => x.siteId === kitchenId);
+    return sites.length ? [{ ...t, sites, qty: Math.round(sites.reduce((n, x) => n + x.qty, 0) * 100) / 100 }] : [];
+  });
+  return { ...g, rows, ticked, removed: g.removed.filter((x) => x.siteId === kitchenId) };
 }
 
 /** The log line on a request raised from the catalogue. */
