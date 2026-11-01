@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { demoStore as db, resetDemo } from "@/lib/data/demo-store";
-import { allowedAfter, askedWeek, asksAvailability, checkChange, availabilityGrid, availReminderStage, canAnswer, cleanAvailability, dueDay, isLate, latestAvailability, type Availability } from "@/lib/domain/availability";
+import { allowedAfter, askedWeek, asksAvailability, checkChange, availabilityGrid, availReminderStage, canAnswer, cleanAvailability, dueDay, isLate, latestAvailability, workingElsewhere, type Availability } from "@/lib/domain/availability";
 import { londonToUtc } from "@/lib/domain/time";
 import { queueAvailabilityReminders } from "@/lib/availability-service";
 
@@ -89,5 +89,20 @@ describe("weekly availability", () => {
     expect(r.ok).toBe(false);
     expect(!r.ok && r.error).toContain("Mon 9 Nov, Tue 10 Nov");
     expect(checkChange("2026-11-09", undefined, closed, fri)).toEqual({ ok: true }); // a first answer sent late
+  });
+});
+
+describe("working elsewhere that week", () => {
+  it("shows each person's shifts at other sites by day, this site's own left out", () => {
+    const days = ["2026-11-02", "2026-11-03", "2026-11-04"];
+    const sh = (personId: string, siteId: string, siteName: string, date: string, start: string, end: string) => ({ personId, siteId, siteName, date, start, end });
+    const m = workingElsewhere([{ personId: "amrit" }, { personId: "ava" }], days, "EAS", [
+      sh("amrit", "CLV", "Colindale", "2026-11-03", "17:00", "23:00"), sh("amrit", "CLV", "Colindale", "2026-11-03", "10:00", "15:00"),
+      sh("amrit", "EAS", "Eastcote", "2026-11-02", "10:00", "15:00"), sh("ava", "EAS", "Eastcote", "2026-11-04", "10:00", "15:00"),
+      sh("someone", "CLV", "Colindale", "2026-11-02", "10:00", "15:00"),
+    ]);
+    expect(m.get("amrit")).toEqual([[], ["Colindale 10:00–15:00", "Colindale 17:00–23:00"], []]);
+    expect(m.has("ava")).toBe(false);
+    expect(m.size).toBe(1);
   });
 });

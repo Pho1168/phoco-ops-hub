@@ -1057,6 +1057,8 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .avail-cell.am, .avail-cell.pm { background: var(--teal-tint); color: var(--teal-ink); }
 .avail-cell.off { background: var(--surface-2); color: var(--ink-2); }
 .avail-note { display: block; font-size: 11px; color: var(--ink-2); line-height: 1.2; margin-top: 2px; white-space: normal; }
+/* Already working at another site that day (its published rota). */
+.avail-else { display: block; margin-top: 3px; padding: 2px 6px; border-radius: 6px; font-size: 11px; font-weight: 700; line-height: 1.25; white-space: normal; background: #FDEBD9; color: #C2611A; }
 @media (max-width: 719px) { .avail-grid .rota-grid-wrap { display: block; } }
 .avail-opt:disabled { opacity: .35; cursor: not-allowed; text-decoration: line-through; }
 /* The Shift screen's links (Everything at…, Handover, Recipes…) sit at the top, smaller on a phone. */

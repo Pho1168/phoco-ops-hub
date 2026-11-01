@@ -13,7 +13,7 @@ import { coverState, liveOffers } from "@/lib/domain/cover";
 import { Avatar } from "@/components/Avatar";
 import { toneOf } from "@/lib/domain/login";
 import { ownerRotaSites } from "@/lib/availability-service";
-import { AVAIL_DUE_AT, AVAIL_LABEL, AVAIL_SHORT, availabilityGrid, dueDay } from "@/lib/domain/availability";
+import { AVAIL_DUE_AT, AVAIL_LABEL, AVAIL_SHORT, availabilityGrid, dueDay, workingElsewhere, type ShiftElsewhere } from "@/lib/domain/availability";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +55,12 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
   // Availability staff sent for this week (managers, owners, ops): before the rota is written, and while it's worked on.
   const allSites = await db.sites();
   const avail = isManager && week > thisWeek ? availabilityGrid(people, allSites, site.id as SiteId, week, await db.availability(week), await ownerRotaSites(db, people, now)) : undefined;
+  // Shifts they already have that week at other sites (published rotas only, any business), so nobody's put on twice.
+  const elsewhere = avail?.rows.length ? workingElsewhere(avail.rows, avail.days, site.id as SiteId, (await Promise.all(allSites
+    .filter((s) => s.id !== site.id && s.status === "open")
+    .map(async (s): Promise<ShiftElsewhere[]> => (await db.weekStatuses(s.id as SiteId)).get(week) === "published"
+      ? (await db.teamShifts(s.id as SiteId, week)).map((x) => ({ personId: x.personId, siteId: s.id as SiteId, siteName: s.name, date: x.date, start: x.start, end: x.end }))
+      : []))).flat()) : new Map<string, string[][]>();
   const href = (w: string) => `/rota?week=${w}${site.id !== ctx.site.id ? `&site=${site.id}` : ""}`;
   const me = ctx.person.id;
   const tone = (personId: string) => { const p = people.find((x) => x.id === personId); return p ? toneOf(p, site.id as SiteId) : undefined; };
@@ -111,6 +117,7 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
                           <td key={d}>
                             {day ? <span className={`avail-cell ${day.a}`} title={AVAIL_LABEL[day.a]}>{AVAIL_SHORT[day.a]}</span> : <span className="muted" style={{ fontSize: 12 }}>–</span>}
                             {day?.note && <span className="avail-note">{day.note}</span>}
+                            {elsewhere.get(r.personId)?.[i]?.map((x) => <span key={x} className="avail-else" title="Already on the rota there">{x}</span>)}
                           </td>
                         );
                       })}
