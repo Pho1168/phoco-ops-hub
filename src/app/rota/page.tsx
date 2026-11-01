@@ -79,6 +79,7 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
           {week !== thisWeek && <Link className="btn ghost small" href={href(thisWeek)}>This week</Link>}
           <Link className="btn ghost small" href={href(addDays(week, 7))} aria-label="Next week">Next →</Link>
           <RefreshButton />
+          {ctx.isOwner && week > thisWeek && <Link className="btn small" href={`/rota/draft?week=${week}&site=${site.id}`}>Draft this week</Link>}
           <span className="grow" />
           {sites.length > 1 && (
             <nav className="row" style={{ gap: 6 }} aria-label="Site">
