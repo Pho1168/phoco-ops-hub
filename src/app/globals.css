@@ -944,6 +944,12 @@ main.recipe-page > :not(.rcard) { width: 100%; max-width: 760px; align-self: cen
 .stock-row.done { opacity: .7; }
 .stock-ticked-head { border-top: 1px dashed var(--line); padding-top: 10px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
 .stock-ticked-head + .stock-row { border-top: 0; padding-top: 0; }
+.stock-ticked { display: flex; flex-direction: column; gap: 10px; }
+.stock-ticked > summary { cursor: pointer; list-style: none; min-height: 40px; display: flex; align-items: center; }
+.stock-ticked > summary::-webkit-details-marker { display: none; }
+.stock-ticked > summary::before { content: "▸"; margin-right: 8px; }
+.stock-ticked[open] > summary::before { content: "▾"; }
+.stock-ticked[open] > summary + .stock-row { border-top: 0; padding-top: 0; }
 .tick.on { background: var(--brand); border-color: var(--brand); cursor: default; }
 .stock-row-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .stock-site { display: flex; align-items: center; gap: 10px; padding-left: 4px; flex-wrap: wrap; font-size: 15px; }

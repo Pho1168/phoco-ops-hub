@@ -464,7 +464,7 @@ export const isClosed = (p: Pick<Progress, "state">) => p.state === "cancelled" 
 
 /** The note on what a tick on Stock needed makes (the task and its order; a production tick's dispatch). */
 export const TICK_NOTE = "Ticked off on Stock needed";
-/** A tick can be taken back until the working day ends (05:00 London), and stays on the list, crossed out, until then. */
+/** A tick can be taken back until the working day ends (05:00 London), and stays in the card's folded "Ticked today" until then. */
 export const UNTICK_UNTIL = "05:00";
 /** When the working day that `now` is in began: today at 05:00 London, or yesterday's before then. */
 export function tickDayStart(now: number): number {
@@ -832,7 +832,7 @@ export interface NeededRow {
 /** Taken off the list this working day by someone at the restaurant (`REMOVE_NOTE`), so the owner sees it went. */
 export interface RemovedRow { product: Product; qty?: number; siteId: SiteId; by?: string; at: number }
 export interface WithDriver { task: PurchaseTask; items: { name: string; qty: number }[]; open: number; done: number }
-/** Ticked off this working day: stays on the card, crossed out, so a mistaken tick can be taken back. */
+/** Ticked off this working day: stays in the card's folded "Ticked today", so a mistaken tick can be taken back. */
 export interface TickedRow { product: Product; qty: number; sites: { siteId: SiteId; qty: number }[]; lineIds: string[]; by: string[]; at: number }
 export interface NeededGroup { key: string; supplier?: Supplier; rows: NeededRow[]; drivers: WithDriver[]; production: boolean; ticked: TickedRow[]; removed: RemovedRow[] }
 

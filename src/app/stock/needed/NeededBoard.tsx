@@ -32,8 +32,8 @@ const forSites = (sites: { name: string; qty: number }[]) => (sites.length === 1
 
 /**
  * The Stock needed checklist. One card per supplier; tick a row when it's ordered or bought (production: sent). A tick
- * is saved at once and the item moves to "Ticked today" on the same card, crossed out, where Untick puts it back (a
- * mistaken tap) until 05:00. Shops can be given to a driver; a delivery supplier downloads a PDF.
+ * is saved at once and the item leaves the list: it goes into a folded "Ticked today" line on the same card, where
+ * Untick puts it back (a mistaken tap) until 05:00. Shops can be given to a driver; a delivery supplier downloads a PDF.
  */
 export function NeededBoard({ groups, drivers, hideMethod, site }: { groups: BoardGroup[]; drivers: { id: string; name: string }[]; /** The round order page: no "Supplier delivers" chip. */ hideMethod?: boolean; /** The round order page: ticks only that kitchen's own requests. */ site?: string }) {
   const router = useRouter();
@@ -86,7 +86,7 @@ export function NeededBoard({ groups, drivers, hideMethod, site }: { groups: Boa
   return (
     <div className="stack">
       <p className="muted lead" style={{ margin: 0 }}>
-        {total} item{total === 1 ? "" : "s"} asked for, by supplier. Tick each one once it&apos;s ordered or bought (production: when sent). Ticked items stay at the bottom of the card, crossed out, until 5am: tap Untick if you ticked one by mistake.
+        {total} item{total === 1 ? "" : "s"} asked for, by supplier. Tick each one once it&apos;s ordered or bought (production: when sent). A ticked item leaves the list at once. Ticked one by mistake? Open &ldquo;Ticked today&rdquo; at the bottom of its card and tap Untick (until 5am).
       </p>
       {err && <div className="fix" role="alert" style={{ margin: 0 }}>{err}</div>}
       {groups.map((g) => {
@@ -161,8 +161,8 @@ export function NeededBoard({ groups, drivers, hideMethod, site }: { groups: Boa
             ))}
             {g.removed.length > 0 && <div className="muted" style={{ fontSize: 13 }}>{g.removed.join(" · ")}</div>}
             {ticked.length > 0 && (
-              <>
-                <div className="stock-ticked-head muted">{g.production ? "Sent today" : "Ticked today"}</div>
+              <details className="stock-ticked no-print">
+                <summary className="stock-ticked-head muted">{g.production ? "Sent today" : "Ticked today"} ({ticked.length}) · Undo</summary>
                 {ticked.map((t) => (
                   <div key={t.productId} className="stock-row done">
                     <div className="stock-row-head">
@@ -176,7 +176,7 @@ export function NeededBoard({ groups, drivers, hideMethod, site }: { groups: Boa
                     </div>
                   </div>
                 ))}
-              </>
+              </details>
             )}
           </section>
         );
