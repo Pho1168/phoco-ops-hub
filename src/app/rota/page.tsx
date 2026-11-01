@@ -11,6 +11,7 @@ import { canManage } from "@/lib/domain/access";
 import { sameBusiness } from "@/lib/domain/brand";
 import { coverState, liveOffers } from "@/lib/domain/cover";
 import { Avatar } from "@/components/Avatar";
+import { RefreshButton } from "@/components/RefreshButton";
 import { toneOf } from "@/lib/domain/login";
 import { ownerRotaSites } from "@/lib/availability-service";
 import { AVAIL_DUE_AT, AVAIL_LABEL, AVAIL_SHORT, availabilityGrid, dueDay, workingElsewhere, type ShiftElsewhere } from "@/lib/domain/availability";
@@ -77,6 +78,7 @@ export default async function TeamRota(props: { searchParams: Promise<{ week?: s
           <Link className="btn ghost small" href={href(addDays(week, -7))} aria-label="Previous week">← Previous</Link>
           {week !== thisWeek && <Link className="btn ghost small" href={href(thisWeek)}>This week</Link>}
           <Link className="btn ghost small" href={href(addDays(week, 7))} aria-label="Next week">Next →</Link>
+          <RefreshButton />
           <span className="grow" />
           {sites.length > 1 && (
             <nav className="row" style={{ gap: 6 }} aria-label="Site">
