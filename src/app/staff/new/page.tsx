@@ -14,7 +14,7 @@ export default async function NewPerson() {
     <>
       <TopBar ctx={ctx} neutral title="Add a person" eyebrow={`${ctx.isOwner ? "Owner" : "Operations"} · staff`} back="/owner#accounts" />
       <main>
-        <StaffForm sites={await siteOptions(ctx.allLeads)} roles={givableRoles(ctx.person)} suggestedCode={nextStaffCode(people)} />
+        <StaffForm sites={await siteOptions(ctx.allLeads, ctx.site)} roles={givableRoles(ctx.person)} suggestedCode={nextStaffCode(people)} />
       </main>
       <BottomNav ctx={ctx} current="owner" />
     </>
