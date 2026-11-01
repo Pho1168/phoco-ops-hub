@@ -113,6 +113,25 @@ export function availabilityGrid(people: Pick<Person, "id" | "name" | "status" |
   return { rows, waiting: rows.filter((r) => !r.answer), days: weekDays(week) };
 }
 
+/** A shift someone already has that week at another site, from its published rota. */
+export interface ShiftElsewhere { personId: string; siteId: SiteId; siteName: string; date: string; start: string; end: string }
+
+/**
+ * Beside the availability grid: for each person on it, the shifts they already have that week at other sites (published
+ * rotas only), per day of the week as "Colindale 11:00–17:00", so they aren't put on twice. A shift counts on the day it
+ * starts; this site's own shifts are left out.
+ */
+export function workingElsewhere(rows: Pick<AvailRow, "personId">[], days: string[], siteId: SiteId, shifts: ShiftElsewhere[]): Map<string, string[][]> {
+  const out = new Map<string, string[][]>();
+  for (const r of rows) {
+    const mine = shifts.filter((x) => x.personId === r.personId && x.siteId !== siteId).sort((a, b) => a.start.localeCompare(b.start));
+    if (!mine.length) continue;
+    const perDay = days.map((d) => mine.filter((x) => x.date === d).map((x) => `${x.siteName} ${x.start}–${x.end}`));
+    if (perDay.some((x) => x.length)) out.set(r.personId, perDay);
+  }
+  return out;
+}
+
 /** Reminders due now (Friday from 12:00, Saturday from 10:00 until it closes), for a week: which stage, if any. */
 export function availReminderStage(week: string, now: number): AvailStage | undefined {
   const today = londonDate(now), hm = londonHM(now);
