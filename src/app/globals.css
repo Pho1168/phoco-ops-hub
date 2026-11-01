@@ -1102,3 +1102,27 @@ table.plan-table .plan-n { text-align: right; white-space: nowrap; font-variant-
 .clean-table tr.clean-off { opacity: .6; }
 .clean-table tr.clean-edit td { background: var(--teal-tint); }
 @media (max-width: 699px) { .clean-table { min-width: 620px; } }
+
+/* My Day: the owner's own list (src/components/MyDay.tsx). Colour by urgency on the brand palette:
+   orange urgent, amber this week, teal can wait; overdue rows on a soft orange ground; ticked ones grey. */
+.my-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.my-row { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); flex-wrap: wrap; }
+.my-row.late { background: var(--accent-soft); }
+.my-row.done { opacity: .7; }
+.my-row.done .my-title { text-decoration: line-through; }
+.my-dot { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--line); align-self: flex-start; margin-top: 4px; }
+.my-row.p1 .my-dot { background: var(--accent); }
+.my-row.p2 .my-dot { background: var(--amber); }
+.my-row.p3 .my-dot { background: var(--teal); }
+.my-row.done .my-dot { background: var(--ink-2); }
+.my-title { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+.my-meta { font-size: 13px; color: var(--ink-2); }
+.my-late { color: var(--accent-soft-ink); font-weight: 600; }
+.my-btns { gap: 6px; margin-left: auto; }
+.my-pin { min-width: 44px; padding: 0 10px; font-size: 18px; }
+.my-pin.on { background: var(--amber); border-color: var(--amber); color: var(--amber-ink); }
+.my-seg button.p1[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.my-seg button.p2[aria-pressed="true"] { background: var(--amber); color: var(--amber-ink); }
+.my-seg button.p3[aria-pressed="true"] { background: var(--teal); color: #fff; }
+.my-row:not(.full) { flex-wrap: nowrap; }
+@media (max-width: 560px) { .my-row.full .my-btns { width: 100%; justify-content: flex-end; } }

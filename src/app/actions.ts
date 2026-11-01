@@ -51,6 +51,7 @@ import { canBeGiven, noteCanBeFor } from "@/lib/domain/assign";
 import { accountsFor, canChangeAccess, canGiveAccess, canManageAccount, canMarkLeft, canRejoin, canUnfreeze, normalizeStaffCode, ROLES, sectionsFor, validatePersonInput } from "@/lib/domain/staff";
 import type { Person, Role, SiteId } from "@/lib/domain/types";
 import { current, londonNow, requireCtx, requireLead, SESSION_COOKIE, SESSION_TTL_MS, type Ctx } from "@/lib/session";
+import { cleanMyTask, currentDue, handled, ownsTask, startsFor } from "@/lib/domain/my-day";
 
 const SiteIdZ = z.string().regex(/^[A-Z]{2,5}$/);
 /** Someone still on the temporary PIN an owner gave them chooses their own before doing anything. */
@@ -3039,5 +3040,87 @@ export async function setCleaningJobActiveAction(id: string, active: boolean): P
   if (!(await db.setCleaningJobActive(job.id, p.data.active))) return { ok: true };
   await db.audit({ actorId: ctx.person.id, siteId: job.siteId, action: "cleaning.job", detail: `Cleaning job ${p.data.active ? "put back on" : "taken off"} the board: "${job.name}"` });
   revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+// ─── My Day: the owner's own to-do list (rules in src/lib/domain/my-day.ts) ─────────────────────────────────────────
+
+/** Only an owner, on a full session, has a My Day; it's theirs alone. */
+async function myDayCtx(): Promise<{ ok: true; ctx: Ctx } | { ok: false; error: string }> {
+  const ctx = await current();
+  if (!ctx) return { ok: false, error: "Sign in again" };
+  if (ctx.person.pinMustChange) return { ok: false, error: MUST_CHANGE_PIN };
+  if (!ctx.isOwner || ctx.scope !== "full") return { ok: false, error: "My Day is for owners" };
+  return { ok: true, ctx };
+}
+const myTaskShape = z.object({
+  title: z.string().max(400), note: z.string().max(2000).optional(), priority: z.number().int(), repeat: z.string().max(10),
+  day: z.number().int().optional(), dueOn: z.string().max(10).optional(), alertDays: z.number().int().optional(), top: z.boolean().optional(),
+});
+const revalidateMyDay = () => { revalidatePath("/owner"); revalidatePath("/owner/day"); };
+
+/** Adds a task to My Day, or changes one (`id`). A repeating task changed to a new schedule counts from today. */
+export async function saveMyTask(input: z.infer<typeof myTaskShape>, id?: string): Promise<ActionResult> {
+  const c = await myDayCtx();
+  if (!c.ok) return c;
+  const p = myTaskShape.safeParse(input);
+  if (!p.success || (id !== undefined && !z.string().uuid().safeParse(id).success)) return { ok: false, error: "Check the task and try again" };
+  const clean = cleanMyTask(p.data);
+  if (!clean.ok) return clean;
+  const db = store();
+  const today = londonDate(Date.now());
+  if (!id) {
+    await db.addMyTask(c.ctx.person.id, { ...clean.value, startsOn: today });
+  } else {
+    const before = (await db.myTasks(c.ctx.person.id)).find((t) => t.id === id);
+    if (!before || !ownsTask(before, c.ctx.person.id)) return { ok: false, error: "That task isn't there any more" };
+    const startsOn = clean.value.repeat === "once" ? before.startsOn : startsFor(before, clean.value, today);
+    await db.updateMyTask(c.ctx.person.id, id, { ...clean.value, startsOn });
+  }
+  revalidateMyDay();
+  return { ok: true };
+}
+
+/** Ticks the task's current occurrence done or skipped, or puts back one ticked earlier (`undone`, with its date). */
+export async function markMyTaskAction(id: string, kind: "done" | "skipped" | "undone", dueOn?: string): Promise<ActionResult> {
+  const c = await myDayCtx();
+  if (!c.ok) return c;
+  if (!z.string().uuid().safeParse(id).success || !["done", "skipped", "undone"].includes(kind)) return { ok: false, error: "That didn't work" };
+  const db = store();
+  const t = (await db.myTasks(c.ctx.person.id)).find((x) => x.id === id);
+  if (!t) return { ok: false, error: "That task isn't there any more" };
+  if (kind === "undone") {
+    if (!isIsoDate(dueOn)) return { ok: false, error: "That didn't work" };
+    await db.markMyTask(id, dueOn, "undone");
+    if (t.status === "stopped") await db.updateMyTask(c.ctx.person.id, id, { status: "open" });
+  } else {
+    const due = currentDue(t, handled(await db.myTaskMarks([id])));
+    if (!due) return { ok: false, error: "That's already ticked off" };
+    // A tick names the occurrence it was shown: a page left open doesn't tick the next one by mistake.
+    if (dueOn && dueOn !== due) return { ok: false, error: "That's already been ticked: the list has been refreshed" };
+    await db.markMyTask(id, due, kind);
+    if (kind === "skipped" && t.repeat === "once") await db.updateMyTask(c.ctx.person.id, id, { status: "stopped" });
+  }
+  revalidateMyDay();
+  return { ok: true };
+}
+
+/** Pins a task to the Top 3, or unpins it. */
+export async function pinMyTask(id: string, top: boolean): Promise<ActionResult> {
+  const c = await myDayCtx();
+  if (!c.ok) return c;
+  if (!z.string().uuid().safeParse(id).success) return { ok: false, error: "That didn't work" };
+  if (!(await store().updateMyTask(c.ctx.person.id, id, { top: !!top }))) return { ok: false, error: "That task isn't there any more" };
+  revalidateMyDay();
+  return { ok: true };
+}
+
+/** Stops a task (it's kept; ticks stay). A stopped once-task's tick date stays its own, so it can come back. */
+export async function stopMyTask(id: string): Promise<ActionResult> {
+  const c = await myDayCtx();
+  if (!c.ok) return c;
+  if (!z.string().uuid().safeParse(id).success) return { ok: false, error: "That didn't work" };
+  if (!(await store().updateMyTask(c.ctx.person.id, id, { status: "stopped", top: false }))) return { ok: false, error: "That task isn't there any more" };
+  revalidateMyDay();
   return { ok: true };
 }
