@@ -9,8 +9,10 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: name,
     description: `Checklists, food safety and shift handover${brand ? ` for ${brand.name}` : ""}`,
-    manifest: `/manifest.webmanifest${brand && brand.id !== "phoco" ? `?b=${brand.id}` : ""}`,
+    manifest: `/manifest.webmanifest${brand ? `?b=${brand.id}` : ""}`,
+    // One neutral "Ops Hub" icon for every business, and a neutral preview when the link is shared (WhatsApp etc.).
     icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
+    openGraph: { title: name, siteName: "Ops Hub", images: [{ url: "/icon-512.png", width: 512, height: 512, alt: "Ops Hub" }] },
     appleWebApp: { capable: true, title: brand?.name ?? "Ops Hub", statusBarStyle: "default" },
   };
 }
